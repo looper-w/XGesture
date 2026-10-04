@@ -168,6 +168,10 @@ internal object SettingsPreferenceKeys {
     val FV_APP_SWITCHER_HORIZONTAL_SLOTS = stringSetPreferencesKey("fv_app_switcher_horizontal_slots")
     val FV_APP_SWITCHER_HORIZONTAL_SLOT_ICON_OVERRIDES =
         stringSetPreferencesKey("fv_app_switcher_horizontal_slot_icon_overrides")
+    /** 快速启动轮盘：轮盘元数据（id / 形态 / 外观 / 名称）。 */
+    val QUICK_WHEEL_ENTRIES = stringSetPreferencesKey("quick_wheel_entries")
+    /** 快速启动轮盘：各容器（槽位）配置与单击 / 长按动作。 */
+    val QUICK_WHEEL_SLOTS = stringSetPreferencesKey("quick_wheel_slots")
     val HOLOGRAPHIC_TIMEOUT_SECONDS = intPreferencesKey("holographic_timeout_seconds")
     val HOLOGRAPHIC_ROTATION_SENSITIVITY = floatPreferencesKey("holographic_rotation_sensitivity")
     val HOLOGRAPHIC_HAPTIC_LEVEL = intPreferencesKey("holographic_haptic_level")

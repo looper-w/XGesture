@@ -251,6 +251,7 @@ internal object SettingsSnapshotReader {
             ),
             honeycombDisplay = HoneycombDisplaySettings.fromPreferences(prefs),
             appCarouselSwitcher = AppCarouselSwitcherSettings.fromPreferences(prefs),
+            quickWheels = QuickWheelCodec.decode(prefs),
             fvAppSwitcherVertical = FvAppSwitcherSettings.fromPreferences(prefs, FvAppSwitcherAxis.VERTICAL),
             fvAppSwitcherHorizontal = FvAppSwitcherSettings.fromPreferences(prefs, FvAppSwitcherAxis.HORIZONTAL),
             fvAppSwitcherLinkAppearanceAxes = FvAppSwitcherSettings.linkFlagsFromPreferences(prefs).linkAppearanceAxes,

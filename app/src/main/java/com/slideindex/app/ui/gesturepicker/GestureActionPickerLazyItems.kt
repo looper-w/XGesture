@@ -94,6 +94,7 @@ fun LazyListScope.actionPickerActionItems(
     onOpenExecuteShellCommand: () -> Unit,
     onOpenOpenLink: () -> Unit = {},
     onOpenSimulateKeyEvent: (() -> Unit)? = null,
+    onOpenQuickWheel: (() -> Unit)? = null,
 ) {
     if (filtered.isEmpty()) {
         item(key = "actions-empty") {
@@ -165,6 +166,20 @@ fun LazyListScope.actionPickerActionItems(
                         requestPermissionForAdjustAction(context, action)
                         onOpenSimulateKeyEvent()
                     },
+                )
+            } else if (action.type == GestureActionType.QUICK_WHEEL && onOpenQuickWheel != null) {
+                // 快捷轮盘需要先选「哪个轮盘 + 以什么形态呼出」，因此不直接选中，而是打开配置。
+                val quickWheelSubtitle = if (current is GestureAction.QuickWheel) {
+                    gestureActionSettingSubtitle(current)
+                } else {
+                    gestureActionDescription(action)
+                }
+                ActionPickerQuickWheelRow(
+                    action = action,
+                    segmentIndex = index,
+                    segmentCount = section.actions.size,
+                    subtitle = quickWheelSubtitle,
+                    onOpenConfig = onOpenQuickWheel,
                 )
             } else {
                 ActionPickerActionRow(

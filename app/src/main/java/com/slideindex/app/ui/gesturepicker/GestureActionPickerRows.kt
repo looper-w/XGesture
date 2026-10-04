@@ -46,6 +46,32 @@ internal fun ActionPickerOpenLinkRow(
 }
 
 @Composable
+internal fun ActionPickerQuickWheelRow(
+    action: GestureAction,
+    segmentIndex: Int,
+    segmentCount: Int,
+    subtitle: String?,
+    onOpenConfig: () -> Unit,
+) {
+    val label = gestureActionLabel(action)
+    Md3PickerListRow(
+        segmentIndex = segmentIndex,
+        segmentCount = segmentCount,
+        title = label,
+        subtitle = subtitle,
+        selected = false,
+        onClick = onOpenConfig,
+        leadingContent = {
+            Md3PickerIconLeading(
+                icon = gestureActionIcon(action, outlined = true),
+                selected = false,
+            )
+        },
+        trailingMode = PickerTrailingMode.None,
+    )
+}
+
+@Composable
 internal fun ActionPickerExecuteShellCommandRow(
     action: GestureAction,
     segmentIndex: Int,

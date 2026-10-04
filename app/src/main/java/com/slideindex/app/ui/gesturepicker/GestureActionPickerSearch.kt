@@ -14,6 +14,7 @@ import com.slideindex.app.gesture.GestureShortcutPayload
 import com.slideindex.app.ui.gestureExecuteShellCommandPreview
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.ui.quickLauncherPanelLabel
+import com.slideindex.app.ui.quickWheelLaunchShapeLabel
 import com.slideindex.app.ui.compose.rememberAppRepository
 import com.slideindex.app.privilege.PrivilegeUiStrings
 import com.slideindex.app.util.PermissionHelper
@@ -304,6 +305,7 @@ fun gestureActionLabelText(context: Context, action: GestureAction): String = wh
         GestureActionType.CORNER_INNER_PIN_WHEEL -> context.getString(R.string.gesture_action_corner_inner_pin_wheel)
         GestureActionType.LAUNCH_APP -> context.getString(R.string.gesture_action_launch_app)
         GestureActionType.LAUNCH_SHORTCUT -> context.getString(R.string.gesture_action_launch_shortcut)
+        GestureActionType.QUICK_WHEEL -> context.getString(R.string.gesture_action_quick_wheel)
     }
 }
 
@@ -451,6 +453,7 @@ fun gestureActionLabel(action: GestureAction, settings: AppSettings? = null): St
         GestureActionType.CORNER_INNER_PIN_WHEEL -> stringResource(R.string.gesture_action_corner_inner_pin_wheel)
         GestureActionType.LAUNCH_APP -> stringResource(R.string.gesture_action_launch_app)
         GestureActionType.LAUNCH_SHORTCUT -> stringResource(R.string.gesture_action_launch_shortcut)
+        GestureActionType.QUICK_WHEEL -> stringResource(R.string.gesture_action_quick_wheel)
     }
     }
 }
@@ -473,6 +476,8 @@ fun gestureActionSettingSubtitle(action: GestureAction): String {
             val name = if (action.keyName.isNotBlank()) action.keyName else com.slideindex.app.gesture.KeyEventPresets.getDisplayName(context, action.keyCode)
             stringResource(R.string.gesture_action_simulate_key_event_named, name)
         }
+        // 与配置页共用同一套展示名（含四组合 / 旧值），避免两处读法不一致。
+        is GestureAction.QuickWheel -> quickWheelLaunchShapeLabel(action.shape)
         else -> gestureActionLabel(action)
     }
 }

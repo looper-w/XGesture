@@ -107,6 +107,10 @@ class ExtensionSettingsViewModel @Inject constructor(
         settingsRepository.setHoneycombLauncherItems(items)
     }
 
+    fun setQuickWheels(wheels: List<com.slideindex.app.settings.QuickWheel>) = launchSettingsWrite {
+        settingsRepository.setQuickWheels(wheels)
+    }
+
     fun setHoneycombDisplaySettings(settings: com.slideindex.app.settings.HoneycombDisplaySettings) =
         launchSettingsWrite {
             settingsRepository.setHoneycombDisplaySettings(settings)

@@ -94,11 +94,89 @@ enum class GestureActionType(val id: Int) {
     SCREEN_SEARCH(88),
     /** 智能截图 (全屏/选区编辑裁剪与贴图) */
     SMART_SCREENSHOT(90),
+    /** 快速启动轮盘：在触发点原地展开自定义同心环快捷轮盘。 */
+    QUICK_WHEEL(91),
     ;
 
     companion object {
         fun fromId(id: Int): GestureActionType =
             entries.firstOrNull { it.id == id } ?: NONE
+    }
+}
+
+/**
+ * 某一级轮盘的**形态覆盖方式**（呼出轮盘时用）。
+ *
+ * 单列成枚举是因为 `:core:gesture` 不依赖 `:core:overlay-layout`（避免模块循环），
+ * 不能直接用那边的 `QuickWheelShape`；由调用方（浮层）做一次映射。
+ */
+enum class QuickWheelLaunchLevelShape {
+    /** 跟随轮盘自身配置的该级形态。 */
+    FOLLOW,
+
+    /** 强制该级为圆形。 */
+    CIRCLE,
+
+    /** 强制该级为矩形。 */
+    RECT,
+}
+
+/**
+ * 绑定「快捷轮盘」动作时选择的**呼出形态**。
+ *
+ * - 四个组合值（[CIRCLE_CIRCLE] / [CIRCLE_RECT] / [RECT_CIRCLE] / [RECT_RECT]）读法固定为
+ *   「**一级 + 二级**」：前一个词是一级形态，后一个是二级形态。例如 [CIRCLE_RECT] = 一级圆形、二级矩形。
+ *   它们都**忽略**轮盘自身配置的形态，但仍沿用对应形态各自保存的那套外观参数
+ *   （每个轮盘都同时存着圆形 / 矩形两套参数，因此两种形态的调参都不会丢）；
+ * - [CIRCLE] / [RECT] 是**旧值**：只覆盖一级形态，二级继续跟随轮盘自身设置。保留原语义是为了
+ *   让已保存的绑定行为不变（新绑定一般直接用上面的组合值）；
+ * - [DEFAULT]：两级都跟随轮盘自身配置，载荷与旧版逐字节一致（仅 wheelId）。
+ *
+ * 之所以在 `:core:gesture` 内自定义而不直接用 `:core:overlay-layout` 的 `QuickWheelShape`，
+ * 是因为 `:core:gesture` 不依赖 `:core:overlay-layout`（避免模块循环）。
+ */
+enum class QuickWheelLaunchShape {
+    /** 两级都跟随轮盘设置（旧版默认）。 */
+    DEFAULT,
+
+    /** 一级圆形、二级圆形。 */
+    CIRCLE_CIRCLE,
+
+    /** 一级圆形、二级矩形。 */
+    CIRCLE_RECT,
+
+    /** 一级矩形、二级圆形。 */
+    RECT_CIRCLE,
+
+    /** 一级矩形、二级矩形。 */
+    RECT_RECT,
+
+    /** 旧值：只覆盖一级为圆形，二级跟随轮盘设置。 */
+    CIRCLE,
+
+    /** 旧值：只覆盖一级为矩形，二级跟随轮盘设置。 */
+    RECT,
+    ;
+
+    /** 一级形态覆盖；[QuickWheelLaunchLevelShape.FOLLOW] 表示用轮盘自身的一级形态。 */
+    val primaryLevel: QuickWheelLaunchLevelShape
+        get() = when (this) {
+            DEFAULT -> QuickWheelLaunchLevelShape.FOLLOW
+            CIRCLE, CIRCLE_CIRCLE, CIRCLE_RECT -> QuickWheelLaunchLevelShape.CIRCLE
+            RECT, RECT_CIRCLE, RECT_RECT -> QuickWheelLaunchLevelShape.RECT
+        }
+
+    /** 二级形态覆盖；[QuickWheelLaunchLevelShape.FOLLOW] 表示用轮盘自身的二级形态。 */
+    val secondaryLevel: QuickWheelLaunchLevelShape
+        get() = when (this) {
+            DEFAULT, CIRCLE, RECT -> QuickWheelLaunchLevelShape.FOLLOW
+            CIRCLE_CIRCLE, RECT_CIRCLE -> QuickWheelLaunchLevelShape.CIRCLE
+            CIRCLE_RECT, RECT_RECT -> QuickWheelLaunchLevelShape.RECT
+        }
+
+    companion object {
+        fun fromName(value: String?): QuickWheelLaunchShape =
+            entries.firstOrNull { it.name == value } ?: DEFAULT
     }
 }
 
@@ -486,6 +564,47 @@ sealed class GestureAction {
         override val payload = ""
     }
 
+    /**
+     * 快速启动轮盘。
+     *
+     * @param wheelId 轮盘 id；空串表示取第一个轮盘。
+     * @param shape 呼出形态：[QuickWheelLaunchShape.DEFAULT] 两级都跟随轮盘自身配置；
+     *   [QuickWheelLaunchShape.CIRCLE_CIRCLE] 等四个组合值按「一级 + 二级」强制形态；
+     *   [QuickWheelLaunchShape.CIRCLE] / [QuickWheelLaunchShape.RECT] 是只覆盖一级的旧值。
+     */
+    data class QuickWheel(
+        val wheelId: String = "",
+        val shape: QuickWheelLaunchShape = QuickWheelLaunchShape.DEFAULT,
+    ) : GestureAction() {
+        override val type = GestureActionType.QUICK_WHEEL
+
+        // 形态为默认时载荷与旧版**完全一致**（仅 wheelId），不会影响已保存的记录。
+        override val payload: String =
+            if (shape == QuickWheelLaunchShape.DEFAULT) {
+                wheelId
+            } else {
+                "$wheelId$SHAPE_SEP${shape.name}"
+            }
+
+        companion object {
+            /** 载荷内 wheelId 与形态的分隔符（SOH；UUID 中不会出现该控制字符）。 */
+            private const val SHAPE_SEP = '\u0001'
+
+            /** 从裸载荷解析；无分隔符时按"仅 wheelId、默认形态"处理（向后兼容）。 */
+            fun parse(raw: String): QuickWheel {
+                val sep = raw.indexOf(SHAPE_SEP)
+                return if (sep < 0) {
+                    QuickWheel(raw)
+                } else {
+                    QuickWheel(
+                        wheelId = raw.substring(0, sep),
+                        shape = QuickWheelLaunchShape.fromName(raw.substring(sep + 1)),
+                    )
+                }
+            }
+        }
+    }
+
     data object ScreenRecord : GestureAction() {
         override val type = GestureActionType.SCREEN_RECORD
         override val payload = ""
@@ -717,6 +836,7 @@ sealed class GestureAction {
             AdjustBrightness,
             FloatingPointer,
             RegionalScreenshotPick,
+            QuickWheel(),
         )
 
         fun from(type: GestureActionType, payload: String): GestureAction =
@@ -778,6 +898,7 @@ sealed class GestureAction {
                 GestureActionType.TIMED_DND -> TimedDnd
                 GestureActionType.SCREEN_SEARCH -> ScreenSearch
                 GestureActionType.SMART_SCREENSHOT -> SmartScreenshot
+                GestureActionType.QUICK_WHEEL -> QuickWheel.parse(payload)
                 GestureActionType.SCREEN_RECORD -> ScreenRecord
                 GestureActionType.TOGGLE_WIFI -> ToggleWifi
                 GestureActionType.TOGGLE_MOBILE_DATA -> ToggleMobileData
@@ -861,6 +982,7 @@ fun GestureAction.isContinuousTrackingKind(): Boolean =
     GestureAction.continuousTrackingActions.any { ref ->
         when (ref) {
             is GestureAction.QuickLauncher -> this is GestureAction.QuickLauncher
+            is GestureAction.QuickWheel -> this is GestureAction.QuickWheel
             else -> this == ref
         }
     }
@@ -873,6 +995,7 @@ fun GestureAction.supportsContinuousTracking(trigger: GestureTriggerType): Boole
         GestureAction.FingertipRing,
         GestureAction.HoneycombLauncher,
         is GestureAction.QuickLauncher,
+        is GestureAction.QuickWheel,
         GestureAction.ShellCommandPanel,
         -> trigger.isLongPress || !trigger.isPressOrTap
         else -> !trigger.isPressOrTap
@@ -884,7 +1007,7 @@ fun GestureAction.preferredTriggerMode(trigger: GestureTriggerType): GestureTrig
         GestureAction.OpenIndex ->
             if (!trigger.isPressOrTap) GestureTriggerMode.CONTINUOUS else null
         is GestureAction.QuickLauncher, GestureAction.ShellCommandPanel, GestureAction.HoneycombLauncher,
-        GestureAction.AppSwitcher, GestureAction.FingertipRing,
+        GestureAction.AppSwitcher, GestureAction.FingertipRing, is GestureAction.QuickWheel,
         ->
             when {
                 trigger.isLongPress -> GestureTriggerMode.CONTINUOUS

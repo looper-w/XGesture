@@ -275,6 +275,13 @@ sealed interface AppNavKey : NavKey {
 
     // Extension tab
     @Serializable data object ExtensionHub : AppNavKey
+    @Serializable data object QuickWheelList : AppNavKey
+    @Serializable data class QuickWheelConfig(val wheelId: String) : AppNavKey
+    @Serializable data class QuickWheelSlotEditor(
+        val wheelId: String,
+        /** `C` 中心容器 / `0:<i>` 一级 / `0:<i>>1:<j>` 二级。 */
+        val path: String,
+    ) : AppNavKey
     @Serializable data object AppCarouselSwitcherSettings : AppNavKey
     @Serializable data object ExtensionExternalInvocations : AppNavKey
     @Serializable data object ExtensionLauncherShortcutMenu : AppNavKey

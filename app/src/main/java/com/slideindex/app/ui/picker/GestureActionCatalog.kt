@@ -159,6 +159,7 @@ object GestureActionCatalog {
         GestureActionType.TASK_SWITCHER,
         GestureActionType.HONEYCOMB_LAUNCHER,
         GestureActionType.HOLOGRAPHIC_LAUNCHER,
+        GestureActionType.QUICK_WHEEL,
         GestureActionType.SEARCH_PANEL,
         GestureActionType.OPEN_LINK,
         GestureActionType.VOLUME_PANEL,
@@ -214,6 +215,7 @@ object GestureActionCatalog {
         add(GestureAction.TaskSwitcher)
         add(GestureAction.HoneycombLauncher)
         add(GestureAction.HolographicLauncher)
+        add(GestureAction.QuickWheel())
         addAll(sharedCoreActions())
         if (includePointerGestureActions) {
             add(GestureAction.OpenFloatingPointerRadialMenu)
@@ -233,6 +235,7 @@ object GestureActionCatalog {
         add(GestureAction.TaskSwitcher)
         add(GestureAction.HoneycombLauncher)
         add(GestureAction.HolographicLauncher)
+        add(GestureAction.QuickWheel())
         addAll(sharedCoreActions())
         add(GestureAction.SnoozeOverlays)
     }

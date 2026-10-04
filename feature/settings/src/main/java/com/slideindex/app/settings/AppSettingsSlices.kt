@@ -112,6 +112,8 @@ data class LauncherSettings(
     /** 为 true 时顶/底与左/右共用同一套槽位。 */
     val fvAppSwitcherLinkSlotAxes: Boolean = FvAppSwitcherLinkFlags.DEFAULT_LINK_SLOT_AXES,
     val holographicLauncher: HolographicLauncherSettings = HolographicLauncherSettings(),
+    /** 「快速启动轮盘」：可创建多个自定义轮盘。 */
+    val quickWheels: List<QuickWheel> = emptyList(),
     val shellCommands: List<com.slideindex.app.shell.ShellCommand> = emptyList(),
     val activityShortcuts: List<com.slideindex.app.activity.ActivityShortcut> = emptyList(),
     /** 桌面图标长按菜单顺序；空表示用默认顺序。 */

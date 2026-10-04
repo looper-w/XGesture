@@ -243,11 +243,18 @@ class GestureSession(
         sessionContinuousPick.clearFingertipRing()
     }
 
+    fun quickWheelContinuousPickActive(): Boolean = sessionContinuousPick.quickWheelActive()
+
+    fun clearQuickWheelContinuousPick() {
+        sessionContinuousPick.clearQuickWheel()
+    }
+
     fun isContinuousPickActive(): Boolean =
         sessionContinuousPick.honeycombActive() ||
             sessionContinuousPick.appSwitcherActive() ||
             sessionContinuousPick.appCarouselSwitcherActive() ||
             sessionContinuousPick.fingertipRingActive() ||
+            sessionContinuousPick.quickWheelActive() ||
             sessionContinuousPick.shellActive() ||
             sessionContinuousPick.taskSwitcherActive() ||
             sessionContinuousPick.quickLauncherActive()
@@ -346,6 +353,11 @@ class GestureSession(
             return
         }
 
+        if (sessionContinuousPick.quickWheelActive()) {
+            com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.onExternalMove(rawX, rawY)
+            return
+        }
+
         if (sessionPanelMode != OverlayPanelMode.NONE) {
             if (sessionIndexMode && indexSession.updateSelection(localX, localY)) {
                 callbacks.onRequestInvalidate()
@@ -423,6 +435,16 @@ class GestureSession(
                     com.slideindex.app.overlay.carousel.AppCarouselSwitcherOverlay.confirmContinuousRelease(
                         rawX,
                         rawY
+                    )
+                    endSession()
+                    return
+                }
+
+                if (sessionContinuousPick.quickWheelActive()) {
+                    sessionContinuousPick.clearQuickWheel()
+                    com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.confirmContinuousRelease(
+                        rawX,
+                        rawY,
                     )
                     endSession()
                     return
@@ -609,6 +631,20 @@ class GestureSession(
                     externalTracking = false
                 )
             }
+            is GestureAction.QuickWheel -> {
+                sessionContinuousPick.quickWheel = false
+                sessionCallbacks.hapticConfirmLaunch()
+                com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.show(
+                    context = actionExecutor.context,
+                    settings = sessionSettings,
+                    wheelId = action.wheelId,
+                    anchorRawX = rawX,
+                    anchorRawY = rawY,
+                    actionExecutor = actionExecutor,
+                    externalTracking = false,
+                    shape = action.shape
+                )
+            }
             GestureAction.HolographicLauncher -> {
                 callbacks.hapticConfirmLaunch()
                 actionExecutor.execute(
@@ -714,7 +750,8 @@ class GestureSession(
         if (sessionContinuousPick.fingertipRingActive() ||
             sessionContinuousPick.honeycombActive() ||
             sessionContinuousPick.appSwitcherActive() ||
-            sessionContinuousPick.appCarouselSwitcherActive()
+            sessionContinuousPick.appCarouselSwitcherActive() ||
+            sessionContinuousPick.quickWheelActive()
         ) {
             return
         }
