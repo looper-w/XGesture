@@ -39,3 +39,27 @@ fun AppSettings.resolveHoneycombLongPressArmed(pressDurationMs: Long): Boolean {
     if (!launchPolicyLongPressEligible()) return false
     return pressDurationMs >= effectiveLongPressDurationMs()
 }
+
+/**
+ * 容器级「打开方式」→ 用于**本次启动**的设置快照。
+ *
+ * 只改「应用启动方式」这一个档位（其它设置原样透传），因此下游（`FreeWindowLauncher` /
+ * 各启动链路）一行都不用改：它们照旧读 `shouldLaunchFullscreen(...)`，只是读到的是容器这一趟的选择。
+ *
+ * - [QuickWheelLaunchMode.INHERIT] → 原样返回（完全交给「应用与启动」）；
+ * - [QuickWheelLaunchMode.FULLSCREEN] → 强制"始终全屏"；
+ * - [QuickWheelLaunchMode.FREE_WINDOW] → 强制"始终小窗"，但**总开关关闭**或**目标被硬排除**
+ *   （桌面 / 系统界面 / 本应用自身，见 `TaskExclusions`）时不生效、回落为全屏。
+ */
+fun AppSettings.withQuickWheelLaunchMode(
+    mode: QuickWheelLaunchMode,
+    targetSupportsFreeWindow: Boolean = true,
+): AppSettings = when {
+    mode == QuickWheelLaunchMode.FULLSCREEN ->
+        copy(launcher = launcher.copy(appLaunchPolicyId = AppLaunchPolicy.ALWAYS_FULLSCREEN.id))
+
+    mode == QuickWheelLaunchMode.FREE_WINDOW && freeWindowEnabled && targetSupportsFreeWindow ->
+        copy(launcher = launcher.copy(appLaunchPolicyId = AppLaunchPolicy.ALWAYS_FREE_WINDOW.id))
+
+    else -> this
+}
