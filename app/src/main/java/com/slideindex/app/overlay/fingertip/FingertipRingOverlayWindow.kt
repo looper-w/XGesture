@@ -100,7 +100,7 @@ object FingertipRingOverlayWindow {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            OverlayWindowTypes.appSwitcherWindowType(hostContext),
+            OverlayWindowTypes.fullscreenLauncherWindowType(hostContext),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -368,8 +368,11 @@ private class FingertipRingOverlayView(context: Context) : View(context) {
         postDelayed(runnable, appSettings.effectiveLongPressDurationMs().toLong())
     }
 
-    private fun GestureAction.usesLaunchPolicy(): Boolean =
-        this is GestureAction.LaunchApp || this is GestureAction.LaunchShortcut
+    private fun GestureAction.usesLaunchPolicy(): Boolean = when (this) {
+        is GestureAction.LaunchApp -> windowMode.followsGlobalPolicy
+        is GestureAction.LaunchShortcut -> true
+        else -> false
+    }
 
     private fun screenCenterLocal(): Pair<Float, Float> {
         getLocationOnScreen(viewLocationOnScreen)

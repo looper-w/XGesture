@@ -261,6 +261,137 @@ class FloatBallGestureDetectorTest {
     }
 
     @Test
+    fun `swipe inward then down with action configured fires SWIPE_IN_DOWN`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_DOWN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        // 首段向内 500px ≥ 侧滑短滑阈值(默认 384px) 记录拐点，第二段向下 200px ≥ 32dp(96px) 且以纵向为主。
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 600f, 1200f, 0)
+        val moveDown = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 600f, 1400f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 600f, 1400f, 0)
+        listOf(down, moveInward, moveDown, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_IN_DOWN, fired)
+        listOf(down, moveInward, moveDown, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `swipe inward then up with action configured fires SWIPE_IN_UP`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_UP to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 600f, 1200f, 0)
+        val moveUp = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 600f, 1000f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 600f, 1000f, 0)
+        listOf(down, moveInward, moveUp, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_IN_UP, fired)
+        listOf(down, moveInward, moveUp, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `inward first then down works for right docked ball`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_DOWN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+            inwardSignProvider = { -1f },
+        )
+        // 右侧停靠：向内 = -x，首段同样要滑够侧滑短滑阈值。
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 980f, 1200f, 0)
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 480f, 1200f, 0)
+        val moveDown = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 480f, 1400f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 480f, 1400f, 0)
+        listOf(down, moveInward, moveDown, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_IN_DOWN, fired)
+        listOf(down, moveInward, moveDown, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `short inward then down fires compound without long inward travel`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_DOWN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        // 首段只需 40dp(120px)：向内 150px 即记录拐点，远低于侧滑短滑阈值 384px。
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 250f, 1200f, 0)
+        val moveDown = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 250f, 1400f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 250f, 1400f, 0)
+        listOf(down, moveInward, moveDown, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_IN_DOWN, fired)
+        listOf(down, moveInward, moveDown, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `short down then inward fires compound below plain swipe threshold`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_DOWN_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        // 首段 150px < 下滑短滑阈值(240px)，但已够混合手势首段 40dp(120px)。
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        val moveDown = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 100f, 1350f, 0)
+        val moveInward = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 300f, 1350f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 300f, 1350f, 0)
+        listOf(down, moveDown, moveInward, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_DOWN_IN, fired)
+        listOf(down, moveDown, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `inward without vertical turn stays short side swipe`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_DOWN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        // 默认 SIDE 短滑阈值 = 320% × 40dp × 3 = 384px，300px 仍算短侧滑。
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 400f, 1200f, 0)
+        val up = MotionEvent.obtain(0, 100, MotionEvent.ACTION_UP, 400f, 1200f, 0)
+        listOf(down, moveInward, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_SIDE_SHORT, fired)
+        listOf(down, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `inward past threshold without vertical turn stays long side swipe`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_IN_DOWN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 1200f, 0)
+        // 首段已达标但第二段没有纵向位移：仍按原来的长侧滑处理，不升级为两段式。
+        val moveInward = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 600f, 1200f, 0)
+        val up = MotionEvent.obtain(0, 100, MotionEvent.ACTION_UP, 600f, 1200f, 0)
+        listOf(down, moveInward, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_SIDE_LONG, fired)
+        listOf(down, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
     fun `reverse along locked axis disarms gesture hint`() {
         val hints = mutableListOf<FloatBallGestureType?>()
         val detector = newDetector(
@@ -586,15 +717,140 @@ class FloatBallGestureDetectorTest {
         moveNext.recycle()
     }
 
+    @Test
+    fun `swipe down then inward with action configured fires SWIPE_DOWN_IN`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_DOWN_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val (down, moveDown, moveInward, up) = compoundDownThenInward(detector)
+        assertEquals(FloatBallGestureType.SWIPE_DOWN_IN, fired)
+        listOf(down, moveDown, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `swipe down then inward without configured action stays plain swipe`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(onGesture = { type, _, _ -> fired = type })
+        val (down, moveDown, moveInward, up) = compoundDownThenInward(detector)
+        // 首段 300px 超过默认下滑短滑阈值(240px)，未配置混合手势时回落为下滑（长）。
+        assertEquals(FloatBallGestureType.SWIPE_DOWN_LONG, fired)
+        listOf(down, moveDown, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `swipe up then inward with action configured fires SWIPE_UP_IN`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_UP_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 700f, 0)
+        // 默认 UP 短滑阈值 = floatBallUpSwipeShortPercent(256) × 40dp × 3 ≈ 308px
+        val moveUp = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 100f, 300f, 0)
+        val moveInward = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 240f, 300f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 240f, 300f, 0)
+        listOf(down, moveUp, moveInward, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_UP_IN, fired)
+        listOf(down, moveUp, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `swipe down then inward for right docked ball uses negative inward sign`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_DOWN_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+            inwardSignProvider = { -1f },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 980f, 200f, 0)
+        val moveDown = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 980f, 500f, 0)
+        val moveInward = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 840f, 500f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 840f, 500f, 0)
+        listOf(down, moveDown, moveInward, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_DOWN_IN, fired)
+        listOf(down, moveDown, moveInward, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `diagonal second segment does not fire compound gesture`() {
+        var fired: FloatBallGestureType? = null
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_DOWN_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 200f, 0)
+        val moveDown = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 100f, 500f, 0)
+        // 第二段沿边(dy=300) 远大于向内(dx=140)，按斜滑处理。
+        val moveDiagonal = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 240f, 800f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 240f, 800f, 0)
+        listOf(down, moveDown, moveDiagonal, up).forEach { detector.onTouchEvent(it) }
+        assertEquals(FloatBallGestureType.SWIPE_DOWN_LONG, fired)
+        listOf(down, moveDown, moveDiagonal, up).forEach { it.recycle() }
+    }
+
+    @Test
+    fun `compound gesture past pick window falls back to pick`() {
+        var fired: FloatBallGestureType? = null
+        var pickEnded = false
+        val detector = newDetector(
+            settings = compoundSettings(
+                FloatBallGestureType.SWIPE_DOWN_IN to com.slideindex.app.gesture.GestureAction.Back,
+            ),
+            onGesture = { type, _, _ -> fired = type },
+            onPickEnd = { pickEnded = true },
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 200f, 0)
+        val moveDown = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 100f, 500f, 0)
+        val moveInward = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 240f, 500f, 0)
+        listOf(down, moveDown, moveInward).forEach { detector.onTouchEvent(it) }
+        // 超过 800ms 取词窗口后抬手：只提交取词，不触发混合手势。
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(900))
+        val up = MotionEvent.obtain(0, 950, MotionEvent.ACTION_UP, 240f, 500f, 0)
+        detector.onTouchEvent(up)
+        assertNull(fired)
+        assertTrue(pickEnded)
+        listOf(down, moveDown, moveInward, up).forEach { it.recycle() }
+    }
+
+    private fun compoundSettings(
+        vararg actions: Pair<FloatBallGestureType, com.slideindex.app.gesture.GestureAction>,
+    ): AppSettings = AppSettings(
+        freeWindow = FreeWindowSettings(freeWindowModeId = FreeWindowMode.STANDARD.id),
+        floatBall = AppSettings().floatBall.copy(floatBallGestureActions = actions.toMap()),
+    )
+
+    private fun compoundDownThenInward(
+        detector: FloatBallGestureDetector,
+    ): List<MotionEvent> {
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 100f, 200f, 0)
+        // 默认 DOWN 短滑阈值 = 200% × 40dp × 3 = 240px，首段 300px 达标并记录拐点。
+        val moveDown = MotionEvent.obtain(0, 50, MotionEvent.ACTION_MOVE, 100f, 500f, 0)
+        // 第二段向内 140px ≥ 32dp(96px)，且沿边分量为 0。
+        val moveInward = MotionEvent.obtain(0, 100, MotionEvent.ACTION_MOVE, 240f, 500f, 0)
+        val up = MotionEvent.obtain(0, 150, MotionEvent.ACTION_UP, 240f, 500f, 0)
+        listOf(down, moveDown, moveInward, up).forEach { detector.onTouchEvent(it) }
+        return listOf(down, moveDown, moveInward, up)
+    }
+
     private fun newDetector(
-        settings: AppSettings = AppSettings(freeWindow = FreeWindowSettings(freeWindowModeId = FreeWindowMode.STANDARD.id)),
-        onPickStart: (Float, Float, Float, Float) -> Unit = { _, _, _, _ -> },
+        settings: AppSettings = AppSettings(freeWindow = FreeWindowSettings(freeWindowModeId = FreeWindowMode.STANDARD.id)),        onPickStart: (Float, Float, Float, Float) -> Unit = { _, _, _, _ -> },
         onPickEnd: () -> Unit = {},
         onPickCancel: () -> Unit = {},
         onPickPreviewStart: (Float, Float) -> Unit = { _, _ -> },
         onPickPreviewProgress: (Float) -> Unit = {},
         onPickPreviewMove: (Float, Float, Float, Float) -> Unit = { _, _, _, _ -> },
         onPickPreviewCancel: () -> Unit = {},
+        inwardSignProvider: () -> Float = { 1f },
         onGesture: (FloatBallGestureType, Float, Float) -> Unit = { _, _, _ -> },
     ): FloatBallGestureDetector {
         val detector = FloatBallGestureDetector()
@@ -610,6 +866,7 @@ class FloatBallGestureDetectorTest {
             onPickPreviewProgress = onPickPreviewProgress,
             onPickPreviewMove = onPickPreviewMove,
             onPickPreviewCancel = onPickPreviewCancel,
+            inwardSignProvider = inwardSignProvider,
         )
         return detector
     }

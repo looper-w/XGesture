@@ -41,7 +41,7 @@ import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.floatball.FloatBallGestureType
 import com.slideindex.app.settings.FloatBallPositionMode
 import com.slideindex.app.settings.FloatBallSide
-import com.slideindex.app.overlay.appswitcher.AppSwitcherOverlayWindow
+import com.slideindex.app.overlay.ringlauncher.RingLauncherOverlayWindow
 import com.slideindex.app.util.PermissionHelper
 import kotlin.math.hypot
 import kotlin.math.max
@@ -78,6 +78,8 @@ object FloatBallOverlay {
     private const val DRAG_PASTE_PICK_UPGRADE_MS = 800L
     /** Defer chrome z-order sync until side-panel enter animation settles. */
     private const val CHROME_RAISE_DEFER_MS = 320L
+    /** 确认"chrome 真的被系统摘掉"的等待时长（排除窗口过渡瞬间的误判）。 */
+    private const val CHROME_REBUILD_CONFIRM_MS = 250L
     /** After deferred pick screenshot lands, let panel layout settle before chrome WM work. */
     private const val PICK_SCREENSHOT_CHROME_SETTLE_MS = 48L
     /** Fallback when deferred screenshot never arrives. */
@@ -184,6 +186,9 @@ object FloatBallOverlay {
     /** Non-null: only re-add triggers on these sides; null = all sides (center/fullscreen panels). */
     private var edgeChromeRaiseSides: Set<PanelSide>? = null
     private var pendingChromeRaiseRunnable: Runnable? = null
+
+    /** 正在等待"确认 chrome 真的被摘掉"的重建窗口（见 showOrUpdate）。 */
+    private var pendingChromeRebuild = false
     private var pendingPickScreenshotChromeFallback: Runnable? = null
 
     /**
@@ -566,7 +571,7 @@ object FloatBallOverlay {
         val current = state.value
         val updated = current.copy(
             floatBall = current.floatBall.copy(
-                floatBallSizeDp = sizeDp?.coerceIn(36f, 72f) ?: current.floatBallSizeDp,
+                floatBallSizeDp = sizeDp?.coerceIn(36f, 96f) ?: current.floatBallSizeDp,
                 floatBallOpacity = opacity?.coerceIn(0f, 1f) ?: current.floatBallOpacity,
                 floatBallVisibleFraction = visibleFraction?.let(FloatBallLayout::coerceVisibleFraction)
                     ?: current.floatBallVisibleFraction,
@@ -680,12 +685,27 @@ object FloatBallOverlay {
         if (isShowing && !areChromeWindowsAttached()) {
             // 熄屏/锁屏后系统可能摘掉 TYPE_ACCESSIBILITY_OVERLAY，本地引用仍在。
             // 先清理再重建，避免 isShowing=true 却永远不 ensureWindows。
-            val persistPosition = onPositionPersisted
-            val persistSide = onActiveSidePersisted
-            dismiss()
-            this.onPositionPersisted = persistPosition
-            this.onActiveSidePersisted = persistSide
-            ensureWindows(hostContext, settings)
+            //
+            // 真机修复：窗口过渡瞬间（例如面板出现 / 前台包名变化）isAttachedToWindow 会短暂为 false，
+            // 但窗口其实还在 WM 里。此处若立刻 dismiss()+ensureWindows()，就是把悬浮球拆掉又装回 ——
+            // 用户看到"每次触发面板，悬浮球闪一下"。logcat 实测调用栈：
+            //   EdgeOverlayHost.refreshOverlaySuppression ← onForegroundPackageChanged
+            //     ← updateForegroundPackage ← SlideIndexAccessibilityForegroundTracker
+            // 因此先延后确认，仍然没挂上才真正重建。
+            if (!pendingChromeRebuild) {
+                pendingChromeRebuild = true
+                mainHandler.postDelayed({
+                    pendingChromeRebuild = false
+                    if (isShowing && !areChromeWindowsAttached()) {
+                        val persistPosition = onPositionPersisted
+                        val persistSide = onActiveSidePersisted
+                        dismiss()
+                        this.onPositionPersisted = persistPosition
+                        this.onActiveSidePersisted = persistSide
+                        ensureWindows(hostContext, settings)
+                    }
+                }, CHROME_REBUILD_CONFIRM_MS)
+            }
         } else if (!isShowing) {
             ensureWindows(hostContext, settings)
         } else {
@@ -911,9 +931,9 @@ object FloatBallOverlay {
 
     fun restoreChromeAfterRegionalPick() = restoreAfterScreenshotCapture()
 
-    fun hideChromeForAppSwitcher() {
+    fun hideChromeForRingLauncher() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { hideChromeForAppSwitcher() }
+            mainHandler.post { hideChromeForRingLauncher() }
             return
         }
         if (sceneState == null) return
@@ -931,9 +951,9 @@ object FloatBallOverlay {
         }
     }
 
-    fun restoreChromeAfterAppSwitcher() {
+    fun restoreChromeAfterRingLauncher() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { restoreChromeAfterAppSwitcher() }
+            mainHandler.post { restoreChromeAfterRingLauncher() }
             return
         }
         displayView?.visibility = View.VISIBLE
@@ -952,7 +972,7 @@ object FloatBallOverlay {
         suppressTouchHostsForLauncherOverlay()
     }
 
-    fun ballCenterForAppSwitcher(settings: AppSettings): Pair<Float, Float>? {
+    fun ballCenterForRingLauncher(settings: AppSettings): Pair<Float, Float>? {
         val view = displayView ?: return null
         val metrics = view.resources.displayMetrics
         val (screenWidthPx, screenHeightPx) = FloatBallScreenMetrics.sizePx(view.context, windowManager)
@@ -984,7 +1004,7 @@ object FloatBallOverlay {
 
     private fun ballLayoutDensityHint(settings: AppSettings, viewDensity: Float): Float {
         val ballPx = FloatBallLayout.ballSizePx(settings, viewDensity).toFloat()
-        return ballPx / settings.floatBallSizeDp.coerceIn(36f, 72f)
+        return ballPx / settings.floatBallSizeDp.coerceIn(36f, 96f)
     }
 
     private fun detachChromeWindowsForCapture() {
@@ -1772,7 +1792,7 @@ object FloatBallOverlay {
     }
 
     private fun isOverlayLauncherAction(action: GestureAction): Boolean =
-        action == GestureAction.AppSwitcher || action == GestureAction.HoneycombLauncher
+        action == GestureAction.RingLauncher || action == GestureAction.HoneycombLauncher
 
     private fun createFloatBallActionExecutor(
         hostContext: Context,
@@ -1788,7 +1808,7 @@ object FloatBallOverlay {
     )
 
     private fun handleFloatBallLauncherCaptureMove(rawX: Float, rawY: Float) {
-        AppSwitcherOverlayWindow.updatePointer(rawX, rawY)
+        RingLauncherOverlayWindow.updatePointer(rawX, rawY)
         HoneycombAppPickerOverlayWindow.updatePointer(rawX, rawY)
     }
 
@@ -1802,15 +1822,15 @@ object FloatBallOverlay {
             ?: displayView?.context?.applicationContext
         val deps = hostContext?.let { OverlayDependencyAccess.overlayDependencies(it) }
         if (hostContext == null || deps == null) {
-            AppSwitcherOverlayWindow.dismiss()
+            RingLauncherOverlayWindow.dismiss()
             HoneycombAppPickerOverlayWindow.dismiss()
             releaseFloatBallLauncherCapture(fromLineStrip)
             return
         }
         val actionExecutor = createFloatBallActionExecutor(hostContext, deps)
         when {
-            AppSwitcherOverlayWindow.isShowing -> {
-                AppSwitcherOverlayWindow.confirmSelection(
+            RingLauncherOverlayWindow.isShowing -> {
+                RingLauncherOverlayWindow.confirmSelection(
                     rawX = rawX,
                     rawY = rawY,
                     actionExecutor = actionExecutor,
@@ -1827,7 +1847,7 @@ object FloatBallOverlay {
             }
         }
         releaseFloatBallLauncherCapture(fromLineStrip)
-        if (!AppSwitcherOverlayWindow.isShowing && !HoneycombAppPickerOverlayWindow.isShowing) {
+        if (!RingLauncherOverlayWindow.isShowing && !HoneycombAppPickerOverlayWindow.isShowing) {
             displayView?.visibility = View.VISIBLE
         }
     }
@@ -1838,7 +1858,7 @@ object FloatBallOverlay {
         } else {
             touchHost?.cancelLauncherCaptureMode()
         }
-        if (AppSwitcherOverlayWindow.isShowing || HoneycombAppPickerOverlayWindow.isShowing) {
+        if (RingLauncherOverlayWindow.isShowing || HoneycombAppPickerOverlayWindow.isShowing) {
             suppressTouchHostsForLauncherOverlay()
         } else {
             clearLauncherAssociatedDragState()
@@ -1854,7 +1874,7 @@ object FloatBallOverlay {
      * 避免 updateViewLayout 把全屏触摸窗抬到启动器之上（部分 OEM 上会挡住圆环）。
      */
     private fun suppressTouchHostsForLauncherOverlay() {
-        if (!AppSwitcherOverlayWindow.isShowing && !HoneycombAppPickerOverlayWindow.isShowing) return
+        if (!RingLauncherOverlayWindow.isShowing && !HoneycombAppPickerOverlayWindow.isShowing) return
         clearLauncherAssociatedDragState()
         touchHost?.forceEndGestureCapture()
         lineTouchHost?.cancelGesture()
@@ -1931,7 +1951,7 @@ object FloatBallOverlay {
             )
         }
         val shown = when (action) {
-            GestureAction.AppSwitcher -> AppSwitcherOverlayWindow.show(
+            GestureAction.RingLauncher -> RingLauncherOverlayWindow.show(
                 context = hostContext,
                 settings = settings,
                 anchorRawX = anchorX,
@@ -1986,7 +2006,7 @@ object FloatBallOverlay {
             ?: displayView?.context?.applicationContext
             ?: return
         val deps = OverlayDependencyAccess.overlayDependencies(hostContext) ?: return
-        val panelSide = if (fromLineStrip && settings.floatBallPositionMode == FloatBallPositionMode.BOTH_EDGES) {
+        val panelSide = if (fromLineStrip && FloatBallLayout.usesEdgeLines(settings)) {
             FloatBallLayout.panelSideForLineStrip(settings)
         } else {
             FloatBallLayout.panelSideFor(settings)
@@ -2004,7 +2024,7 @@ object FloatBallOverlay {
             val (anchorX, anchorY) = if (fromLineStrip) {
                 rawX to rawY
             } else {
-                ballCenterForAppSwitcher(settings) ?: (rawX to rawY)
+                ballCenterForRingLauncher(settings) ?: (rawX to rawY)
             }
             showFloatBallLauncherOverlay(
                 settings = settings,
@@ -2319,7 +2339,7 @@ object FloatBallOverlay {
     ) {
         val settings = settingsState?.value ?: return
         val dockedSide = FloatBallLayout.resolvedActiveSide(settings)
-        val bothEdges = settings.floatBallPositionMode == FloatBallPositionMode.BOTH_EDGES
+        val bothEdges = FloatBallLayout.usesEdgeLines(settings)
         activeSideAtDragStart = if (bothEdges) dockedSide else null
         lineDragEndedWithGesture = false
         if (!slopPhaseBallFollowActive) {
@@ -2347,7 +2367,7 @@ object FloatBallOverlay {
         if (!dragOriginatedFromLine) return
         val fromSide = activeSideAtDragStart ?: return
         val settings = settingsState?.value ?: return
-        if (settings.floatBallPositionMode != FloatBallPositionMode.BOTH_EDGES) return
+        if (!FloatBallLayout.usesEdgeLines(settings)) return
         val targetSide = FloatBallSide.opposite(fromSide)
         if (FloatBallLayout.resolvedActiveSide(settings) != targetSide) {
             applyActiveSide(targetSide)
@@ -2358,7 +2378,7 @@ object FloatBallOverlay {
         if (!dragOriginatedFromLine) return
         val revertSide = activeSideAtDragStart ?: return
         val settings = settingsState?.value ?: return
-        if (settings.floatBallPositionMode != FloatBallPositionMode.BOTH_EDGES) return
+        if (!FloatBallLayout.usesEdgeLines(settings)) return
         if (FloatBallLayout.resolvedActiveSide(settings) != revertSide) {
             applyActiveSide(revertSide)
         }
@@ -2391,7 +2411,7 @@ object FloatBallOverlay {
 
     private fun applyActiveSide(targetSide: FloatBallSide) {
         val settings = settingsState?.value ?: return
-        if (settings.floatBallPositionMode != FloatBallPositionMode.BOTH_EDGES) return
+        if (!FloatBallLayout.usesEdgeLines(settings)) return
         val updated = settings.copy(floatBall = settings.floatBall.copy(floatBallActiveSide = targetSide))
         settingsState?.value = updated
         committedActiveSideUntilPersist = targetSide
@@ -2566,7 +2586,7 @@ object FloatBallOverlay {
         val metrics = view.resources.displayMetrics
         val (screenWidthPx, screenHeightPx) = FloatBallScreenMetrics.sizePx(view.context, windowManager)
         val density = metrics.density
-        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 72f) * density).roundToInt()
+        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 96f) * density).roundToInt()
         val activeSide = FloatBallLayout.resolvedActiveSide(settings)
         val (centerX, centerY) = FloatBallLayout.ballCenterPx(
             settings,
@@ -2592,7 +2612,7 @@ object FloatBallOverlay {
     private fun prepareLineDragStateForSlop() {
         val settings = settingsState?.value ?: return
         val dockedSide = FloatBallLayout.resolvedActiveSide(settings)
-        val bothEdges = settings.floatBallPositionMode == FloatBallPositionMode.BOTH_EDGES
+        val bothEdges = FloatBallLayout.usesEdgeLines(settings)
         if (!bothEdges) return
         dragOriginatedFromLine = true
         slopPhaseFromLineStrip = true
@@ -2655,7 +2675,7 @@ object FloatBallOverlay {
     ) {
         val density = metrics.density
         val bounds = FloatBallScreenMetrics.bounds(displayView!!.context, windowManager)
-        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 72f) * density).roundToInt()
+        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 96f) * density).roundToInt()
         val marginPx = (EDGE_MARGIN_DP * density).roundToInt()
         val screenWidth = bounds.width
         val screenHeight = bounds.height
@@ -2767,7 +2787,7 @@ object FloatBallOverlay {
         val metrics = view.resources.displayMetrics
         val density = metrics.density
         val bounds = FloatBallScreenMetrics.bounds(view.context, windowManager)
-        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 72f) * density)
+        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 96f) * density)
         val (screenWidthPx, screenHeightPx) = FloatBallScreenMetrics.sizePx(view.context, windowManager)
         val activeSide = effectiveActiveSide(settings)
         val (ballCenterX, ballCenterY) = FloatBallLayout.ballCenterPx(
@@ -2808,7 +2828,7 @@ object FloatBallOverlay {
         val metrics = view.resources.displayMetrics
         val density = metrics.density
         val bounds = FloatBallScreenMetrics.bounds(view.context, windowManager)
-        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 72f) * density).roundToInt()
+        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 96f) * density).roundToInt()
         val marginPx = (EDGE_MARGIN_DP * density).roundToInt()
         val screenWidth = bounds.width
         val screenHeight = bounds.height
@@ -3385,7 +3405,7 @@ object FloatBallOverlay {
         val density = metrics.density
         val bounds = dragScreenBounds ?: FloatBallScreenMetrics.bounds(view.context, windowManager)
             .also { dragScreenBounds = it }
-        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 72f) * density).roundToInt()
+        val ballSizePx = (settings.floatBallSizeDp.coerceIn(36f, 96f) * density).roundToInt()
         val marginPx = (EDGE_MARGIN_DP * density).roundToInt()
         val screenWidth = bounds.width
         val screenHeight = bounds.height

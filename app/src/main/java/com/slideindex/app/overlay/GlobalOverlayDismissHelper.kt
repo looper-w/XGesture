@@ -5,7 +5,7 @@ import android.os.Looper
 import android.util.Log
 import com.slideindex.app.copy.UniversalCopyOverlay
 import com.slideindex.app.freezer.FreezerOverlayWindow
-import com.slideindex.app.overlay.appswitcher.AppSwitcherOverlayWindow
+import com.slideindex.app.overlay.ringlauncher.RingLauncherOverlayWindow
 import com.slideindex.app.overlay.holographic.HolographicLauncherOverlayWindow
 import com.slideindex.app.overlay.searchpanel.SearchPanelOverlayWindow
 import com.slideindex.app.overlay.volumepanel.VolumePanelOverlayWindow
@@ -21,13 +21,18 @@ object GlobalOverlayDismissHelper {
     @Volatile
     private var dismissPosted = false
 
-    fun dismissAllPanels() {
+    /**
+     * @param lockScreenBoundary 由熄屏/锁屏触发时传 true：悬浮球提醒交由
+     *   [FloatIconOverlayWindow.handleLockScreenBoundary] 决定是清除还是保留到解锁后补显；
+     *   截图、语言切换等场景保持 false（一律清除）。
+     */
+    fun dismissAllPanels(lockScreenBoundary: Boolean = false) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             if (dismissPosted) return
             dismissPosted = true
             mainHandler.post {
                 dismissPosted = false
-                dismissAllPanels()
+                dismissAllPanels(lockScreenBoundary)
             }
             return
         }
@@ -41,7 +46,7 @@ object GlobalOverlayDismissHelper {
         runCatching { RegionalPickOverlay.dismiss() }
         runCatching { OhoQuickToolsOverlayWindow.dismiss() }
         runCatching { HoneycombAppPickerOverlayWindow.dismiss() }
-        runCatching { AppSwitcherOverlayWindow.dismiss() }
+        runCatching { RingLauncherOverlayWindow.dismiss() }
         runCatching { com.slideindex.app.overlay.fingertip.FingertipRingOverlayWindow.dismiss() }
         runCatching { com.slideindex.app.overlay.carousel.AppCarouselSwitcherOverlay.dismiss() }
         runCatching { com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.dismiss() }
@@ -49,7 +54,13 @@ object GlobalOverlayDismissHelper {
         runCatching { FloatBallStashPanel.dismiss() }
         runCatching { FreezerOverlayWindow.dismiss() }
         runCatching { FloatBallTranslatePanel.dismiss() }
-        runCatching { FloatIconOverlayWindow.dismiss() }
+        runCatching {
+            if (lockScreenBoundary) {
+                FloatIconOverlayWindow.handleLockScreenBoundary()
+            } else {
+                FloatIconOverlayWindow.dismiss()
+            }
+        }
         runCatching { CNoticeOverlayWindow.closePanel() }
         runCatching { MessageReplyOverlayWindow.dismiss() }
         runCatching { ForegroundActivityInspectorOverlayWindow.dismiss() }

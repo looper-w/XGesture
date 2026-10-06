@@ -25,7 +25,7 @@ import com.slideindex.app.overlay.StashPanelInitialTab
 import com.slideindex.app.overlay.FloatingPointerOverlayWindow
 import com.slideindex.app.clipboard.ClipboardFocusReader
 import com.slideindex.app.overlay.HoneycombAppPickerOverlayWindow
-import com.slideindex.app.overlay.appswitcher.AppSwitcherOverlayWindow
+import com.slideindex.app.overlay.ringlauncher.RingLauncherOverlayWindow
 import com.slideindex.app.overlay.holographic.HolographicLauncherOverlayWindow
 import com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow
 import com.slideindex.app.overlay.OhoQuickToolsOverlayWindow
@@ -193,10 +193,10 @@ class ActionExecutor(
                         }
                     )
                 }
-            GestureAction.AppSwitcher ->
+            GestureAction.RingLauncher ->
                 overlayPanels.showStandaloneOverlay(anchorRawY) { y ->
                     val x = anchorRawX ?: (context.resources.displayMetrics.widthPixels / 2f)
-                    AppSwitcherOverlayWindow.show(
+                    RingLauncherOverlayWindow.show(
                         context = context,
                         settings = settings,
                         anchorRawX = x,
@@ -301,7 +301,8 @@ class ActionExecutor(
                 )
                 true
             }
-            is GestureAction.LaunchApp -> launchHelper.launchApp(action.packageName, settings, longPressArmed)
+            is GestureAction.LaunchApp ->
+                launchHelper.launchApp(action.packageName, settings, longPressArmed, action.windowMode)
             is GestureAction.LaunchShortcut -> {
                 launchHelper.launchGestureShortcut(action, settings, longPressArmed)
                 true
@@ -354,6 +355,14 @@ class ActionExecutor(
             GestureAction.MediaNext -> SystemGestureActions.dispatchMediaKey(context, KeyEvent.KEYCODE_MEDIA_NEXT)
             GestureAction.OpenInternetPanel -> SystemGestureActions.openNativeInternetPanel(context)
             GestureAction.OpenVolumePanel -> SystemGestureActions.openNativeVolumePanel(context)
+            GestureAction.VolumeUp -> {
+                SystemGestureActions.volumeUp(context)
+                true
+            }
+            GestureAction.VolumeDown -> {
+                SystemGestureActions.volumeDown(context)
+                true
+            }
             GestureAction.CurrentAppInfo -> SystemGestureActions.openCurrentAppInfo(context)
             GestureAction.ScreenOffKeepAwake -> {
                 com.slideindex.app.overlay.PseudoScreenOffOverlayWindow.toggle(context)

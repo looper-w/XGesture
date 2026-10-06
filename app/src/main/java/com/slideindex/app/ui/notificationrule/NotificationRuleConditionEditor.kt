@@ -19,6 +19,10 @@ import androidx.compose.ui.unit.dp
 import com.slideindex.app.R
 import com.slideindex.app.notification.AppMatchMode
 import com.slideindex.app.notification.AppTarget
+import com.slideindex.app.notification.NotificationAdvancedFilterError
+import com.slideindex.app.notification.NotificationAdvancedFilterJsonParser
+import com.slideindex.app.notification.NotificationAdvancedFilterValidation
+import com.slideindex.app.notification.NotificationAdvancedFilterViolation
 import com.slideindex.app.notification.NotificationRuleChargeMask
 import com.slideindex.app.notification.ScreenMode
 import com.slideindex.app.notification.TextMatchMode
@@ -57,10 +61,8 @@ internal fun NotificationRuleConditionEditor(
     onTimeEndChange: (String) -> Unit,
     weekDays: Set<Int>,
     onWeekDaysChange: (Set<Int>) -> Unit,
-    screenOn: Boolean,
-    onScreenOnChange: (Boolean) -> Unit,
-    screenOff: Boolean,
-    onScreenOffChange: (Boolean) -> Unit,
+    screenMode: ScreenMode,
+    onScreenModeChange: (ScreenMode) -> Unit,
     chargeBattery: Boolean,
     onChargeBatteryChange: (Boolean) -> Unit,
     chargeWired: Boolean,
@@ -94,20 +96,19 @@ internal fun NotificationRuleConditionEditor(
         Column(
             modifier = Modifier.padding(vertical = 8.dp),
         ) {
-            val appModes = AppMatchMode.entries
-            val appModeLabels = listOf(
-                stringResource(R.string.notification_rule_app_mode_all),
-                stringResource(R.string.notification_rule_app_mode_include),
-                stringResource(R.string.notification_rule_app_mode_exclude),
-            )
+            // Order and labels come from NotificationRuleModeLabels, which pairs each enum
+            // constant with its own label. The previous positional mapping was off by one
+            // (AppMatchMode declares INCLUDE, EXCLUDE, ALL while the labels were listed as
+            // ALL, INCLUDE, EXCLUDE), so every selection applied the wrong rule:
+            // "所有应用" stored INCLUDE, "包含" stored EXCLUDE.
+            val appModeEntries = NotificationRuleModeLabels.appModes
+                .map { (mode, labelRes) -> mode to stringResource(labelRes) }
             OverlayDropdownPreference(
                 title = stringResource(R.string.notification_rule_section_apps),
-                items = appModeLabels,
-                selectedIndex = appModes.indexOf(appMode).coerceAtLeast(0),
+                items = appModeEntries.map { it.second },
+                selectedIndex = appModeEntries.indexOfFirst { it.first == appMode }.coerceAtLeast(0),
                 onSelectedIndexChange = { index ->
-                    if (index in appModes.indices) {
-                        onAppModeChange(appModes[index])
-                    }
+                    appModeEntries.getOrNull(index)?.let { onAppModeChange(it.first) }
                 },
             )
             if (appMode != AppMatchMode.ALL) {
@@ -121,25 +122,14 @@ internal fun NotificationRuleConditionEditor(
                 )
             }
 
-            val textModes = TextMatchMode.entries
-            val textModeLabels = listOf(
-                stringResource(R.string.notification_rule_text_mode_all),
-                stringResource(R.string.notification_rule_text_mode_contain_any),
-                stringResource(R.string.notification_rule_text_mode_not_contain_any),
-                stringResource(R.string.notification_rule_text_mode_contain_all),
-                stringResource(R.string.notification_rule_text_mode_not_contain_all),
-                stringResource(R.string.notification_rule_text_mode_contain_and_not),
-                stringResource(R.string.notification_rule_text_mode_regex),
-                stringResource(R.string.notification_rule_text_mode_advanced),
-            )
+            val textModeEntries = NotificationRuleModeLabels.textModes
+                .map { (mode, labelRes) -> mode to stringResource(labelRes) }
             OverlayDropdownPreference(
                 title = stringResource(R.string.notification_rule_section_text),
-                items = textModeLabels,
-                selectedIndex = textModes.indexOf(textMode).coerceAtLeast(0),
+                items = textModeEntries.map { it.second },
+                selectedIndex = textModeEntries.indexOfFirst { it.first == textMode }.coerceAtLeast(0),
                 onSelectedIndexChange = { index ->
-                    if (index in textModes.indices) {
-                        onTextModeChange(textModes[index])
-                    }
+                    textModeEntries.getOrNull(index)?.let { onTextModeChange(it.first) }
                 },
             )
 
@@ -200,6 +190,20 @@ internal fun NotificationRuleConditionEditor(
                             minLines = 4,
                             maxLines = 8,
                         )
+                        Text(
+                            text = stringResource(R.string.notification_rule_advanced_schema),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        advancedFilterErrorMessage(advancedJson)?.let { message ->
+                            Text(
+                                text = message,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
                     }
                 }
                 TextMatchMode.ALL -> Unit
@@ -258,15 +262,20 @@ internal fun NotificationRuleConditionEditor(
             NotificationRuleSectionHeading(
                 text = stringResource(R.string.notification_rule_section_device),
             )
-            CheckboxPreference(
-                title = stringResource(R.string.notification_rule_screen_on),
-                checked = screenOn,
-                onCheckedChange = onScreenOnChange,
+            // 屏幕状态用三选一下拉：亮屏 / 熄屏两个勾选框的「两个都勾」与「两个都不勾」都等于不限，
+            // 保存后无法区分，会把没勾的项回显成已勾选。
+            val screenModeEntries = NotificationRuleModeLabels.screenModes
+                .map { (mode, labelRes) -> mode to stringResource(labelRes) }
+            OverlayDropdownPreference(
+                title = stringResource(R.string.notification_rule_screen_state),
+                items = screenModeEntries.map { it.second },
+                selectedIndex = screenModeEntries.indexOfFirst { it.first == screenMode }.coerceAtLeast(0),
+                onSelectedIndexChange = { index ->
+                    screenModeEntries.getOrNull(index)?.let { onScreenModeChange(it.first) }
+                },
             )
-            CheckboxPreference(
-                title = stringResource(R.string.notification_rule_screen_off),
-                checked = screenOff,
-                onCheckedChange = onScreenOffChange,
+            NotificationRuleSectionHeading(
+                text = stringResource(R.string.notification_rule_charge_state),
             )
             CheckboxPreference(
                 title = stringResource(R.string.notification_rule_charge_battery),
@@ -283,27 +292,49 @@ internal fun NotificationRuleConditionEditor(
                 checked = chargeWireless,
                 onCheckedChange = onChargeWirelessChange,
             )
+            Text(
+                text = stringResource(R.string.notification_rule_charge_unrestricted_hint),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceSecondary,
+            )
         }
     }
 }
 
 @Composable
-private fun appModeLabel(mode: AppMatchMode): String = when (mode) {
-    AppMatchMode.ALL -> stringResource(R.string.notification_rule_app_mode_all)
-    AppMatchMode.INCLUDE -> stringResource(R.string.notification_rule_app_mode_include)
-    AppMatchMode.EXCLUDE -> stringResource(R.string.notification_rule_app_mode_exclude)
+internal fun advancedFilterViolationMessage(violation: NotificationAdvancedFilterViolation): String {
+    val detail = violation.detail
+    return when (violation.error) {
+        NotificationAdvancedFilterError.INVALID_JSON ->
+            stringResource(R.string.notification_rule_advanced_error_invalid_json)
+        NotificationAdvancedFilterError.EMPTY_NODES ->
+            stringResource(R.string.notification_rule_advanced_error_empty_nodes)
+        NotificationAdvancedFilterError.INVALID_MATCH_TYPE ->
+            stringResource(R.string.notification_rule_advanced_error_invalid_match_type, detail)
+        NotificationAdvancedFilterError.UNKNOWN_KEY ->
+            stringResource(R.string.notification_rule_advanced_error_unknown_key, detail)
+        NotificationAdvancedFilterError.UNSUPPORTED_FIELD ->
+            stringResource(R.string.notification_rule_advanced_error_unsupported_field, detail)
+        NotificationAdvancedFilterError.EMPTY_REGEX ->
+            stringResource(R.string.notification_rule_advanced_error_empty_regex)
+        NotificationAdvancedFilterError.INVALID_REGEX ->
+            stringResource(R.string.notification_rule_advanced_error_invalid_regex, detail)
+    }
+}
+
+/**
+ * Returns the reason [json] cannot be used as an advanced filter, or null when it is accepted.
+ * Shared by the inline hint and the save-time guard so both stay in step.
+ */
+internal fun advancedFilterViolation(json: String): NotificationAdvancedFilterViolation? {
+    val parsed = NotificationAdvancedFilterJsonParser.parse(json)
+    return (parsed as? NotificationAdvancedFilterValidation.Invalid)?.violation
 }
 
 @Composable
-private fun textModeLabel(mode: TextMatchMode): String = when (mode) {
-    TextMatchMode.ALL -> stringResource(R.string.notification_rule_text_mode_all)
-    TextMatchMode.CONTAIN_ANY -> stringResource(R.string.notification_rule_text_mode_contain_any)
-    TextMatchMode.NOT_CONTAIN_ANY -> stringResource(R.string.notification_rule_text_mode_not_contain_any)
-    TextMatchMode.CONTAIN_ALL -> stringResource(R.string.notification_rule_text_mode_contain_all)
-    TextMatchMode.NOT_CONTAIN_ALL -> stringResource(R.string.notification_rule_text_mode_not_contain_all)
-    TextMatchMode.CONTAIN_AND_NOT_CONTAIN -> stringResource(R.string.notification_rule_text_mode_contain_and_not)
-    TextMatchMode.REGEX -> stringResource(R.string.notification_rule_text_mode_regex)
-    TextMatchMode.ADVANCED -> stringResource(R.string.notification_rule_text_mode_advanced)
+private fun advancedFilterErrorMessage(json: String): String? {
+    val violation = advancedFilterViolation(json) ?: return null
+    return advancedFilterViolationMessage(violation)
 }
 
 @Composable
@@ -337,18 +368,35 @@ internal fun msToTimeString(ms: Int): String {
     return "%02d:%02d".format(hour, minute)
 }
 
-internal fun resolveScreenMode(on: Boolean, off: Boolean): ScreenMode = when {
-    on && off -> ScreenMode.BOTH
-    on -> ScreenMode.ON
-    off -> ScreenMode.OFF
-    else -> ScreenMode.BOTH
-}
+/**
+ * 编辑页「充电状态」三个勾选框的状态。
+ *
+ * 保存 [toMask] 与回显 [fromMask] 必须成对且可逆，否则会出现「只选了一个手机状态，重进编辑页后
+ * 充电三项被自动勾上」：历史版本把「三项都没勾」保存成不限制（位值 15，三位全选），而回显又按位
+ * 判断，于是三项全被勾上。这里规定不限制只以「三项都未勾选」呈现，且未勾选与全勾都写回不限制，
+ * 于是 `fromMask(toMask(x)) == x` 对每个可表示状态都成立。
+ */
+internal data class ChargeSelection(
+    val battery: Boolean,
+    val wired: Boolean,
+    val wireless: Boolean,
+) {
+    fun toMask(): Int = NotificationRuleChargeMask.canonical(
+        (if (battery) NotificationRuleChargeMask.BATTERY else 0) or
+            (if (wired) NotificationRuleChargeMask.WIRED else 0) or
+            (if (wireless) NotificationRuleChargeMask.WIRELESS else 0),
+    )
 
-internal fun resolveChargeMask(battery: Boolean, wired: Boolean, wireless: Boolean): Int {
-    if (battery && wired && wireless) return NotificationRuleChargeMask.ALL
-    var mask = 0
-    if (battery) mask = mask or NotificationRuleChargeMask.BATTERY
-    if (wired) mask = mask or NotificationRuleChargeMask.WIRED
-    if (wireless) mask = mask or NotificationRuleChargeMask.WIRELESS
-    return if (mask == 0) NotificationRuleChargeMask.ALL else mask
+    companion object {
+        fun fromMask(mask: Int): ChargeSelection =
+            if (NotificationRuleChargeMask.isUnrestricted(mask)) {
+                ChargeSelection(battery = false, wired = false, wireless = false)
+            } else {
+                ChargeSelection(
+                    battery = (mask and NotificationRuleChargeMask.BATTERY) != 0,
+                    wired = (mask and NotificationRuleChargeMask.WIRED) != 0,
+                    wireless = (mask and NotificationRuleChargeMask.WIRELESS) != 0,
+                )
+            }
+    }
 }

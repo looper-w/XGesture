@@ -63,6 +63,9 @@
     <plurals name="honeycomb_launcher_entry_summary">
         <item quantity="other">%d 件を設定済み</item>
     </plurals>
+    <plurals name="fv_ring_launcher_entry_summary">
+        <item quantity="other">%d 項目を設定済み</item>
+    </plurals>
     <plurals name="quick_launcher_entry_summary_panels">
         <item quantity="other">ランチャーパネル %d 個</item>
     </plurals>
@@ -102,6 +105,12 @@
     <plurals name="freezer_unfreeze_all_done">
         <item quantity="other">%d 個のアプリのフリーズを解除しました</item>
     </plurals>
+    <plurals name="freezer_pause_all_done">
+        <item quantity="other">%d 個のアプリを一時停止しました</item>
+    </plurals>
+    <plurals name="freezer_unpause_all_done">
+        <item quantity="other">%d 個のアプリの一時停止を解除しました</item>
+    </plurals>
     <plurals name="freezer_import_frozen_done">
         <item quantity="other">%d 件のアプリをインポートしました</item>
     </plurals>
@@ -122,5 +131,11 @@
     </plurals>
     <plurals name="clipboard_lsposed_whitelist_desc">
         <item quantity="other">%1$d 個のアプリを追加しました</item>
+    </plurals>
+    <plurals name="search_panel_shortcut_index_count">
+        <item quantity="other">ショートカット %d 件を収録</item>
+    </plurals>
+    <plurals name="search_panel_clipboard_index_count">
+        <item quantity="other">クリップボード履歴 %d 件</item>
     </plurals>
 </resources>

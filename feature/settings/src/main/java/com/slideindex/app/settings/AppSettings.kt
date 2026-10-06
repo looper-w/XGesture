@@ -190,6 +190,8 @@ data class AppSettings(
     val freezerAppPackages get() = launcher.freezerAppPackages
     val freezerBootstrapExcludedPackages get() = launcher.freezerBootstrapExcludedPackages
     val freezerShowInLauncher get() = launcher.freezerShowInLauncher
+    val freezerWorkModeId get() = launcher.freezerWorkModeId
+    val freezerWorkMode: FreezerWorkMode get() = FreezerWorkMode.fromId(launcher.freezerWorkModeId)
     val expandPanelSlotActions get() = launcher.expandPanelSlotActions
     val previousAppExcludedPackages get() = launcher.previousAppExcludedPackages
     val excludedAppScopes get() = launcher.excludedAppScopes
@@ -200,11 +202,11 @@ data class AppSettings(
     val honeycombLauncher get() = launcher.honeycombLauncher
     val honeycombDisplay get() = launcher.honeycombDisplay
     val appCarouselSwitcher get() = launcher.appCarouselSwitcher
-    val fvAppSwitcher get() = launcher.fvAppSwitcherVertical
-    val fvAppSwitcherVertical get() = launcher.fvAppSwitcherVertical
-    val fvAppSwitcherHorizontal get() = launcher.fvAppSwitcherHorizontal
-    val fvAppSwitcherLinkAppearanceAxes get() = launcher.fvAppSwitcherLinkAppearanceAxes
-    val fvAppSwitcherLinkSlotAxes get() = launcher.fvAppSwitcherLinkSlotAxes
+    val fvRingLauncher get() = launcher.fvRingLauncherVertical
+    val fvRingLauncherVertical get() = launcher.fvRingLauncherVertical
+    val fvRingLauncherHorizontal get() = launcher.fvRingLauncherHorizontal
+    val fvRingLauncherLinkAppearanceAxes get() = launcher.fvRingLauncherLinkAppearanceAxes
+    val fvRingLauncherLinkSlotAxes get() = launcher.fvRingLauncherLinkSlotAxes
     val holographicLauncher get() = launcher.holographicLauncher
     val shellCommands get() = launcher.shellCommands
     val activityShortcuts get() = launcher.activityShortcuts
@@ -293,8 +295,11 @@ data class AppSettings(
     val floatBallPickBottomTransitionFraction get() = floatBall.floatBallPickBottomTransitionFraction
     val floatBallPickTextFirstPanel get() = floatBall.floatBallPickTextFirstPanel
     val floatBallPickPanelStyle get() = floatBall.floatBallPickPanelStyle
+    val floatBallPickPanelPlacement get() = floatBall.floatBallPickPanelPlacement
     val floatBallPickSearchGridDefaultState get() = floatBall.floatBallPickSearchGridDefaultState
     val floatBallPickSearchGridLastExpanded get() = floatBall.floatBallPickSearchGridLastExpanded
+    val floatBallPickTextModeDefault get() = floatBall.floatBallPickTextModeDefault
+    val floatBallPickTextModeLastMode get() = floatBall.floatBallPickTextModeLastMode
     val floatBallPickDefaultSearchEngineId get() = floatBall.floatBallPickDefaultSearchEngineId
     val floatBallPickAutoSelectAll get() = floatBall.floatBallPickAutoSelectAll
     val floatBallPickCopyDismissPanel get() = floatBall.floatBallPickCopyDismissPanel
@@ -314,6 +319,7 @@ data class AppSettings(
     val floatBallInstantTranslate get() = floatBall.floatBallInstantTranslate
     val floatBallTranslateEngine get() = floatBall.floatBallTranslateEngine
     val floatBallTranslateTargetLang get() = floatBall.floatBallTranslateTargetLang
+    val floatBallTranslateAppPackage get() = floatBall.floatBallTranslateAppPackage
     val floatBallImageSearchPickPanelTransparency get() = floatBall.floatBallImageSearchPickPanelTransparency
     val shareImageOcrHistoryEnabled get() = floatBall.shareImageOcrHistoryEnabled
 
@@ -372,13 +378,14 @@ data class AppSettings(
     val searchPanelFileSearchEnabled get() = searchPanel.searchPanelFileSearchEnabled
     val searchPanelAppSearchEnabled get() = searchPanel.searchPanelAppSearchEnabled
     val searchPanelSettingsSearchEnabled get() = searchPanel.searchPanelSettingsSearchEnabled
+    val searchPanelShortcutSearchEnabled get() = searchPanel.searchPanelShortcutSearchEnabled
+    val searchPanelClipboardSearchEnabled get() = searchPanel.searchPanelClipboardSearchEnabled
     val searchPanelFileTypesEnabled get() = searchPanel.searchPanelFileTypesEnabled
     val searchPanelFileShowFolders get() = searchPanel.searchPanelFileShowFolders
     val searchPanelFileShowSystemFiles get() = searchPanel.searchPanelFileShowSystemFiles
     val searchPanelFilePreviewsEnabled get() = searchPanel.searchPanelFilePreviewsEnabled
     val searchPanelFileFolderWhitelist get() = searchPanel.searchPanelFileFolderWhitelist
     val searchPanelFileFolderBlacklist get() = searchPanel.searchPanelFileFolderBlacklist
-    val searchPanelPresentationMode get() = searchPanel.searchPanelPresentationMode
     val searchPanelBarPosition get() = searchPanel.searchPanelBarPosition
     val searchPanelListOrder get() = searchPanel.searchPanelListOrder
     val searchPanelAppDisplayStyle get() = searchPanel.searchPanelAppDisplayStyle

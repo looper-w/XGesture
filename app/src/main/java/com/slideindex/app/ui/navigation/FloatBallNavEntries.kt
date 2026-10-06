@@ -47,6 +47,7 @@ import com.slideindex.app.ui.picker.ActivityShortcutPickAppScreen
 import com.slideindex.app.ui.picker.MyShortcutsFolderScreen
 import com.slideindex.app.ui.picker.PresetShortcutsFolderScreen
 import com.slideindex.app.ui.picker.ShareImageTargetPickScreen
+import com.slideindex.app.ui.picker.TranslateAppPickScreen
 import com.slideindex.app.ui.picker.ShareTargetPickScreen
 import com.slideindex.app.ui.resolveImageSearchEngine
 import com.slideindex.app.ui.viewmodel.ExtensionSettingsViewModel
@@ -668,7 +669,9 @@ fun NavEntryBuilder.floatBallNavEntries(ctx: MainNavContext) {
             settings = settings,
             onBack = { ctx.navigateBackTo(AppNavKey.FloatBallPick) },
             onPickPanelStyleChange = viewModel::setFloatBallPickPanelStyle,
+            onPickPanelPlacementChange = viewModel::setFloatBallPickPanelPlacement,
             onPickSearchGridDefaultStateChange = viewModel::setFloatBallPickSearchGridDefaultState,
+            onPickTextModeDefaultChange = viewModel::setFloatBallPickTextModeDefault,
             onPickTextFirstPanelChange = viewModel::setFloatBallPickTextFirstPanel,
             onPickAutoSelectAllChange = viewModel::setFloatBallPickAutoSelectAll,
             onPickCopyDismissPanelChange = viewModel::setFloatBallPickCopyDismissPanel,
@@ -702,6 +705,20 @@ fun NavEntryBuilder.floatBallNavEntries(ctx: MainNavContext) {
             onTargetLangChange = viewModel::setTranslateTargetLang,
             onOpenMlKitModels = { ctx.navigate(AppNavKey.TranslateModels) },
             onOpenCloudTranslateSettings = { ctx.navigate(AppNavKey.CloudTranslateSettings) },
+            onOpenTranslateAppPicker = { ctx.navigate(AppNavKey.TranslateAppPicker) },
+        )
+    }
+
+    hiltEntry<AppNavKey.TranslateAppPicker> {
+        val viewModel: TranslateSettingsViewModel = hiltViewModel()
+        val overlaySettings by viewModel.overlaySettings.collectAsStateWithLifecycle()
+        TranslateAppPickScreen(
+            selectedPackageName = overlaySettings.floatBallTranslateAppPackage,
+            onBack = { ctx.navigateBackTo(AppNavKey.FloatBallTranslation) },
+            onSelect = { packageName ->
+                viewModel.setTranslateAppPackage(packageName)
+                ctx.navigateBackTo(AppNavKey.FloatBallTranslation)
+            },
         )
     }
 

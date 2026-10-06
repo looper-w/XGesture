@@ -1,5 +1,26 @@
 package com.slideindex.app.gesture
 
+/**
+ * 单个「启动应用」绑定自身的启动形态。
+ *
+ * - [FOLLOW_GLOBAL]：跟随小窗设置里的全局启动策略（含长按判定），默认值；
+ * - [ALWAYS_FULLSCREEN] / [ALWAYS_FREE_WINDOW]：该绑定固定形态，不受全局策略影响。
+ */
+enum class LaunchWindowMode(val id: Int) {
+    FOLLOW_GLOBAL(0),
+    ALWAYS_FULLSCREEN(1),
+    ALWAYS_FREE_WINDOW(2),
+    ;
+
+    companion object {
+        fun fromId(id: Int): LaunchWindowMode =
+            entries.firstOrNull { it.id == id } ?: FOLLOW_GLOBAL
+    }
+
+    /** 固定形态的绑定不再受全局启动策略（含长按判定）影响。 */
+    val followsGlobalPolicy: Boolean get() = this == FOLLOW_GLOBAL
+}
+
 enum class GestureActionType(val id: Int) {
     OPEN_INDEX(0),
     LAUNCH_APP(1),
@@ -56,7 +77,7 @@ enum class GestureActionType(val id: Int) {
     HONEYCOMB_LAUNCHER(53),
     REGIONAL_SCREENSHOT_PICK(54),
     CLIPBOARD_PICK(55),
-    APP_SWITCHER(56),
+    APP_RING_LAUNCHER(56),
     OPEN_CLIPBOARD_FLOAT(57),
     HOLOGRAPHIC_LAUNCHER(58),
     VOLUME_PANEL(59),
@@ -94,8 +115,12 @@ enum class GestureActionType(val id: Int) {
     SCREEN_SEARCH(88),
     /** 智能截图 (全屏/选区编辑裁剪与贴图) */
     SMART_SCREENSHOT(90),
+    /** 音量增加一级（媒体流），同时弹出系统音量面板。 */
+    VOLUME_UP(91),
+    /** 音量减小一级（媒体流），同时弹出系统音量面板。 */
+    VOLUME_DOWN(92),
     /** 快速启动轮盘：在触发点原地展开自定义同心环快捷轮盘。 */
-    QUICK_WHEEL(91),
+    QUICK_WHEEL(93),
     ;
 
     companion object {
@@ -215,7 +240,8 @@ sealed class GestureAction {
 
     data class LaunchApp(
         val packageName: String,
-        val fullscreen: Boolean = true,
+        /** 该绑定自己的启动形态；落库编码见 [com.slideindex.app.launcher.QuickLauncherItemCodec]。 */
+        val windowMode: LaunchWindowMode = LaunchWindowMode.FOLLOW_GLOBAL,
     ) : GestureAction() {
         override val type = GestureActionType.LAUNCH_APP
         override val payload = packageName
@@ -706,8 +732,8 @@ sealed class GestureAction {
     }
 
     /** FV 风格贴边半圆圆环启动器，按住滑选后松手启动。 */
-    data object AppSwitcher : GestureAction() {
-        override val type = GestureActionType.APP_SWITCHER
+    data object RingLauncher : GestureAction() {
+        override val type = GestureActionType.APP_RING_LAUNCHER
         override val payload = ""
     }
 
@@ -732,6 +758,18 @@ sealed class GestureAction {
     /** 弹出音量面板，同时调节闹钟/铃声/媒体音量与亮度。 */
     data object VolumePanel : GestureAction() {
         override val type = GestureActionType.VOLUME_PANEL
+        override val payload = ""
+    }
+
+    /** 媒体音量增加一级，同时弹出系统音量面板。 */
+    data object VolumeUp : GestureAction() {
+        override val type = GestureActionType.VOLUME_UP
+        override val payload = ""
+    }
+
+    /** 媒体音量减小一级，同时弹出系统音量面板。 */
+    data object VolumeDown : GestureAction() {
+        override val type = GestureActionType.VOLUME_DOWN
         override val payload = ""
     }
 
@@ -880,7 +918,7 @@ sealed class GestureAction {
             TaskSwitcher,
             ShellCommandPanel,
             HoneycombLauncher,
-            AppSwitcher,
+            RingLauncher,
             AppCarouselSwitcher,
             FingertipRing,
             AdjustVolume,
@@ -958,11 +996,13 @@ sealed class GestureAction {
                 GestureActionType.CORNER_INNER_PIN_WHEEL -> CornerInnerPinWheel
                 GestureActionType.SNOOZE_OVERLAYS -> SnoozeOverlays
                 GestureActionType.HONEYCOMB_LAUNCHER -> HoneycombLauncher
-                GestureActionType.APP_SWITCHER -> AppSwitcher
+                GestureActionType.APP_RING_LAUNCHER -> RingLauncher
                 GestureActionType.APP_CAROUSEL_SWITCHER -> AppCarouselSwitcher
                 GestureActionType.FINGERTIP_RING -> FingertipRing
                 GestureActionType.HOLOGRAPHIC_LAUNCHER -> HolographicLauncher
                 GestureActionType.VOLUME_PANEL -> VolumePanel
+                GestureActionType.VOLUME_UP -> VolumeUp
+                GestureActionType.VOLUME_DOWN -> VolumeDown
                 GestureActionType.SCREEN_TRANSLATE -> ScreenTranslate
                 GestureActionType.REMIND -> Remind
                 GestureActionType.REMIND_1M,
@@ -1041,7 +1081,7 @@ fun GestureAction.isContinuousTrackingKind(): Boolean =
 fun GestureAction.supportsContinuousTracking(trigger: GestureTriggerType): Boolean {
     if (!isContinuousTrackingKind()) return false
     return when (this) {
-        GestureAction.AppSwitcher,
+        GestureAction.RingLauncher,
         GestureAction.AppCarouselSwitcher,
         GestureAction.FingertipRing,
         GestureAction.HoneycombLauncher,
@@ -1058,7 +1098,7 @@ fun GestureAction.preferredTriggerMode(trigger: GestureTriggerType): GestureTrig
         GestureAction.OpenIndex ->
             if (!trigger.isPressOrTap) GestureTriggerMode.CONTINUOUS else null
         is GestureAction.QuickLauncher, GestureAction.ShellCommandPanel, GestureAction.HoneycombLauncher,
-        GestureAction.AppSwitcher, GestureAction.FingertipRing, is GestureAction.QuickWheel,
+        GestureAction.RingLauncher, GestureAction.FingertipRing, is GestureAction.QuickWheel,
         ->
             when {
                 trigger.isLongPress -> GestureTriggerMode.CONTINUOUS

@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 
 import com.slideindex.app.R
 
+import com.slideindex.app.floatball.FloatBallGestureGroup
+
 import com.slideindex.app.floatball.FloatBallGestureType
 
 import com.slideindex.app.gesture.GestureAction
@@ -67,8 +69,11 @@ fun FloatBallGestureSettingsScreen(
 ) {
 
     val distanceSectionTitle = stringResource(R.string.float_ball_gesture_distance_section)
-    val actionsSectionTitle = stringResource(R.string.float_ball_gesture_actions_section)
     val longPressSectionTitle = stringResource(R.string.float_ball_gesture_long_press_section)
+    // 分组小标题必须在 Lazy 作用域外解析（settingsLazySmallTitle 的 title 是普通 String）。
+    val gestureGroupTitles = FloatBallGestureGroup.displayOrder.map { group ->
+        group to floatBallGestureGroupTitle(group)
+    }
 
     SettingsScreenScaffold(
         title = stringResource(R.string.float_ball_gesture_settings_title),
@@ -157,41 +162,58 @@ fun FloatBallGestureSettingsScreen(
             )
         )
 
-        settingsLazySmallTitle(
-            key = "section-actions",
-            title = actionsSectionTitle
-        )
-        groupedCardItems(
-            keyPrefix = "float-ball-gesture-actions",
-            items = buildList {
-                FloatBallGestureType.settingsDisplayOrder().forEach { type ->
-                    val action = settings.floatBallGestureActions[type] ?: GestureAction.None
-                    add(
-                        settingsCardScopeItem("action-${type.name}") {
-                            FloatBallGestureActionRow(
-                                type = type,
-                                settings = settings,
-                                title = floatBallGestureLabel(type),
-                                action = action,
-                                enabled = true,
-                                showSettings = action is GestureAction.LaunchApp ||
-                                    action is GestureAction.LaunchShortcut ||
-                                    action is GestureAction.SimulatePointerSwipe ||
-                                    action is GestureAction.ExecuteShellCommand,
-                                onClick = { onOpenActionPick(type) },
-                                onSettingsClick = if (action is GestureAction.ExecuteShellCommand) {
-                                    { onOpenShellCommand(type, action.command) }
-                                } else {
-                                    null
-                                }
-                            )
-                        }
-                    )
+        gestureGroupTitles.forEach { (group, groupTitle) ->
+            settingsLazySmallTitle(
+                key = "section-actions-${group.name.lowercase()}",
+                title = groupTitle
+            )
+            groupedCardItems(
+                keyPrefix = "float-ball-gesture-actions-${group.name.lowercase()}",
+                items = buildList {
+                    group.types.forEach { type ->
+                        val action = settings.floatBallGestureActions[type] ?: GestureAction.None
+                        add(
+                            settingsCardScopeItem("action-${type.name}") {
+                                FloatBallGestureActionRow(
+                                    type = type,
+                                    settings = settings,
+                                    title = floatBallGestureLabel(type),
+                                    action = action,
+                                    enabled = true,
+                                    showSettings = action is GestureAction.LaunchApp ||
+                                        action is GestureAction.LaunchShortcut ||
+                                        action is GestureAction.SimulatePointerSwipe ||
+                                        action is GestureAction.ExecuteShellCommand,
+                                    onClick = { onOpenActionPick(type) },
+                                    onSettingsClick = if (action is GestureAction.ExecuteShellCommand) {
+                                        { onOpenShellCommand(type, action.command) }
+                                    } else {
+                                        null
+                                    }
+                                )
+                            }
+                        )
+                    }
                 }
-            }
-        )
+            )
+        }
 
     }
+
+}
+
+/** 手势分组小标题（穷尽 when，新增分组会编译报错提醒补文案）。 */
+@Composable
+
+internal fun floatBallGestureGroupTitle(group: FloatBallGestureGroup): String = when (group) {
+
+    FloatBallGestureGroup.DOWN_SWIPE -> stringResource(R.string.float_ball_gesture_group_down_swipe)
+
+    FloatBallGestureGroup.UP_SWIPE -> stringResource(R.string.float_ball_gesture_group_up_swipe)
+
+    FloatBallGestureGroup.SIDE_SWIPE -> stringResource(R.string.float_ball_gesture_group_side_swipe)
+
+    FloatBallGestureGroup.TAP -> stringResource(R.string.float_ball_gesture_group_tap)
 
 }
 
@@ -279,17 +301,25 @@ fun floatBallGestureLabel(type: FloatBallGestureType): String = when (type) {
 
     FloatBallGestureType.SWIPE_UP_RETURN -> stringResource(R.string.float_ball_gesture_swipe_up_return)
 
+    FloatBallGestureType.SWIPE_UP_IN -> stringResource(R.string.float_ball_gesture_swipe_up_in)
+
     FloatBallGestureType.SWIPE_DOWN_SHORT -> stringResource(R.string.float_ball_gesture_swipe_down_short)
 
     FloatBallGestureType.SWIPE_DOWN_LONG -> stringResource(R.string.float_ball_gesture_swipe_down_long)
 
     FloatBallGestureType.SWIPE_DOWN_RETURN -> stringResource(R.string.float_ball_gesture_swipe_down_return)
 
+    FloatBallGestureType.SWIPE_DOWN_IN -> stringResource(R.string.float_ball_gesture_swipe_down_in)
+
     FloatBallGestureType.SWIPE_SIDE_SHORT -> stringResource(R.string.float_ball_gesture_swipe_side_short)
 
     FloatBallGestureType.SWIPE_SIDE_LONG -> stringResource(R.string.float_ball_gesture_swipe_side_long)
 
     FloatBallGestureType.SWIPE_SIDE_RETURN -> stringResource(R.string.float_ball_gesture_swipe_side_return)
+
+    FloatBallGestureType.SWIPE_IN_DOWN -> stringResource(R.string.float_ball_gesture_swipe_in_down)
+
+    FloatBallGestureType.SWIPE_IN_UP -> stringResource(R.string.float_ball_gesture_swipe_in_up)
 
     FloatBallGestureType.SINGLE_TAP -> stringResource(R.string.float_ball_gesture_single_tap)
 

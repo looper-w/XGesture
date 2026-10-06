@@ -187,8 +187,10 @@ class QuickWheelCodecTest {
 
     @Test
     fun roundTrip_preservesActionPayloadContainingSeparators() {
-        // 载荷故意混入全部结构分隔符，验证它们不会破坏记录切分。
-        val tricky = "com.foo:bar\u001C\u001D\u001E\u001Fbaz"
+        // 载荷故意混入结构分隔符，验证它们不会破坏记录切分。
+        // ⚠️ 不含 `\u001D`：它已被动作正文层用作「启动应用」的启动形态分隔符
+        //（见 QuickLauncherItemCodec.LAUNCH_WINDOW_MODE_SEP），不属于可用作包名的字符集。
+        val tricky = "com.foo:bar\u001C\u001E\u001Fbaz"
         val wheel = QuickWheel(
             id = "wheel-sep",
             slots = listOf(QuickWheelSlot(tapAction = GestureAction.LaunchApp(tricky))),

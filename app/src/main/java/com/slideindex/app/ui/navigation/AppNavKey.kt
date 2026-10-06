@@ -375,6 +375,7 @@ sealed interface AppNavKey : NavKey {
         val initialLabel: String = "",
     ) : AppNavKey
     @Serializable data object HoneycombDisplaySettings : AppNavKey
+    @Serializable data object RingLauncherSettings : AppNavKey
     @Serializable data object HolographicLauncherSettings : AppNavKey
     @Serializable data object HolographicLauncherHiddenApps : AppNavKey
     @Serializable data object ShellCommands : AppNavKey
@@ -403,6 +404,8 @@ sealed interface AppNavKey : NavKey {
     @Serializable data object SearchPanelPresentationLayout : AppNavKey
     @Serializable data object SearchPanelFileSearch : AppNavKey
     @Serializable data object SearchPanelAppSearch : AppNavKey
+    @Serializable data object SearchPanelShortcutSearch : AppNavKey
+    @Serializable data object SearchPanelClipboardSearch : AppNavKey
     @Serializable data object SearchPanelContactSearch : AppNavKey
     @Serializable data object SearchPanelSystemSettingsSearch : AppNavKey
     @Serializable data object FloatBall : AppNavKey
@@ -459,6 +462,8 @@ sealed interface AppNavKey : NavKey {
         val selectedActivityClassName: String,
     ) : AppNavKey
     @Serializable data object TranslateModels : AppNavKey
+    /** 「选择翻译 App」：引擎选「本地 App」时挑一个能接收取词文本的应用。 */
+    @Serializable data object TranslateAppPicker : AppNavKey
     @Serializable data object FloatingPointerPointer : AppNavKey
     @Serializable data object FloatingPointerJoystick : AppNavKey
     @Serializable data object FloatingPointerRadialMenu : AppNavKey

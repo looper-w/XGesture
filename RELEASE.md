@@ -38,6 +38,38 @@ git diff ${last_tag}..HEAD --name-only --diff-filter=A
 **审计铁律：** 
 - 凡在两次 Release 之间**新增了 ViewModel/Enum/配置类/组件**，代表引入了全新的功能或模式，**100% 必须作为 `Added` 新功能列出**，绝不可仅作为 Bug 修复简写。
 - 汇总审计所有 Commit 与新增文件后，归纳整理出当版完整的 `Added` / `Changed` / `Fixed` 清单，写入 `CHANGELOG.md` 的 `## [{版本号}] - YYYY-MM-DD` 章节中。
+- **同一版必须再写一份英文段落，放进 `CHANGELOG.en.md`**：版本标题与 `### Added` / `### Changed` / `### Fixed` 分组名与中文文件逐字对应，条目一一对应（见下方「1.5 双语更新日志」）。
+
+**文风（硬要求）：** 日志是给用户看的差异清单，不是调试记录，也不是 Commit message 的压缩版。
+
+- 每条一行，动词开头，只写「现在的行为」；禁止「此前…现…」「表现为…」「顺带」这类对比叙事与口语化解释。
+- 禁止出现类名、常量名、方法名、native 参数、分支名（如 `IMMEDIATE`、`FOLDER_MERGE_DWELL_MS`、stackId）；机制细节写进 Commit message，不要写进日志。
+- `Fixed` 只写症状 + 结论，例：「修复侧边默认设为「即时触发」时双击手势无效」。
+- **当仓库历史条目的文风与本规则冲突时，以本规则为准，不要对齐历史。**
+- **定稿前必须先把该版段落贴给维护者确认，确认后才提交与打 Tag。** `update.json` 的 `notes` 与 GitHub Release 正文都由本段落派生（见 `scripts/update-release-manifest.py`），同样受本规则约束，需一并同步。
+
+---
+
+### 1.5 双语更新日志（英文在前）
+
+英文用户此前只能看到中文日志（GitHub Issue 反馈）。现在同一版内容维护两份文件：
+
+| 文件 | 用途 | 谁读 |
+|------|------|------|
+| `CHANGELOG.md` | 中文正本，`update.json` 的 `notes` 由它派生 | 中文用户 |
+| `CHANGELOG.en.md` | 英文版，GitHub Release 正文在前段、`update.json` 的 `notesEn` 由它派生 | 英文及其他非中文用户 |
+
+- **GitHub Release 正文顺序：英文段落在前，空行，中文段落在后**（`release.yml` 用 `--prepend-changelog CHANGELOG.en.md` 实现，无需手工拼接）。
+- **App 内更新弹窗按系统语言选文案**：`zh` 读 `notes`，其他语言读 `notesEn`；任一缺失时自动回落另一份（老 `update.json` 只有 `notes`，不会崩也不会空白）。
+- **发版时英文段落缺失会直接失败**：`release.yml` 调 `update-release-manifest.py` 时带了 `--require-notes-en`，逼着每版都补英文，避免又悄悄退回「只有中文」。
+- 只补了中文、还没来得及写英文时，可临时本地跳过：`--changelog-en=`（显式置空即不生成 `notesEn`），但**不要**把这个开关写进 CI。
+- 英文文风与中文一致：每条一行、动词开头、只写现在的行为，不出现类名/常量名/分支名。
+- 本地预览双语 Release 正文：
+
+```bash
+python scripts/extract-changelog-section.py -v {版本号} \
+  --lint --prepend-changelog CHANGELOG.en.md
+```
 
 ---
 
@@ -51,10 +83,22 @@ git diff ${last_tag}..HEAD --name-only --diff-filter=A
 
 ---
 
+### 2.5 多语言文案（CI 已硬性拦截）
+
+`app/build.gradle.kts` 关闭了 `MissingTranslation` / `ExtraTranslation`，**Lint 不会报缺翻译**——历史上 1.31.0 / 1.33.0 / 1.35.0 都曾漏译日文与阿拉伯文而 CI 全绿。现由独立的 `Translation Check` job 兜底（`scripts/check-translations.py`，纯 Python、不跑 Gradle）：
+
+- 任何 `values-<语言>/` 缺少默认语言（`values/`）里的可翻译条目，或 `values` XML 结构非法（例如资源元素互相嵌套），CI 直接失败；主分支绿了才能打 Tag。
+- 标了 `translatable="false"` 的条目不计入，`values-night`、`values-v31` 这类配置限定符不会被误判成语言。
+- 本地自查：`python scripts/check-translations.py`；`--warn-only` 只报告不失败，`--quiet` 只打印问题。
+
+**新增英文文案时请同时补 `values-zh` / `values-ja` / `values-ar`**，否则过不了 CI。
+
+---
+
 ### 3. 提交并推送 Tag
 
 ```bash
-git add app/build.gradle.kts README.md CHANGELOG.md
+git add app/build.gradle.kts README.md CHANGELOG.md CHANGELOG.en.md
 git commit -m "chore(release): v{版本号} - {简述}"
 git tag -a v{版本号} -m "v{版本号}"
 git push origin main
@@ -171,5 +215,6 @@ gh release view v{版本号}
 | `.github/workflows/ci.yml` | 日常 Push / PR 的持续集成与 Lint 检查 |
 | `update.json` | 应用内检查更新清单（由 CI 全自动生成与维护） |
 | `scripts/extract-changelog-section.py` | 跨平台提取并 Lint 当版 CHANGELOG 段落 |
+| `scripts/check-translations.py` | 校验各语言文案完整性与 `values` 结构（CI 的 Translation Check 调用） |
 | `scripts/update-release-manifest.py` | 跨平台生成 `update.json` + CDN Purge + 远端校验 |
 | `scripts/verify-release-apk.sh` | 校验 Release APK 版本号与 Native 引擎打包完整性 |

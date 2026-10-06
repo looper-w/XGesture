@@ -235,6 +235,33 @@ fun SettingsCardScope.HoneycombLauncherEntryCard(
 }
 
 @Composable
+fun SettingsCardScope.RingLauncherEntryCard(
+    settings: ExtensionHubSettings,
+    enabled: Boolean,
+    outlinedLeadingIcons: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val subtitle = if (enabled) {
+        pluralStringResource(
+            R.plurals.fv_ring_launcher_entry_summary,
+            settings.fvRingLauncherConfiguredCount,
+            settings.fvRingLauncherConfiguredCount,
+        )
+    } else {
+        stringResource(R.string.fv_ring_launcher_entry_desc)
+    }
+    SettingNavigationRow(
+        icon = { label ->
+            Icon(HubLeadingIcons.ringLauncher(outlinedLeadingIcons), contentDescription = label)
+        },
+        title = stringResource(R.string.fv_ring_launcher_entry_title),
+        subtitle = subtitle,
+        enabled = enabled,
+        onClick = onClick,
+    )
+}
+
+@Composable
 fun QuickLauncherLayoutSettings(
     settings: AppSettings,
     enabled: Boolean,

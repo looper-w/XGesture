@@ -17,16 +17,16 @@ import androidx.compose.ui.unit.dp
 import com.slideindex.app.R
 import com.slideindex.app.notification.AppTarget
 import com.slideindex.app.notification.NotificationFilterRule
-import com.slideindex.app.notification.NotificationRuleChargeMask
-import com.slideindex.app.notification.ScreenMode
+import com.slideindex.app.notification.TextMatchMode
+import com.slideindex.app.ui.notificationrule.ChargeSelection
 import com.slideindex.app.ui.notificationrule.NotificationRuleActionPicker
 import com.slideindex.app.ui.notificationrule.NotificationRuleAppPickerDialog
 import com.slideindex.app.ui.notificationrule.NotificationRuleConditionEditor
+import com.slideindex.app.ui.notificationrule.advancedFilterViolation
+import com.slideindex.app.ui.notificationrule.advancedFilterViolationMessage
 import com.slideindex.app.ui.notificationrule.msToTimeString
 import com.slideindex.app.ui.notificationrule.parseLines
 import com.slideindex.app.ui.notificationrule.parseTimeMs
-import com.slideindex.app.ui.notificationrule.resolveChargeMask
-import com.slideindex.app.ui.notificationrule.resolveScreenMode
 import com.slideindex.app.ui.settings.components.LazySettingsItem
 import com.slideindex.app.ui.settings.components.SettingsScreenScaffold
 import com.slideindex.app.ui.viewmodel.NotificationHistoryViewModel
@@ -56,17 +56,11 @@ fun NotificationRuleEditorScreen(
     var timeStart by remember(seed) { mutableStateOf(msToTimeString(seed.timeStartMs)) }
     var timeEnd by remember(seed) { mutableStateOf(msToTimeString(seed.timeEndMs)) }
     var weekDays by remember(seed) { mutableStateOf(seed.weekDays) }
-    var screenOn by remember(seed) { mutableStateOf(seed.screenMode != ScreenMode.OFF) }
-    var screenOff by remember(seed) { mutableStateOf(seed.screenMode != ScreenMode.ON) }
-    var chargeBattery by remember(seed) {
-        mutableStateOf(seed.chargeMask and NotificationRuleChargeMask.BATTERY != 0)
-    }
-    var chargeWired by remember(seed) {
-        mutableStateOf(seed.chargeMask and NotificationRuleChargeMask.WIRED != 0)
-    }
-    var chargeWireless by remember(seed) {
-        mutableStateOf(seed.chargeMask and NotificationRuleChargeMask.WIRELESS != 0)
-    }
+    var screenMode by remember(seed) { mutableStateOf(seed.screenMode) }
+    val seedCharge = remember(seed) { ChargeSelection.fromMask(seed.chargeMask) }
+    var chargeBattery by remember(seed) { mutableStateOf(seedCharge.battery) }
+    var chargeWired by remember(seed) { mutableStateOf(seedCharge.wired) }
+    var chargeWireless by remember(seed) { mutableStateOf(seedCharge.wireless) }
     var actionEntries by remember(seed) { mutableStateOf(seed.actionEntries) }
     var showAppPicker by remember { mutableStateOf(false) }
 
@@ -76,9 +70,15 @@ fun NotificationRuleEditorScreen(
         stringResource(R.string.notification_rule_edit)
     }
 
+    val advancedViolation = advancedFilterViolation(advancedJson)
+    val advancedErrorMessage = advancedViolation?.let { advancedFilterViolationMessage(it) }
+
     val saveRule: () -> Unit = {
         if (actionEntries.isEmpty()) {
             Toast.makeText(context, R.string.notification_rule_invalid, Toast.LENGTH_SHORT).show()
+        } else if (textMode == TextMatchMode.ADVANCED && advancedErrorMessage != null) {
+            // An unusable document would make the rule silently match nothing, so refuse to save.
+            Toast.makeText(context, advancedErrorMessage, Toast.LENGTH_LONG).show()
         } else {
             onSave(
                 NotificationFilterRule(
@@ -98,8 +98,8 @@ fun NotificationRuleEditorScreen(
                     timeStartMs = parseTimeMs(timeStart),
                     timeEndMs = parseTimeMs(timeEnd),
                     weekDays = weekDays,
-                    screenMode = resolveScreenMode(screenOn, screenOff),
-                    chargeMask = resolveChargeMask(chargeBattery, chargeWired, chargeWireless),
+                    screenMode = screenMode,
+                    chargeMask = ChargeSelection(chargeBattery, chargeWired, chargeWireless).toMask(),
                     actionEntries = actionEntries,
                 ),
             )
@@ -150,10 +150,8 @@ fun NotificationRuleEditorScreen(
                 onTimeEndChange = { timeEnd = it },
                 weekDays = weekDays,
                 onWeekDaysChange = { weekDays = it },
-                screenOn = screenOn,
-                onScreenOnChange = { screenOn = it },
-                screenOff = screenOff,
-                onScreenOffChange = { screenOff = it },
+                screenMode = screenMode,
+                onScreenModeChange = { screenMode = it },
                 chargeBattery = chargeBattery,
                 onChargeBatteryChange = { chargeBattery = it },
                 chargeWired = chargeWired,

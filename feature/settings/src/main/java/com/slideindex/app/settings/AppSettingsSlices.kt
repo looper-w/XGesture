@@ -94,6 +94,8 @@ data class LauncherSettings(
     val freezerAppPackages: Set<String> = emptySet(),
     val freezerBootstrapExcludedPackages: Set<String> = emptySet(),
     val freezerShowInLauncher: Boolean = false,
+    /** 冰箱工作模式：面板底部按钮默认执行冻结还是暂停，见 [FreezerWorkMode]。 */
+    val freezerWorkModeId: Int = FreezerWorkMode.DEFAULT.id,
     val expandPanelSlotActions: List<com.slideindex.app.gesture.GestureAction?> = List(8) { null },
     /** “切换上一应用”动作忽略的包名黑名单。 */
     val previousAppExcludedPackages: Set<String> = emptySet(),
@@ -105,12 +107,12 @@ data class LauncherSettings(
     val honeycombLauncher: List<com.slideindex.app.launcher.QuickLauncherItem> = emptyList(),
     val honeycombDisplay: HoneycombDisplaySettings = HoneycombDisplaySettings(),
     val appCarouselSwitcher: AppCarouselSwitcherSettings = AppCarouselSwitcherSettings(),
-    val fvAppSwitcherVertical: FvAppSwitcherSettings = FvAppSwitcherSettings(),
-    val fvAppSwitcherHorizontal: FvAppSwitcherSettings = FvAppSwitcherSettings(),
+    val fvRingLauncherVertical: FvRingLauncherSettings = FvRingLauncherSettings(),
+    val fvRingLauncherHorizontal: FvRingLauncherSettings = FvRingLauncherSettings(),
     /** 为 true 时顶/底与左/右共用同一套外观（圈数、尺寸、半径等）。 */
-    val fvAppSwitcherLinkAppearanceAxes: Boolean = FvAppSwitcherLinkFlags.DEFAULT_LINK_APPEARANCE_AXES,
+    val fvRingLauncherLinkAppearanceAxes: Boolean = FvRingLauncherLinkFlags.DEFAULT_LINK_APPEARANCE_AXES,
     /** 为 true 时顶/底与左/右共用同一套槽位。 */
-    val fvAppSwitcherLinkSlotAxes: Boolean = FvAppSwitcherLinkFlags.DEFAULT_LINK_SLOT_AXES,
+    val fvRingLauncherLinkSlotAxes: Boolean = FvRingLauncherLinkFlags.DEFAULT_LINK_SLOT_AXES,
     val holographicLauncher: HolographicLauncherSettings = HolographicLauncherSettings(),
     /** 「快速启动轮盘」：可创建多个自定义轮盘。 */
     val quickWheels: List<QuickWheel> = emptyList(),
@@ -264,10 +266,21 @@ data class FloatBallSettings(
     val floatBallPickTextFirstPanel: Boolean = false,
     /** Pick panel presentation style: INTEGRATED_SCROLL vs TAB_PAGED. */
     val floatBallPickPanelStyle: PickResultPanelStyle = PickResultPanelStyle.TAB_PAGED,
+    /** 取词面板在屏幕上的落位方式：贴底（默认）或屏幕中间。 */
+    val floatBallPickPanelPlacement: PickResultPanelPlacement = PickResultPanelPlacement.BOTTOM_DOCKED,
     /** Pick panel: default search grid display state (REMEMBER_LAST, ALWAYS_EXPANDED, ALWAYS_COLLAPSED). */
     val floatBallPickSearchGridDefaultState: PickResultSearchGridDefaultState = PickResultSearchGridDefaultState.REMEMBER_LAST,
     /** Pick panel: last search grid expanded state for REMEMBER_LAST mode. */
     val floatBallPickSearchGridLastExpanded: Boolean = false,
+    /** Pick panel: 文本区「点词」进入面板时的默认状态（REMEMBER_LAST / ALWAYS_ON / ALWAYS_OFF）。 */
+    val floatBallPickTextModeDefault: PickResultTextModeDefault = PickResultTextModeDefault.REMEMBER_LAST,
+    /**
+     * Pick panel: 上次退出面板时「点词」的状态，仅 REMEMBER_LAST 生效。
+     *
+     * 存 overlay 的 `PickResultTextMode` 存储键（见 PickResultTextModeStore）；
+     * 空串表示还没有记录过，读取方需回落默认值。
+     */
+    val floatBallPickTextModeLastMode: String = "",
     /** Pick panel: engine used by search-button long-press quick search (null = long press idle). */
     val floatBallPickDefaultSearchEngineId: String? = null,
     /** Pick panel: auto-select all text when the panel opens after word pick or screenshot. */
@@ -300,10 +313,12 @@ data class FloatBallSettings(
     /** 上滑短滑阈值 = percent × 40dp / 100；超过即为长滑。 */
     val floatBallUpSwipeShortPercent: Float = 256f,
     /** When false, translate opens Google Translate in browser; when true, shows in-app overlay. */
-    val floatBallInstantTranslate: Boolean = false,
+    val floatBallInstantTranslate: Boolean = true,
     val floatBallTranslateEngine: FloatBallTranslateEngine = FloatBallTranslateEngine.GOOGLE,
     /** BCP-47 style target language code, or [TranslateTargetLanguages.FOLLOW_APP] to follow app UI language. */
     val floatBallTranslateTargetLang: String = TranslateTargetLanguages.FOLLOW_APP,
+    /** Engine [FloatBallTranslateEngine.LOCAL_APP]: 用户指定的翻译 App 包名；空 = 未选择。 */
+    val floatBallTranslateAppPackage: String = "",
     /** Pick-result card transparency while the in-app translate overlay is open (0=opaque, 1=transparent). */
     val floatBallImageSearchPickPanelTransparency: Float = 0.65f,
     /** Save shared long-image OCR results for later re-open from pick settings. */
@@ -399,6 +414,10 @@ data class SearchPanelSettings(
     val searchPanelFileSearchEnabled: Boolean = true,
     val searchPanelAppSearchEnabled: Boolean = true,
     val searchPanelSettingsSearchEnabled: Boolean = true,
+    /** 应用快捷方式（清单 android.app.shortcuts）搜索。 */
+    val searchPanelShortcutSearchEnabled: Boolean = true,
+    /** 剪贴板历史内容搜索。 */
+    val searchPanelClipboardSearchEnabled: Boolean = true,
     /** Enum names of enabled file types; empty means all. */
     val searchPanelFileTypesEnabled: Set<String> = emptySet(),
     val searchPanelFileShowFolders: Boolean = false,
@@ -406,7 +425,6 @@ data class SearchPanelSettings(
     val searchPanelFilePreviewsEnabled: Boolean = true,
     val searchPanelFileFolderWhitelist: Set<String> = emptySet(),
     val searchPanelFileFolderBlacklist: Set<String> = emptySet(),
-    val searchPanelPresentationMode: SearchPanelPresentationMode = SearchPanelPresentationMode.BOTTOM_SHEET,
     val searchPanelBarPosition: SearchPanelBarPosition = SearchPanelBarPosition.TOP,
     val searchPanelListOrder: SearchPanelListOrder = SearchPanelListOrder.TOP_DOWN,
     val searchPanelAppDisplayStyle: SearchPanelAppDisplayStyle = SearchPanelAppDisplayStyle.ICONS,

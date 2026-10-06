@@ -49,6 +49,7 @@ fun NavEntryBuilder.extensionHubNavEntries(ctx: MainNavContext) {
             onOpenQuickLauncher = { ctx.navigate(AppNavKey.QuickLauncher) },
             onOpenQuickWheel = { ctx.navigate(AppNavKey.QuickWheelList) },
             onOpenHoneycombLauncher = { ctx.navigate(AppNavKey.HoneycombLauncher) },
+            onOpenRingLauncher = { ctx.navigate(AppNavKey.RingLauncherSettings) },
             onOpenHolographicLauncher = { ctx.navigate(AppNavKey.HolographicLauncherSettings) },
             onOpenActivityShortcuts = { ctx.navigate(AppNavKey.ActivityShortcuts) },
             onOpenExternalInvocations = { ctx.navigate(AppNavKey.ExtensionExternalInvocations) },

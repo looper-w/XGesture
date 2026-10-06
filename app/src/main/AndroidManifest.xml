@@ -77,6 +77,11 @@
         <intent>
             <action android:name="android.intent.action.SEND_MULTIPLE" />
         </intent>
+        <!-- 「跳转翻译」要探测谁能接收取词文本（Android 11+ 的包可见性）。 -->
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.CREATE_SHORTCUT" />
         </intent>
@@ -281,7 +286,7 @@
             android:theme="@style/Theme.SlideIndex.Transparent" />
 
         <activity
-            android:name=".service.AppSwitcherSlotPickTrampolineActivity"
+            android:name=".service.RingLauncherSlotPickTrampolineActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:taskAffinity=""
@@ -346,7 +351,7 @@
             android:theme="@style/Theme.SlideIndex.Transparent" />
 
         <activity
-            android:name=".service.AppSwitcherSlotIconEditorTrampolineActivity"
+            android:name=".service.RingLauncherSlotIconEditorTrampolineActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:taskAffinity=""
@@ -387,6 +392,14 @@
 
         <activity
             android:name=".overlay.searchpanel.FilePermissionTrampolineActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@style/Theme.SlideIndex.Transparent" />
+
+        <activity
+            android:name=".overlay.searchpanel.CameraPermissionTrampolineActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleTask"

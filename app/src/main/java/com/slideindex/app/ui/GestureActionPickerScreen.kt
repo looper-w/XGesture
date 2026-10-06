@@ -26,6 +26,7 @@ import com.slideindex.app.data.AppInfo
 import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.ActionPickerCatalogPolicy
 import com.slideindex.app.gesture.GestureTriggerType
+import com.slideindex.app.gesture.LaunchWindowMode
 import com.slideindex.app.gesture.QuickWheelAnchorMode
 import com.slideindex.app.gesture.QuickWheelLaunchShape
 import com.slideindex.app.gesture.launchShortcutFromCreated
@@ -35,6 +36,7 @@ import com.slideindex.app.ui.gesturepicker.actionPickerActionItems
 import com.slideindex.app.ui.gesturepicker.actionPickerAppItems
 import com.slideindex.app.ui.gesturepicker.ActionPickerShortcutRow
 import com.slideindex.app.ui.gesturepicker.actionPickerShortcutItems
+import com.slideindex.app.ui.gesturepicker.GestureLaunchWindowModeDialog
 import com.slideindex.app.ui.gesturepicker.rememberActionPickerFilteredActions
 import com.slideindex.app.ui.gesturepicker.rememberActionPickerFilteredApps
 import com.slideindex.app.ui.miuix.MiuixExpandableSearchIconAction
@@ -109,6 +111,7 @@ fun GestureActionPickerScreen(
     val quickWheelInitialAnchorMode = remember(current) {
         (current as? GestureAction.QuickWheel)?.anchorMode ?: QuickWheelAnchorMode.FOLLOW_FINGER
     }
+    var pendingLaunchApp by remember { mutableStateOf<AppInfo?>(null) }
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -212,7 +215,7 @@ fun GestureActionPickerScreen(
                     actionPickerAppItems(
                         filtered = filteredApps,
                         current = current,
-                        onSelect = { app -> safeSelect(GestureAction.LaunchApp(app.packageName)) }
+                        onSelect = { app -> pendingLaunchApp = app }
                     )
                 }
                 ActionPickerTab.SHORTCUTS -> {
@@ -292,6 +295,22 @@ fun GestureActionPickerScreen(
                     overlayMode = true,
                 )
             }
+        }
+
+        pendingLaunchApp?.let { app ->
+            val currentLaunchApp = current as? GestureAction.LaunchApp
+            GestureLaunchWindowModeDialog(
+                app = app,
+                initialMode = currentLaunchApp
+                    ?.takeIf { it.packageName == app.packageName }
+                    ?.windowMode
+                    ?: LaunchWindowMode.FOLLOW_GLOBAL,
+                onDismiss = { pendingLaunchApp = null },
+                onConfirm = { mode ->
+                    pendingLaunchApp = null
+                    safeSelect(GestureAction.LaunchApp(app.packageName, mode))
+                },
+            )
         }
     }
 }

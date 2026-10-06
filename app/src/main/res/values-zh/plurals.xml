@@ -63,6 +63,9 @@
     <plurals name="honeycomb_launcher_entry_summary">
         <item quantity="other">已配置 %d 项</item>
     </plurals>
+    <plurals name="fv_ring_launcher_entry_summary">
+        <item quantity="other">已配置 %d 项</item>
+    </plurals>
     <plurals name="quick_launcher_entry_summary_panels">
         <item quantity="other">%d 个启动面板</item>
     </plurals>
@@ -105,6 +108,12 @@
     <plurals name="freezer_unfreeze_all_done">
         <item quantity="other">已解冻 %d 个应用</item>
     </plurals>
+    <plurals name="freezer_pause_all_done">
+        <item quantity="other">已暂停 %d 个应用</item>
+    </plurals>
+    <plurals name="freezer_unpause_all_done">
+        <item quantity="other">已取消暂停 %d 个应用</item>
+    </plurals>
     <plurals name="freezer_import_frozen_done">
         <item quantity="other">已导入 %d 个应用</item>
     </plurals>
@@ -122,5 +131,11 @@
     </plurals>
     <plurals name="widget_group_count">
         <item quantity="other">%d 个小组件</item>
+    </plurals>
+    <plurals name="search_panel_shortcut_index_count">
+        <item quantity="other">已收录 %d 个快捷方式</item>
+    </plurals>
+    <plurals name="search_panel_clipboard_index_count">
+        <item quantity="other">%d 条剪贴板记录</item>
     </plurals>
 </resources>

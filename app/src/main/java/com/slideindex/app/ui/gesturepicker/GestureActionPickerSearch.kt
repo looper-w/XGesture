@@ -6,7 +6,6 @@ import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.core.content.ContextCompat
 import com.slideindex.app.R
 import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.GestureActionType
@@ -123,6 +122,18 @@ fun gestureActionSearchAliases(context: Context, action: GestureAction): List<St
         context.getString(R.string.gesture_search_volume_3),
         "volume panel",
     )
+    GestureActionType.VOLUME_UP -> listOf(
+        context.getString(R.string.gesture_search_volume_1),
+        context.getString(R.string.gesture_search_volume_2),
+        context.getString(R.string.gesture_search_volume_3),
+        "volume up",
+    )
+    GestureActionType.VOLUME_DOWN -> listOf(
+        context.getString(R.string.gesture_search_volume_1),
+        context.getString(R.string.gesture_search_volume_2),
+        context.getString(R.string.gesture_search_volume_3),
+        "volume down",
+    )
     GestureActionType.SIMULATE_KEY_EVENT -> listOf(
         context.getString(R.string.gesture_search_keyevent_1),
         context.getString(R.string.gesture_search_keyevent_2),
@@ -171,6 +182,8 @@ fun gestureActionDescriptionText(context: Context, action: GestureAction): Strin
         GestureActionType.SNOOZE_OVERLAYS -> context.getString(R.string.gesture_action_snooze_overlays_desc)
         GestureActionType.OPEN_INTERNET_PANEL -> context.getString(R.string.gesture_action_open_internet_panel_desc)
         GestureActionType.OPEN_VOLUME_PANEL -> context.getString(R.string.gesture_action_open_volume_panel_desc)
+        GestureActionType.VOLUME_UP -> context.getString(R.string.gesture_action_volume_up_desc)
+        GestureActionType.VOLUME_DOWN -> context.getString(R.string.gesture_action_volume_down_desc)
         GestureActionType.CURRENT_APP_INFO -> context.getString(R.string.gesture_action_current_app_info_desc)
         GestureActionType.SIMULATE_KEY_EVENT -> context.getString(R.string.gesture_action_simulate_key_event_desc)
         else -> null
@@ -218,7 +231,7 @@ fun gestureActionLabelText(context: Context, action: GestureAction): String = wh
         GestureActionType.OPEN_INDEX -> context.getString(R.string.gesture_action_open_index)
         GestureActionType.QUICK_LAUNCHER -> context.getString(R.string.gesture_action_quick_launcher)
         GestureActionType.HONEYCOMB_LAUNCHER -> context.getString(R.string.gesture_action_honeycomb_launcher)
-        GestureActionType.APP_SWITCHER -> context.getString(R.string.gesture_action_app_switcher)
+        GestureActionType.APP_RING_LAUNCHER -> context.getString(R.string.gesture_action_ring_launcher)
         GestureActionType.APP_CAROUSEL_SWITCHER -> context.getString(R.string.gesture_action_app_carousel_switcher)
         GestureActionType.FINGERTIP_RING -> context.getString(R.string.gesture_action_fingertip_ring)
         GestureActionType.HOLOGRAPHIC_LAUNCHER -> context.getString(R.string.gesture_action_holographic_launcher)
@@ -255,6 +268,8 @@ fun gestureActionLabelText(context: Context, action: GestureAction): String = wh
         GestureActionType.SEARCH_PANEL -> context.getString(R.string.gesture_action_search_panel)
         GestureActionType.OPEN_LINK -> context.getString(R.string.gesture_action_open_link)
         GestureActionType.VOLUME_PANEL -> context.getString(R.string.gesture_action_volume_panel)
+        GestureActionType.VOLUME_UP -> context.getString(R.string.gesture_action_volume_up)
+        GestureActionType.VOLUME_DOWN -> context.getString(R.string.gesture_action_volume_down)
         GestureActionType.SCREEN_TRANSLATE -> context.getString(R.string.gesture_action_screen_translate)
         GestureActionType.REMIND,
         GestureActionType.REMIND_1M,
@@ -366,7 +381,7 @@ fun gestureActionLabel(action: GestureAction, settings: AppSettings? = null): St
         GestureActionType.OPEN_INDEX -> stringResource(R.string.gesture_action_open_index)
         GestureActionType.QUICK_LAUNCHER -> stringResource(R.string.gesture_action_quick_launcher)
         GestureActionType.HONEYCOMB_LAUNCHER -> stringResource(R.string.gesture_action_honeycomb_launcher)
-        GestureActionType.APP_SWITCHER -> stringResource(R.string.gesture_action_app_switcher)
+        GestureActionType.APP_RING_LAUNCHER -> stringResource(R.string.gesture_action_ring_launcher)
         GestureActionType.APP_CAROUSEL_SWITCHER -> stringResource(R.string.gesture_action_app_carousel_switcher)
         GestureActionType.FINGERTIP_RING -> stringResource(R.string.gesture_action_fingertip_ring)
         GestureActionType.HOLOGRAPHIC_LAUNCHER -> stringResource(R.string.gesture_action_holographic_launcher)
@@ -403,6 +418,8 @@ fun gestureActionLabel(action: GestureAction, settings: AppSettings? = null): St
         GestureActionType.SEARCH_PANEL -> stringResource(R.string.gesture_action_search_panel)
         GestureActionType.OPEN_LINK -> stringResource(R.string.gesture_action_open_link)
         GestureActionType.VOLUME_PANEL -> stringResource(R.string.gesture_action_volume_panel)
+        GestureActionType.VOLUME_UP -> stringResource(R.string.gesture_action_volume_up)
+        GestureActionType.VOLUME_DOWN -> stringResource(R.string.gesture_action_volume_down)
         GestureActionType.SCREEN_TRANSLATE -> stringResource(R.string.gesture_action_screen_translate)
         GestureActionType.REMIND,
         GestureActionType.REMIND_1M,
@@ -492,6 +509,8 @@ fun gestureActionDescription(action: GestureAction): String? = when (action.type
     GestureActionType.SEARCH_PANEL -> stringResource(R.string.gesture_action_search_panel_desc)
     GestureActionType.OPEN_LINK -> stringResource(R.string.gesture_action_open_link_desc)
     GestureActionType.VOLUME_PANEL -> stringResource(R.string.gesture_action_volume_panel_desc)
+    GestureActionType.VOLUME_UP -> stringResource(R.string.gesture_action_volume_up_desc)
+    GestureActionType.VOLUME_DOWN -> stringResource(R.string.gesture_action_volume_down_desc)
     GestureActionType.SCREEN_TRANSLATE -> stringResource(R.string.gesture_action_screen_translate_desc)
     GestureActionType.UNIVERSAL_COPY -> stringResource(R.string.gesture_action_universal_copy_desc)
     GestureActionType.SCREEN_SEARCH -> stringResource(R.string.gesture_action_screen_search_desc)
@@ -590,9 +609,7 @@ fun gestureActionPermissionHintText(context: Context, action: GestureAction): St
             context.getString(PrivilegeUiStrings.shellActionPermissionRes())
         }
         GestureActionType.FLASHLIGHT -> {
-            if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-            ) {
+            if (PermissionHelper.hasCameraPermission(context)) {
                 return null
             }
             context.getString(R.string.gesture_action_flashlight_permission)
@@ -690,11 +707,8 @@ fun requestPermissionForAdjustAction(context: Context, action: GestureAction) {
         ->
             PermissionHelper.requestWriteSettingsAccess(context)
         GestureAction.Flashlight -> {
-            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = android.net.Uri.fromParts("package", context.packageName, null)
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            runCatching { context.startActivity(intent) }
+            // 已授权（含「仅在使用时允许」）时绝不跳转；仅缺失时请求，而不是把用户丢到应用信息页。
+            com.slideindex.app.overlay.searchpanel.CameraPermissionTrampolineActivity.ensureGranted(context)
         }
         GestureAction.QuickToolsOverlay -> {
             if (!PermissionHelper.isAccessibilityServiceEnabledForOverlays(context)) {

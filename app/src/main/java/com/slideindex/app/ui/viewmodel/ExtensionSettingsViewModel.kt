@@ -495,7 +495,7 @@ class ExtensionSettingsViewModel @Inject constructor(
 
     fun setFloatBallSizeDp(sizeDp: Float) = launchOptimisticSettingsWrite(
         optimisticUpdate = { settings ->
-            settings.copy(floatBall = settings.floatBall.copy(floatBallSizeDp = sizeDp.coerceIn(36f, 72f)))
+            settings.copy(floatBall = settings.floatBall.copy(floatBallSizeDp = sizeDp.coerceIn(36f, 96f)))
         },
         block = { settingsRepository.setFloatBallSizeDp(sizeDp) },
     )
@@ -624,6 +624,12 @@ class ExtensionSettingsViewModel @Inject constructor(
         settingsRepository.setFloatBallPickPanelStyle(style)
     }
 
+    fun setFloatBallPickPanelPlacement(
+        placement: com.slideindex.app.settings.PickResultPanelPlacement,
+    ) = launchSettingsWrite {
+        settingsRepository.setFloatBallPickPanelPlacement(placement)
+    }
+
     fun setFloatBallPickSearchGridDefaultState(state: com.slideindex.app.settings.PickResultSearchGridDefaultState) = launchSettingsWrite {
         settingsRepository.setFloatBallPickSearchGridDefaultState(state)
     }
@@ -631,6 +637,11 @@ class ExtensionSettingsViewModel @Inject constructor(
     fun setFloatBallPickSearchGridLastExpanded(expanded: Boolean) = launchSettingsWrite {
         settingsRepository.setFloatBallPickSearchGridLastExpanded(expanded)
     }
+
+    fun setFloatBallPickTextModeDefault(state: com.slideindex.app.settings.PickResultTextModeDefault) =
+        launchSettingsWrite {
+            settingsRepository.setFloatBallPickTextModeDefault(state)
+        }
 
     fun setFloatBallPickDefaultSearchEngineId(id: String?) = launchSettingsWrite {
         settingsRepository.setFloatBallPickDefaultSearchEngineId(id)
@@ -680,5 +691,28 @@ class ExtensionSettingsViewModel @Inject constructor(
 
     fun setFloatBallRegionalCancelSlopDp(value: Float) = launchSettingsWrite {
         settingsRepository.setFloatBallRegionalCancelSlopDp(value)
+    }
+
+    fun setFvRingLauncherSettings(
+        axis: com.slideindex.app.settings.FvRingLauncherAxis,
+        settings: com.slideindex.app.settings.FvRingLauncherSettings,
+    ) = launchSettingsWrite {
+        settingsRepository.setFvRingLauncherSettings(axis, settings)
+    }
+
+    fun setFvRingLauncherLinkAppearanceAxes(
+        enabled: Boolean,
+        activeAxis: com.slideindex.app.settings.FvRingLauncherAxis = com.slideindex.app.settings.FvRingLauncherAxis.VERTICAL,
+        mergeDirection: com.slideindex.app.settings.FvRingLauncherAxisMergeDirection? = null,
+    ) = launchSettingsWrite {
+        settingsRepository.setFvRingLauncherLinkAppearanceAxes(enabled, activeAxis, mergeDirection)
+    }
+
+    fun setFvRingLauncherLinkSlotAxes(
+        enabled: Boolean,
+        activeAxis: com.slideindex.app.settings.FvRingLauncherAxis = com.slideindex.app.settings.FvRingLauncherAxis.VERTICAL,
+        mergeDirection: com.slideindex.app.settings.FvRingLauncherAxisMergeDirection? = null,
+    ) = launchSettingsWrite {
+        settingsRepository.setFvRingLauncherLinkSlotAxes(enabled, activeAxis, mergeDirection)
     }
 }

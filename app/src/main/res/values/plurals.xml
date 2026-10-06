@@ -84,6 +84,10 @@
         <item quantity="one">%d configured</item>
         <item quantity="other">%d configured</item>
     </plurals>
+    <plurals name="fv_ring_launcher_entry_summary">
+        <item quantity="one">%d item configured</item>
+        <item quantity="other">%d items configured</item>
+    </plurals>
     <plurals name="quick_launcher_entry_summary_panels">
         <item quantity="one">%d launcher panel</item>
         <item quantity="other">%d launcher panels</item>
@@ -136,6 +140,14 @@
         <item quantity="one">Unfroze %d app</item>
         <item quantity="other">Unfroze %d apps</item>
     </plurals>
+    <plurals name="freezer_pause_all_done">
+        <item quantity="one">Paused %d app</item>
+        <item quantity="other">Paused %d apps</item>
+    </plurals>
+    <plurals name="freezer_unpause_all_done">
+        <item quantity="one">Resumed %d app</item>
+        <item quantity="other">Resumed %d apps</item>
+    </plurals>
     <plurals name="freezer_import_frozen_done">
         <item quantity="one">Imported %d app</item>
         <item quantity="other">Imported %d apps</item>
@@ -163,5 +175,13 @@
     <plurals name="clipboard_lsposed_whitelist_desc">
         <item quantity="one">%1$d app added</item>
         <item quantity="other">%1$d apps added</item>
+    </plurals>
+    <plurals name="search_panel_shortcut_index_count">
+        <item quantity="one">%d shortcut indexed</item>
+        <item quantity="other">%d shortcuts indexed</item>
+    </plurals>
+    <plurals name="search_panel_clipboard_index_count">
+        <item quantity="one">%d clipboard entry</item>
+        <item quantity="other">%d clipboard entries</item>
     </plurals>
 </resources>
