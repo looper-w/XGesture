@@ -60,11 +60,9 @@ import com.slideindex.app.overlay.quickwheel.QuickWheelSlotIcon
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.QuickWheel
 import com.slideindex.app.settings.QuickWheelIconSource
-import com.slideindex.app.settings.QuickWheelLaunchMode
 import com.slideindex.app.settings.QuickWheelLongPressTrigger
 import com.slideindex.app.settings.QuickWheelSlot
 import com.slideindex.app.settings.QuickWheelTapTrigger
-import com.slideindex.app.settings.shouldLaunchFullscreen
 import com.slideindex.app.settings.slotAt
 import com.slideindex.app.ui.gesturepicker.gestureActionLabelText
 import com.slideindex.app.ui.gesturepicker.launchShortcutDisplayLabel
@@ -276,7 +274,6 @@ fun QuickWheelSlotEditorScreen(
             QuickWheelSlotEditorPage.SlotSettings -> {
                 QuickWheelSlotSettingsPage(
                     draft = draft,
-                    appSettings = appSettings,
                     isExisting = isExisting,
                     onExit = onExit,
                     onSave = { onSave(draft) },
@@ -480,8 +477,6 @@ fun QuickWheelSlotEditorScreen(
 @Composable
 private fun QuickWheelSlotSettingsPage(
     draft: QuickWheelSlot,
-    /** 只用于「打开方式」的说明行（读总开关与「应用与启动」的启动方式），不参与保存。 */
-    appSettings: AppSettings,
     isExisting: Boolean,
     onExit: () -> Unit,
     onSave: () -> Unit,
@@ -610,20 +605,6 @@ private fun QuickWheelSlotSettingsPage(
                         )
                     },
                 )
-                add(
-                    settingsCardScopeItem("tap-launch-mode") {
-                        QuickWheelLaunchModeRow(
-                            mode = draft.tapLaunchMode,
-                            freeWindowEnabled = appSettings.freeWindowEnabled,
-                            hint = quickWheelLaunchHintText(
-                                appSettings = appSettings,
-                                mode = draft.tapLaunchMode,
-                                longPressAction = false,
-                            ),
-                            onSelect = { value -> onPatch { it.copy(tapLaunchMode = value) } },
-                        )
-                    },
-                )
             },
         )
 
@@ -698,20 +679,6 @@ private fun QuickWheelSlotSettingsPage(
                         )
                     },
                 )
-                add(
-                    settingsCardScopeItem("long-launch-mode") {
-                        QuickWheelLaunchModeRow(
-                            mode = draft.longPressLaunchMode,
-                            freeWindowEnabled = appSettings.freeWindowEnabled,
-                            hint = quickWheelLaunchHintText(
-                                appSettings = appSettings,
-                                mode = draft.longPressLaunchMode,
-                                longPressAction = true,
-                            ),
-                            onSelect = { value -> onPatch { it.copy(longPressLaunchMode = value) } },
-                        )
-                    },
-                )
             },
         )
 
@@ -724,8 +691,6 @@ private fun <T> QuickWheelChipRow(
     label: String,
     options: List<Pair<String, T>>,
     selected: T,
-    /** 逐项是否可点（默认全可点）：用于"总开关关闭时禁用『全屏 / 小窗』"这类情形。 */
-    optionEnabled: (T) -> Boolean = { true },
     onSelect: (T) -> Unit,
 ) {
     Column(
@@ -743,84 +708,12 @@ private fun <T> QuickWheelChipRow(
             options.forEach { (text, value) ->
                 FilterChip(
                     selected = selected == value,
-                    enabled = optionEnabled(value),
                     onClick = { onSelect(value) },
                     label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
                 )
             }
         }
     }
-}
-
-/**
- * 一个动作的「打开方式」行：三档 Chip + 一行"当前会怎样"的说明。
- *
- * 单击动作 / 长按动作各有一份（容器里分开设置）。
- */
-@Composable
-private fun QuickWheelLaunchModeRow(
-    mode: QuickWheelLaunchMode,
-    freeWindowEnabled: Boolean,
-    hint: String,
-    onSelect: (QuickWheelLaunchMode) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        QuickWheelChipRow(
-            label = stringResource(R.string.quick_wheel_launch_mode),
-            options = listOf(
-                stringResource(R.string.quick_wheel_launch_inherit) to QuickWheelLaunchMode.INHERIT,
-                stringResource(R.string.quick_wheel_launch_fullscreen) to QuickWheelLaunchMode.FULLSCREEN,
-                stringResource(R.string.quick_wheel_launch_free_window) to
-                    QuickWheelLaunchMode.FREE_WINDOW,
-            ),
-            selected = mode,
-            // 「应用与启动」没开自由窗口时，「全屏 / 小窗」不给选（"跟随"始终可点，
-            // 便于把以前选过的小窗改回来）。此时容器设置整体不生效 —— 一律全屏。
-            optionEnabled = { option -> option == QuickWheelLaunchMode.INHERIT || freeWindowEnabled },
-            onSelect = onSelect,
-        )
-        Text(
-            text = hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 12.dp),
-        )
-    }
-}
-
-/**
- * 「打开方式」下方那行"当前会怎样"的说明（**只描述这一个动作**）。
- *
- * 明确写出**结果 + 来源**（本容器设置 / 跟随「应用与启动」/ 总开关未开），避免"选了却没生效、
- * 又不知道为什么"。跟随语义：单击动作按"非长按"、长按动作按"长按"参与那一页的四档判定。
- */
-@Composable
-private fun quickWheelLaunchHintText(
-    appSettings: AppSettings,
-    mode: QuickWheelLaunchMode,
-    longPressAction: Boolean,
-): String {
-    if (!appSettings.freeWindowEnabled) {
-        return stringResource(R.string.quick_wheel_launch_gate_off)
-    }
-    val textFullscreen = stringResource(R.string.quick_wheel_launch_fullscreen)
-    val textFreeWindow = stringResource(R.string.quick_wheel_launch_free_window)
-    val (result, source) = when (mode) {
-        QuickWheelLaunchMode.INHERIT -> {
-            val fullscreen = appSettings.shouldLaunchFullscreen(longPressTriggered = longPressAction)
-            (if (fullscreen) textFullscreen else textFreeWindow) to
-                stringResource(R.string.quick_wheel_launch_source_global)
-        }
-
-        QuickWheelLaunchMode.FULLSCREEN ->
-            textFullscreen to stringResource(R.string.quick_wheel_launch_source_container)
-
-        QuickWheelLaunchMode.FREE_WINDOW ->
-            textFreeWindow to stringResource(R.string.quick_wheel_launch_source_container)
-    }
-    return stringResource(R.string.quick_wheel_launch_hint_format, result, source)
 }
 
 @Composable

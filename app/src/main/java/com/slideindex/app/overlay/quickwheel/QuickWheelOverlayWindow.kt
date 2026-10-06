@@ -9,7 +9,6 @@ import android.view.WindowManager
 import androidx.compose.ui.platform.ComposeView
 import com.slideindex.app.di.OverlayDependencyAccess
 import com.slideindex.app.gesture.ActionExecutor
-import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.GestureActionType
 import com.slideindex.app.gesture.QuickWheelAnchorMode
 import com.slideindex.app.gesture.QuickWheelLaunchShape
@@ -20,12 +19,9 @@ import com.slideindex.app.overlay.layout.QuickWheelAdaptiveScreen
 import com.slideindex.app.overlay.layout.QuickWheelLayoutEngine
 import com.slideindex.app.overlay.layout.QuickWheelShape
 import com.slideindex.app.util.PermissionHelper
-import com.slideindex.app.util.TaskExclusions
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.QuickWheel
-import com.slideindex.app.settings.QuickWheelLaunchMode
 import com.slideindex.app.settings.QuickWheelSlot
-import com.slideindex.app.settings.withQuickWheelLaunchMode
 import com.slideindex.app.ui.theme.OverlayAwareModuleTheme
 import com.slideindex.app.ui.toWheelShapeOrNull
 
@@ -45,9 +41,6 @@ object QuickWheelOverlayWindow {
     private var windowManager: WindowManager? = null
     private var activeExecutor: ActionExecutor? = null
     private var activeSettings: AppSettings = AppSettings()
-
-    /** 本应用包名：容器选了"始终小窗"时用于硬排除判定（桌面 / 系统界面 / 自身 → 仍全屏）。 */
-    private var activeSelfPackage: String = ""
 
     /** 持续触发：手指由边滑手势会话接管，浮层窗口不接收触摸。 */
     private var externalTracking = false
@@ -251,7 +244,6 @@ object QuickWheelOverlayWindow {
 
         activeExecutor = actionExecutor
         activeSettings = settings
-        activeSelfPackage = hostContext.packageName
 
         val owner = OverlayComposeOwner()
         val view = OverlayCompose.createComposeView(hostContext, owner).apply {
@@ -387,7 +379,6 @@ object QuickWheelOverlayWindow {
         windowManager = null
         activeExecutor = null
         activeSettings = AppSettings()
-        activeSelfPackage = ""
         externalTracking = false
         externalMoveHandler = null
         externalUpHandler = null
@@ -403,44 +394,18 @@ object QuickWheelOverlayWindow {
         if (action.type == GestureActionType.NONE) return
         val executor = activeExecutor ?: return
         val settings = activeSettings
-        // 容器「打开方式」：单击 / 长按**各自**一份，显式选全屏 / 小窗时用一份
-        // **只改「应用启动方式」档位**的设置快照执行本次动作（"跟随"= 原样透传，行为与历史版本一致）。
-        // 只对真的会打开东西的动作生效：返回 / 面板 / 执行命令等不受影响。
-        val launchMode = if (longPress) slot.longPressLaunchMode else slot.tapLaunchMode
-        val effectiveSettings = if (launchMode == QuickWheelLaunchMode.INHERIT ||
-            !action.opensSomething()
-        ) {
-            settings
-        } else {
-            settings.withQuickWheelLaunchMode(
-                mode = launchMode,
-                targetSupportsFreeWindow = action.freeWindowTargetPackage()
-                    ?.let { pkg -> !TaskExclusions.shouldSkipFreeWindow(pkg, activeSelfPackage) }
-                    ?: true,
-            )
-        }
         runCatching {
             executor.execute(
                 action = action,
-                settings = effectiveSettings,
-                // 轮盘的点击动作按「非长按」、长按动作按「长按」参与「应用与启动」的四档判定
-                //（长按时长仍用轮盘自己的设定，与那一页无关）。
+                settings = settings,
+                // 轮盘的点击动作按「非长按」、长按动作按「长按」参与启动策略判定（长按时长仍用轮盘自己的设定）。
+                // 启动形态（全屏 / 小窗）由**动作自带**（上游 LaunchWindowMode），这里不介入。
                 longPressArmed = longPress,
                 anchorRawX = anchorX,
                 anchorRawY = anchorY,
             )
         }.onFailure { Log.w(TAG, "executeSlot 失败", it) }
     }
-
-    /** 该动作是否"真的会打开某个东西"（只有这类动作才受容器「打开方式」影响）。 */
-    private fun GestureAction.opensSomething(): Boolean =
-        this is GestureAction.LaunchApp ||
-            this is GestureAction.LaunchShortcut ||
-            this is GestureAction.OpenLink
-
-    /** 目标包名（拿不到就返回 null：不参与"桌面 / 系统界面 / 自身"的硬排除判定）。 */
-    private fun GestureAction.freeWindowTargetPackage(): String? =
-        (this as? GestureAction.LaunchApp)?.packageName
 
     private fun resolveWheel(settings: AppSettings, wheelId: String): QuickWheel? {
         val wheels = settings.launcher.quickWheels
