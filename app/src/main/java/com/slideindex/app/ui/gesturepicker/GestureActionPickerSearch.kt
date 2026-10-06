@@ -14,7 +14,6 @@ import com.slideindex.app.gesture.GestureShortcutPayload
 import com.slideindex.app.ui.gestureExecuteShellCommandPreview
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.ui.quickLauncherPanelLabel
-import com.slideindex.app.ui.quickWheelLaunchShapeLabel
 import com.slideindex.app.ui.compose.rememberAppRepository
 import com.slideindex.app.privilege.PrivilegeUiStrings
 import com.slideindex.app.util.PermissionHelper
@@ -476,8 +475,7 @@ fun gestureActionSettingSubtitle(action: GestureAction): String {
             val name = if (action.keyName.isNotBlank()) action.keyName else com.slideindex.app.gesture.KeyEventPresets.getDisplayName(context, action.keyCode)
             stringResource(R.string.gesture_action_simulate_key_event_named, name)
         }
-        // 与配置页共用同一套展示名（含四组合 / 旧值），避免两处读法不一致。
-        is GestureAction.QuickWheel -> quickWheelLaunchShapeLabel(action.shape)
+        // 快捷轮盘不再暴露"哪个轮盘 / 形态方案"：摘要里只要知道"这个动作是调用轮盘"。
         else -> gestureActionLabel(action)
     }
 }

@@ -26,6 +26,7 @@ import com.slideindex.app.data.AppInfo
 import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.ActionPickerCatalogPolicy
 import com.slideindex.app.gesture.GestureTriggerType
+import com.slideindex.app.gesture.QuickWheelAnchorMode
 import com.slideindex.app.gesture.QuickWheelLaunchShape
 import com.slideindex.app.gesture.launchShortcutFromCreated
 import com.slideindex.app.ui.compose.rememberAppRepository
@@ -98,10 +99,16 @@ fun GestureActionPickerScreen(
     var openLinkConfigVisible by remember { mutableStateOf(false) }
     val quickWheelInitial = remember(current) {
         val wheelAction = current as? GestureAction.QuickWheel
-        wheelAction?.wheelId.orEmpty() to
-            (wheelAction?.shape ?: QuickWheelLaunchShape.DEFAULT)
+        Triple(
+            wheelAction?.wheelId.orEmpty(),
+            wheelAction?.shape ?: QuickWheelLaunchShape.DEFAULT,
+            wheelAction?.manualSectorMask,
+        )
     }
     var quickWheelConfigVisible by remember { mutableStateOf(false) }
+    val quickWheelInitialAnchorMode = remember(current) {
+        (current as? GestureAction.QuickWheel)?.anchorMode ?: QuickWheelAnchorMode.FOLLOW_FINGER
+    }
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -268,10 +275,19 @@ fun GestureActionPickerScreen(
                     wheels = appSettings.launcher.quickWheels,
                     initialWheelId = quickWheelInitial.first,
                     initialShape = quickWheelInitial.second,
+                    initialSectorMask = quickWheelInitial.third,
+                    initialAnchorMode = quickWheelInitialAnchorMode,
                     onBack = { quickWheelConfigVisible = false },
-                    onConfirm = { wheelId, shape ->
+                    onConfirm = { wheelId, shape, manualSectorMask, anchorMode ->
                         quickWheelConfigVisible = false
-                        safeSelect(GestureAction.QuickWheel(wheelId = wheelId, shape = shape))
+                        safeSelect(
+                            GestureAction.QuickWheel(
+                                wheelId = wheelId,
+                                shape = shape,
+                                manualSectorMask = manualSectorMask,
+                                anchorMode = anchorMode,
+                            ),
+                        )
                     },
                     overlayMode = true,
                 )

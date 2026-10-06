@@ -244,6 +244,8 @@ class ActionExecutor(
                         actionExecutor = this,
                         externalTracking = continueTouch,
                         shape = action.shape,
+                        manualSectorMask = action.manualSectorMask,
+                        anchorMode = action.anchorMode,
                     )
                 }
             GestureAction.WidgetPopupOverlay ->

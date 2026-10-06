@@ -180,6 +180,30 @@ enum class QuickWheelLaunchShape {
     }
 }
 
+/**
+ * 轮盘呼出时**圆心的锚定方式**（动作绑定处可选，默认 [FOLLOW_FINGER]）。
+ *
+ * - [FOLLOW_FINGER]：圆心 = 动作被触发那一帧的手指位置（出现后不再跟随手指，只是高亮跟随）；
+ * - [EDGE]：圆心 = 呼出点投影到**最近的一条屏幕边**（保留沿边坐标），轮盘像"从边缘长出来"。
+ *   注意：这样整圆必然越界 → 运行时的自适应求解会自动把扇区收窄成半圆 / 90°。
+ *
+ * 之所以放在动作级而不是轮盘级：滑动距离阈值（短滑 60dp / 长滑 120dp）决定了两种方式的差别大小，
+ * 同一个轮盘在不同手势下的最优解不同（短滑 + 贴边时手指正好落在中心大圆内）。
+ */
+enum class QuickWheelAnchorMode {
+    /** 跟手（默认）：圆心落在触发点。 */
+    FOLLOW_FINGER,
+
+    /** 贴边：圆心落在最近的屏幕边线上。 */
+    EDGE,
+    ;
+
+    companion object {
+        fun fromName(value: String?): QuickWheelAnchorMode =
+            entries.firstOrNull { it.name == value } ?: FOLLOW_FINGER
+    }
+}
+
 sealed class GestureAction {
     abstract val type: GestureActionType
     abstract val payload: String
@@ -571,36 +595,63 @@ sealed class GestureAction {
      * @param shape 呼出形态：[QuickWheelLaunchShape.DEFAULT] 两级都跟随轮盘自身配置；
      *   [QuickWheelLaunchShape.CIRCLE_CIRCLE] 等四个组合值按「一级 + 二级」强制形态；
      *   [QuickWheelLaunchShape.CIRCLE] / [QuickWheelLaunchShape.RECT] 是只覆盖一级的旧值。
+     * @param manualSectorMask 一级**圆形**轮盘的手动扇区掩码（1..15）；`null`（默认）= 不指定，
+     *   由运行时按触发位置自适应求解（= "我什么都不想配，程序自动"）。动作页只在绑定了非默认
+     *   [shape] 时提供该选择；跟随轮盘自身配置时一律为 `null`。二级与矩形基准角始终自适应。
+     * @param anchorMode 圆心锚定方式（[QuickWheelAnchorMode]）；默认 [QuickWheelAnchorMode.FOLLOW_FINGER]。
      */
     data class QuickWheel(
         val wheelId: String = "",
         val shape: QuickWheelLaunchShape = QuickWheelLaunchShape.DEFAULT,
+        val manualSectorMask: Int? = null,
+        val anchorMode: QuickWheelAnchorMode = QuickWheelAnchorMode.FOLLOW_FINGER,
     ) : GestureAction() {
         override val type = GestureActionType.QUICK_WHEEL
 
-        // 形态为默认时载荷与旧版**完全一致**（仅 wheelId），不会影响已保存的记录。
-        override val payload: String =
-            if (shape == QuickWheelLaunchShape.DEFAULT) {
-                wheelId
+        // 形态、扇区、锚点都为默认时载荷与旧版**完全一致**（仅 wheelId），不影响已保存的记录；
+        // 手动扇区只在用户真的选了扇区时才追加第三段（因此不需要数据迁移）。
+        override val payload: String = buildString {
+            append(wheelId)
+            val isAllDefault = shape == QuickWheelLaunchShape.DEFAULT &&
+                manualSectorMask == null &&
+                anchorMode == QuickWheelAnchorMode.FOLLOW_FINGER
+            if (isAllDefault) return@buildString
+            append(SHAPE_SEP)
+            append(shape.name)
+            if (anchorMode == QuickWheelAnchorMode.FOLLOW_FINGER) {
+                manualSectorMask?.let {
+                    append(SHAPE_SEP)
+                    append(it)
+                }
             } else {
-                "$wheelId$SHAPE_SEP${shape.name}"
+                // 非默认锚点需要写第 4 段 → 扇区段必须占位（`0` 解析回"自动"），否则段位有歧义。
+                append(SHAPE_SEP)
+                append(manualSectorMask ?: 0)
+                append(SHAPE_SEP)
+                append(anchorMode.name)
             }
+        }
 
         companion object {
-            /** 载荷内 wheelId 与形态的分隔符（SOH；UUID 中不会出现该控制字符）。 */
+            /** 载荷内各段的分隔符（SOH；UUID 中不会出现该控制字符）。 */
             private const val SHAPE_SEP = '\u0001'
 
-            /** 从裸载荷解析；无分隔符时按"仅 wheelId、默认形态"处理（向后兼容）。 */
+            /** 扇区掩码的合法范围（4 个扇区；0 = 一个都没选 → 按"自动"处理）。 */
+            private val SECTOR_MASK_RANGE = 1..0xF
+
+            /** 从裸载荷解析；段缺失 / 非法时按"仅 wheelId、默认形态、自动扇区、跟手"处理（向后兼容）。 */
             fun parse(raw: String): QuickWheel {
-                val sep = raw.indexOf(SHAPE_SEP)
-                return if (sep < 0) {
-                    QuickWheel(raw)
-                } else {
-                    QuickWheel(
-                        wheelId = raw.substring(0, sep),
-                        shape = QuickWheelLaunchShape.fromName(raw.substring(sep + 1)),
-                    )
-                }
+                val parts = raw.split(SHAPE_SEP)
+                if (parts.size < 2) return QuickWheel(raw)
+                return QuickWheel(
+                    wheelId = parts[0],
+                    shape = QuickWheelLaunchShape.fromName(parts[1]),
+                    manualSectorMask = parts.getOrNull(2)
+                        ?.trim()
+                        ?.toIntOrNull()
+                        ?.takeIf { it in SECTOR_MASK_RANGE },
+                    anchorMode = QuickWheelAnchorMode.fromName(parts.getOrNull(3)),
+                )
             }
         }
     }

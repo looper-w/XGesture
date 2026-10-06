@@ -45,12 +45,17 @@ internal fun ActionPickerOpenLinkRow(
     )
 }
 
+/**
+ * 「快捷轮盘」行：点它是打开配置（先选轮盘 + 形态），但"当前就是这个动作"时
+ * 仍要与普通动作行一样显示为已选中（标题主色 + 右侧打勾）。
+ */
 @Composable
 internal fun ActionPickerQuickWheelRow(
     action: GestureAction,
     segmentIndex: Int,
     segmentCount: Int,
     subtitle: String?,
+    selected: Boolean,
     onOpenConfig: () -> Unit,
 ) {
     val label = gestureActionLabel(action)
@@ -59,15 +64,15 @@ internal fun ActionPickerQuickWheelRow(
         segmentCount = segmentCount,
         title = label,
         subtitle = subtitle,
-        selected = false,
+        selected = selected,
         onClick = onOpenConfig,
         leadingContent = {
             Md3PickerIconLeading(
                 icon = gestureActionIcon(action, outlined = true),
-                selected = false,
+                selected = selected,
             )
         },
-        trailingMode = PickerTrailingMode.None,
+        trailingMode = PickerTrailingMode.Radio,
     )
 }
 

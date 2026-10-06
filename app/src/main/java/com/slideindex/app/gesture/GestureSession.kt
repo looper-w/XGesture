@@ -642,7 +642,9 @@ class GestureSession(
                     anchorRawY = rawY,
                     actionExecutor = actionExecutor,
                     externalTracking = false,
-                    shape = action.shape
+                    shape = action.shape,
+                    manualSectorMask = action.manualSectorMask,
+                    anchorMode = action.anchorMode
                 )
             }
             GestureAction.HolographicLauncher -> {

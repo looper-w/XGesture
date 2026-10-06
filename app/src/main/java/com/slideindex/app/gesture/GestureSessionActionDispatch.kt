@@ -134,7 +134,9 @@ internal fun GestureSession.trackContinuousGesture(
                     anchorRawY = rawY,
                     actionExecutor = sessionActionExecutor,
                     externalTracking = true,
-                    shape = action.shape
+                    shape = action.shape,
+                    manualSectorMask = action.manualSectorMask,
+                    anchorMode = action.anchorMode
                 )
                 if (shown) {
                     sessionContinuousPick.quickWheel = true

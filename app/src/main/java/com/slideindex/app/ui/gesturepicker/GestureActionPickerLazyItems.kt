@@ -168,17 +168,14 @@ fun LazyListScope.actionPickerActionItems(
                     },
                 )
             } else if (action.type == GestureActionType.QUICK_WHEEL && onOpenQuickWheel != null) {
-                // 快捷轮盘需要先选「哪个轮盘 + 以什么形态呼出」，因此不直接选中，而是打开配置。
-                val quickWheelSubtitle = if (current is GestureAction.QuickWheel) {
-                    gestureActionSettingSubtitle(current)
-                } else {
-                    gestureActionDescription(action)
-                }
+                // 快捷轮盘要先选「哪个轮盘 + 以什么形态呼出」，所以点它是打开配置而不是直接选中；
+                // 但"当前就是这个动作"时必须按已选中显示（主色标题 + 打勾），与其它动作一致。
                 ActionPickerQuickWheelRow(
                     action = action,
                     segmentIndex = index,
                     segmentCount = section.actions.size,
-                    subtitle = quickWheelSubtitle,
+                    subtitle = gestureActionDescription(action),
+                    selected = current is GestureAction.QuickWheel,
                     onOpenConfig = onOpenQuickWheel,
                 )
             } else {

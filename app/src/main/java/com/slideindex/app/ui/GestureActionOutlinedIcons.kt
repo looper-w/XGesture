@@ -111,7 +111,7 @@ internal fun gestureActionTypeOutlinedIcon(type: GestureActionType): ImageVector
     GestureActionType.SNOOZE_OVERLAYS -> ThinActionIcons.VisibilityOff
     GestureActionType.FOREGROUND_ACTIVITY_INSPECTOR -> ThinActionIcons.Search
     GestureActionType.SMART_SCREENSHOT -> ThinActionIcons.Screenshot
-    GestureActionType.QUICK_WHEEL -> ThinActionIcons.MenuOpen
+    GestureActionType.QUICK_WHEEL -> ThinActionIcons.QuickWheel
 }
 
 @Suppress("DEPRECATION")
@@ -202,5 +202,5 @@ internal fun gestureActionTypeThinIcon(type: GestureActionType): ImageVector = w
     GestureActionType.SNOOZE_OVERLAYS -> ThinActionIcons.VisibilityOff
     GestureActionType.FOREGROUND_ACTIVITY_INSPECTOR -> ThinActionIcons.Search
     GestureActionType.SMART_SCREENSHOT -> ThinActionIcons.Screenshot
-    GestureActionType.QUICK_WHEEL -> ThinActionIcons.MenuOpen
+    GestureActionType.QUICK_WHEEL -> ThinActionIcons.QuickWheel
 }
