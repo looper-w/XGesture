@@ -60,10 +60,15 @@ import com.slideindex.app.overlay.quickwheel.QuickWheelSlotIcon
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.QuickWheel
 import com.slideindex.app.settings.QuickWheelIconSource
+import com.slideindex.app.settings.QuickWheelLaunchMode
 import com.slideindex.app.settings.QuickWheelLongPressTrigger
 import com.slideindex.app.settings.QuickWheelSlot
 import com.slideindex.app.settings.QuickWheelTapTrigger
 import com.slideindex.app.settings.slotAt
+import com.slideindex.app.settings.opensSomething
+import com.slideindex.app.settings.toLaunchWindowMode
+import com.slideindex.app.settings.toQuickWheelLaunchMode
+import com.slideindex.app.settings.withoutLaunchWindowMode
 import com.slideindex.app.ui.gesturepicker.gestureActionLabelText
 import com.slideindex.app.ui.gesturepicker.launchShortcutDisplayLabel
 import com.slideindex.app.ui.miuix.MiuixSettingsScreenScaffold
@@ -169,7 +174,11 @@ fun QuickWheelSlotEditorScreen(
     }
 
     /** 动作选择结果只写入草稿，并回到主设置页。 */
-    fun applyPickedAction(action: GestureAction) {
+    fun applyPickedAction(picked: GestureAction) {
+        // 上游那个「启动方式」弹窗的结果 = **本容器的打开方式**（它就是容器的首次设置入口）：
+        // 收编进容器字段，并把动作那一段清成"跟随" —— 容器是唯一来源，动作不再自带形态。
+        val pickedMode = (picked as? GestureAction.LaunchApp)?.windowMode?.toQuickWheelLaunchMode()
+        val action = picked.withoutLaunchWindowMode()
         val previousAction = if (pickTarget == QuickWheelSlotActionTarget.LONG) {
             draft.longPressAction
         } else {
@@ -200,18 +209,25 @@ fun QuickWheelSlotEditorScreen(
         } else {
             QuickWheelIconSource.NONE
         }
+        val fillsLongPress = draft.longPressAction == GestureAction.None
         draft = if (pickTarget == QuickWheelSlotActionTarget.LONG) {
             // ⚠️ 长按动作**只**改长按：容器图标与名称一律不动。
             // 图标只跟「单击动作」或用户手动配置的图标走，改长按不应产生任何视觉变化。
-            draft.copy(longPressAction = action)
+            draft.copy(
+                longPressAction = action,
+                longPressLaunchMode = pickedMode ?: draft.longPressLaunchMode,
+            )
         } else {
             draft.copy(
                 tapAction = action,
-                // 单击动作同时作为长按的默认动作：未单独配置长按时，该容器单击与长按都能用。
-                longPressAction = if (draft.longPressAction == GestureAction.None) {
-                    action
+                tapLaunchMode = pickedMode ?: draft.tapLaunchMode,
+                // 单击动作同时作为长按的默认动作：未单独配置长按时，该容器单击与长按都能用
+                //（打开方式一并带过去，避免同一个应用的两行显示不一致）。
+                longPressAction = if (fillsLongPress) action else draft.longPressAction,
+                longPressLaunchMode = if (fillsLongPress && pickedMode != null) {
+                    pickedMode
                 } else {
-                    draft.longPressAction
+                    draft.longPressLaunchMode
                 },
                 iconSource = newIconSource,
                 iconValue = appPackage.orEmpty(),
@@ -274,6 +290,7 @@ fun QuickWheelSlotEditorScreen(
             QuickWheelSlotEditorPage.SlotSettings -> {
                 QuickWheelSlotSettingsPage(
                     draft = draft,
+                    appSettings = appSettings,
                     isExisting = isExisting,
                     onExit = onExit,
                     onSave = { onSave(draft) },
@@ -312,11 +329,21 @@ fun QuickWheelSlotEditorScreen(
             QuickWheelSlotEditorPage.ActionPick -> {
                 GestureActionPickerScreen(
                     trigger = GestureTriggerType.SHORT_SWIPE_IN,
-                    current = if (pickTarget == QuickWheelSlotActionTarget.LONG) {
-                        draft.longPressAction
-                    } else {
-                        draft.tapAction
-                    },
+                    // 把容器当前的打开方式**投影**给动作选择器：这样上游那个启动方式弹窗会预选容器
+                    // 当前设置、应用行副标题也显示它（选完再被 applyPickedAction 收编回容器）。
+                    current = (
+                        if (pickTarget == QuickWheelSlotActionTarget.LONG) {
+                            draft.longPressAction
+                        } else {
+                            draft.tapAction
+                        }
+                    ).withLaunchMode(
+                        if (pickTarget == QuickWheelSlotActionTarget.LONG) {
+                            draft.longPressLaunchMode
+                        } else {
+                            draft.tapLaunchMode
+                        },
+                    ),
                     catalogPolicy = ActionPickerCatalogPolicy.Slot(SlotPickerKind.CornerWheel),
                     onDismiss = { page = QuickWheelSlotEditorPage.SlotSettings },
                     onSelect = ::applyPickedAction,
@@ -477,6 +504,8 @@ fun QuickWheelSlotEditorScreen(
 @Composable
 private fun QuickWheelSlotSettingsPage(
     draft: QuickWheelSlot,
+    /** 只用于「打开方式」的说明行（读总开关与「应用与启动」的启动方式），不参与保存。 */
+    appSettings: AppSettings,
     isExisting: Boolean,
     onExit: () -> Unit,
     onSave: () -> Unit,
@@ -605,6 +634,16 @@ private fun QuickWheelSlotSettingsPage(
                         )
                     },
                 )
+                add(
+                    settingsCardScopeItem("tap-launch-mode") {
+                        QuickWheelLaunchModeRow(
+                            mode = draft.tapLaunchMode,
+                            freeWindowEnabled = appSettings.freeWindowEnabled,
+                            launchesSomething = draft.tapAction.opensSomething(),
+                            onSelect = { value -> onPatch { it.copy(tapLaunchMode = value) } },
+                        )
+                    },
+                )
             },
         )
 
@@ -621,7 +660,14 @@ private fun QuickWheelSlotSettingsPage(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             TextButton(
-                                onClick = { onPatch { it.copy(longPressAction = it.tapAction) } },
+                                onClick = {
+                                    onPatch {
+                                        it.copy(
+                                            longPressAction = it.tapAction,
+                                            longPressLaunchMode = it.tapLaunchMode,
+                                        )
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Text(stringResource(R.string.quick_wheel_sync_down))
@@ -632,6 +678,8 @@ private fun QuickWheelSlotSettingsPage(
                                         it.copy(
                                             tapAction = it.longPressAction,
                                             longPressAction = it.tapAction,
+                                            tapLaunchMode = it.longPressLaunchMode,
+                                            longPressLaunchMode = it.tapLaunchMode,
                                         )
                                     }
                                 },
@@ -640,7 +688,14 @@ private fun QuickWheelSlotSettingsPage(
                                 Text(stringResource(R.string.quick_wheel_sync_swap))
                             }
                             TextButton(
-                                onClick = { onPatch { it.copy(tapAction = it.longPressAction) } },
+                                onClick = {
+                                    onPatch {
+                                        it.copy(
+                                            tapAction = it.longPressAction,
+                                            tapLaunchMode = it.longPressLaunchMode,
+                                        )
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Text(stringResource(R.string.quick_wheel_sync_up))
@@ -679,6 +734,16 @@ private fun QuickWheelSlotSettingsPage(
                         )
                     },
                 )
+                add(
+                    settingsCardScopeItem("long-launch-mode") {
+                        QuickWheelLaunchModeRow(
+                            mode = draft.longPressLaunchMode,
+                            freeWindowEnabled = appSettings.freeWindowEnabled,
+                            launchesSomething = draft.longPressAction.opensSomething(),
+                            onSelect = { value -> onPatch { it.copy(longPressLaunchMode = value) } },
+                        )
+                    },
+                )
             },
         )
 
@@ -691,6 +756,8 @@ private fun <T> QuickWheelChipRow(
     label: String,
     options: List<Pair<String, T>>,
     selected: T,
+    /** 逐项是否可点（默认全可点）：用于"总开关关闭时禁用『全屏 / 小窗』"这类情形。 */
+    optionEnabled: (T) -> Boolean = { true },
     onSelect: (T) -> Unit,
 ) {
     Column(
@@ -708,6 +775,7 @@ private fun <T> QuickWheelChipRow(
             options.forEach { (text, value) ->
                 FilterChip(
                     selected = selected == value,
+                    enabled = optionEnabled(value),
                     onClick = { onSelect(value) },
                     label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
                 )
@@ -715,6 +783,68 @@ private fun <T> QuickWheelChipRow(
         }
     }
 }
+
+/**
+ * 一个动作的「打开方式」行：三档 Chip +（必要时）一行说明。
+ *
+ * 单击动作 / 长按动作各有一份（容器里分开设置），互不影响。
+ *
+ * 置灰的两种情况（**不隐藏整行**：位置稳定、也顺便让用户知道"这个动作没有打开方式"）：
+ * - 该动作根本不涉及打开（返回 / 主屏幕 / 执行命令…）→ 三档全灰 + 说明；
+ * - 「应用与启动」没开自由窗口 → 只灰「全屏 / 小窗」（"跟随"始终可点，便于把小窗改回来），
+ *   此时容器设置整体失效、一律全屏。
+ */
+@Composable
+private fun QuickWheelLaunchModeRow(
+    mode: QuickWheelLaunchMode,
+    freeWindowEnabled: Boolean,
+    /** 该动作是否真的会打开某个东西（参见 `GestureAction.opensSomething`）。 */
+    launchesSomething: Boolean,
+    onSelect: (QuickWheelLaunchMode) -> Unit,
+) {
+    val hint = when {
+        !launchesSomething -> stringResource(R.string.quick_wheel_launch_unsupported)
+        !freeWindowEnabled -> stringResource(R.string.quick_wheel_launch_gate_off)
+        else -> null
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        QuickWheelChipRow(
+            label = stringResource(R.string.quick_wheel_launch_mode),
+            options = listOf(
+                stringResource(R.string.quick_wheel_launch_inherit) to QuickWheelLaunchMode.INHERIT,
+                stringResource(R.string.quick_wheel_launch_fullscreen) to
+                    QuickWheelLaunchMode.FULLSCREEN,
+                stringResource(R.string.quick_wheel_launch_free_window) to
+                    QuickWheelLaunchMode.FREE_WINDOW,
+            ),
+            selected = mode,
+            optionEnabled = { option ->
+                launchesSomething &&
+                    (option == QuickWheelLaunchMode.INHERIT || freeWindowEnabled)
+            },
+            onSelect = onSelect,
+        )
+        if (hint != null) {
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 12.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 把容器的「打开方式」投影到动作自带的启动形态上。
+ *
+ * **只用于动作选择器的显示与预选**（含上游那个"启动方式"弹窗的初始选中项与已选应用行的副标题）——
+ * 选中后会被 `applyPickedAction` 收编回容器字段，动作本身仍然保持"跟随"。
+ */
+private fun GestureAction.withLaunchMode(mode: QuickWheelLaunchMode): GestureAction =
+    if (this is GestureAction.LaunchApp) copy(windowMode = mode.toLaunchWindowMode()) else this
 
 @Composable
 private fun QuickWheelIconNameRow(

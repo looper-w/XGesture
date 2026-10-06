@@ -51,6 +51,39 @@ enum class QuickWheelLongPressTrigger {
     }
 }
 
+/**
+ * 容器「打开方式」。
+ *
+ * 只有"打开应用 / 启动快捷方式 / 打开链接"这类**真的会打开某个东西**的动作才有意义；
+ * 其余动作（返回、主屏幕、执行命令…）选了也不影响执行。
+ */
+enum class QuickWheelLaunchMode {
+    /**
+     * 跟随启动形态的既有体系（默认，也是历史数据的行为）。
+     *
+     * 先看**动作自带**的启动形态（挑应用时选的那个），它也"跟随"时才落到「应用与启动」的四档策略。
+     * 轮盘的**单击动作**按"非长按"、**长按动作**按"长按"参与判定；但"长按切换"用的长按时长仍是
+     * 那一页自己的设定 —— 轮盘的长按判定恒用轮盘自己的长按时长。
+     */
+    INHERIT,
+
+    /** 始终全屏（不看动作自带设置，也不看「应用与启动」）。 */
+    FULLSCREEN,
+
+    /**
+     * 始终小窗。
+     *
+     * 「应用与启动」未开启自由窗口时不生效（回落为全屏）：总开关是能力开关，容器只表达意图。
+     */
+    FREE_WINDOW,
+    ;
+
+    companion object {
+        fun fromName(value: String?): QuickWheelLaunchMode =
+            entries.firstOrNull { it.name == value } ?: INHERIT
+    }
+}
+
 /** 容器图标来源。 */
 enum class QuickWheelIconSource {
     /** 未设置图标。 */
@@ -85,6 +118,14 @@ data class QuickWheelSlot(
     val longPressAction: GestureAction = GestureAction.None,
     val tapTrigger: QuickWheelTapTrigger = QuickWheelTapTrigger.ON_RELEASE,
     val longPressTrigger: QuickWheelLongPressTrigger = QuickWheelLongPressTrigger.ON_RELEASE,
+    /**
+     * 打开方式：**单击动作 / 长按动作各一份**（跟随 / 始终全屏 / 始终小窗）。
+     *
+     * 只对"打开应用 / 启动快捷方式 / 打开链接"这类动作有效；[QuickWheelLaunchMode.INHERIT] 时
+     * 行为与历史版本完全一致（旧数据读回也是它）：单击按"非长按"、长按按"长按"参与启动形态判定。
+     */
+    val tapLaunchMode: QuickWheelLaunchMode = QuickWheelLaunchMode.INHERIT,
+    val longPressLaunchMode: QuickWheelLaunchMode = QuickWheelLaunchMode.INHERIT,
     /** 二级子盘；只有一级容器会持有（中心容器与二级容器恒为空）。 */
     val subSlots: List<QuickWheelSlot> = emptyList(),
     /**
@@ -623,6 +664,18 @@ object QuickWheelCodec {
             append(FIELD_SEP)
             append(slot.longPressTrigger.name)
             append(FIELD_SEP)
+            // 容器「打开方式」（单击 / 长按各一份）：**只要有一项不是默认**就写这两段，保证列位置固定；
+            // 两项都是"跟随"时不写 —— 默认容器 / 旧记录因此不会多出字段，
+            // 旧版本读到的名字仍是干净的名字（新版按段数判有无，与 decodeEntry 同一套约定）。
+            // 名称仍必须是 header 最后一段。
+            if (slot.tapLaunchMode != QuickWheelLaunchMode.INHERIT ||
+                slot.longPressLaunchMode != QuickWheelLaunchMode.INHERIT
+            ) {
+                append(slot.tapLaunchMode.name)
+                append(FIELD_SEP)
+                append(slot.longPressLaunchMode.name)
+                append(FIELD_SEP)
+            }
             // 名称放 header 最后
             append(slot.name)
         }
@@ -642,22 +695,53 @@ object QuickWheelCodec {
         val firstSep = raw.indexOf(ACTION_SEP)
         val lastSep = raw.lastIndexOf(ACTION_SEP)
         if (firstSep <= 0 || lastSep <= firstSep) return null
-        val header = raw.substring(0, firstSep).split(FIELD_SEP, limit = 8)
+        val header = raw.substring(0, firstSep).split(FIELD_SEP, limit = 10)
         if (header.size < 8) return null
         val wheelId = header[0].takeIf { it.isNotBlank() } ?: return null
         val path = header[1].takeIf { it.isNotBlank() } ?: return null
         val tapRaw = raw.substring(firstSep + 1, lastSep)
         val longRaw = raw.substring(lastSep + 1)
         // 第 3 列（header[2]）：2 = 用户主动留出的空位（placeholder）；1 = 历史遗留空容器（按普通空位处理，会被 normalized 清掉）。
+        // 第 8 段起（header[7..]）只有"容器自定义了打开方式"时才有：
+        // 10 段 = 单击 / 长按各一份打开方式，名称顺延到第 10 段；
+        //  9 段 = 早期"整容器一份打开方式"的记录（两项同值，名称在第 9 段）；
+        //  8 段 = 旧记录（两项均为"跟随"）。
+        val hasLaunchMode = header.size >= 9
+        val storedTapMode = if (hasLaunchMode) {
+            QuickWheelLaunchMode.fromName(header[7])
+        } else {
+            QuickWheelLaunchMode.INHERIT
+        }
+        val storedLongMode = when {
+            header.size >= 10 -> QuickWheelLaunchMode.fromName(header[8])
+            hasLaunchMode -> storedTapMode
+            else -> QuickWheelLaunchMode.INHERIT
+        }
+        // 容器是「打开方式」的**唯一**来源：早期版本把"打开应用"的形态存在**动作**上（上游那套），
+        // 读回时把它"收编"进容器字段，并把动作那一段清成"跟随"，避免两处各说各话。
+        val tapActionRaw = QuickLauncherItemCodec.parseActionPayload(tapRaw) ?: GestureAction.None
+        val longActionRaw = QuickLauncherItemCodec.parseActionPayload(longRaw) ?: GestureAction.None
+        val tapLaunchMode = storedTapMode.takeIf { it != QuickWheelLaunchMode.INHERIT }
+            ?: (tapActionRaw as? GestureAction.LaunchApp)?.windowMode?.toQuickWheelLaunchMode()
+            ?: QuickWheelLaunchMode.INHERIT
+        val longPressLaunchMode = storedLongMode.takeIf { it != QuickWheelLaunchMode.INHERIT }
+            ?: (longActionRaw as? GestureAction.LaunchApp)?.windowMode?.toQuickWheelLaunchMode()
+            ?: QuickWheelLaunchMode.INHERIT
         val slot = QuickWheelSlot(
             placeholder = header[2] == "2",
             iconSource = QuickWheelIconSource.fromName(header[3]),
             iconValue = header[4],
             tapTrigger = QuickWheelTapTrigger.fromName(header[5]),
             longPressTrigger = QuickWheelLongPressTrigger.fromName(header[6]),
-            name = header[7],
-            tapAction = QuickLauncherItemCodec.parseActionPayload(tapRaw) ?: GestureAction.None,
-            longPressAction = QuickLauncherItemCodec.parseActionPayload(longRaw) ?: GestureAction.None,
+            tapLaunchMode = tapLaunchMode,
+            longPressLaunchMode = longPressLaunchMode,
+            name = when {
+                header.size >= 10 -> header[9]
+                hasLaunchMode -> header[8]
+                else -> header[7]
+            },
+            tapAction = tapActionRaw.withoutLaunchWindowMode(),
+            longPressAction = longActionRaw.withoutLaunchWindowMode(),
             subSlots = emptyList(),
         )
         return Triple(wheelId, path, slot)

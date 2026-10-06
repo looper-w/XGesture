@@ -3955,6 +3955,12 @@ or revoke permanent Root for Shell in APatch.</string>
     <string name="quick_wheel_long_section">Long-press action</string>
     <string name="quick_wheel_trigger_mode">Trigger</string>
     <string name="quick_wheel_function_type">Action</string>
+    <string name="quick_wheel_launch_mode">Open mode</string>
+    <string name="quick_wheel_launch_inherit">Follow</string>
+    <string name="quick_wheel_launch_fullscreen">Full screen</string>
+    <string name="quick_wheel_launch_free_window">Small window</string>
+    <string name="quick_wheel_launch_gate_off">Free window is off under “Apps &amp; launching”; always full screen for now</string>
+    <string name="quick_wheel_launch_unsupported">This action does not open anything, so the open mode has no effect</string>
     <string name="quick_wheel_icon_pick_library">Pick from icon library</string>
     <string name="quick_wheel_icon_pick_app">Pick an app icon</string>
     <string name="quick_wheel_icon_pick_gallery">Pick an image from gallery</string>
