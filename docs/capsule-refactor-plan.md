@@ -783,3 +783,44 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 6. `overlay/searchpanel/SearchPanelOverlayWindow.kt` —— 搜索复用面
 
 **P0 之后再动手写代码** —— 否则计划里的估时都是假的。
+
+---
+
+### 0.16.4 待执行（下一轮从这里开始）：条数改总数 / 标签自定义 / 剪贴板筛选 / 单测+文档
+
+**当前基线（安全点）**：胶囊 UI 全套已提交 `c8fee4e1`（77 文件），工作区干净；设备上装的就是它构建的版本（编译/装机/无新崩溃均验过）。
+
+#### 四件待办
+
+1. **搜索框右侧条数改成“总数”**
+   现状：`HistoryPanelScreen.kt:194-208` 用 `filteredStashEntries.size` / `filteredClipboardEntries.size` = **已加载条数**，往下滑会变大（用户实测困惑）。
+   做法：剪贴板侧给 store/repository 加 `count()`（或取 `clipboardHistoryMaxEntries` 上限内的实际条数），stash 侧同理；两个页签统一显示总数，**不再随滚动变化**。
+2. **标签可自定义**
+   数据层已有 `addTag(name,color)` / `removeTag(name)` / `setTags(entryId,…)`；**还缺** `renameTag(old,new)`（必须**连带改写所有条目的绑定**，否则旧名孤儿）与 `setTagColor(name,color)`。
+   UI：标签行末尾加 **＋** 胶囊 → 屏幕居中浮窗（复用编辑/输入那套壳）：列表（色点+名字+改名+改色+删除）+ 新增（名字 + 8 个预设色）。
+   ⚠️ **“待办”只读**：`StashMetaRepository.TODO_TAG_NAME = "待办"` 是硬编码关键字 —— 完成态 / `isTodo` / 主操作是“完成”还是“星标” / 把手 `pendingTodoCount` 变色全靠它；UI 上禁用改名与删除并给提示。
+   字符串 **4 个语言**（`values` / `-zh` / `-ja` / `-ar`）都要加。
+3. **剪贴板页签加固定筛选**：`全部 / 图片 / 链接 / 富文本 / 文件`
+   先确认 `ClipboardEntry` 能可靠推出哪几类（kind / mime / uri / `hasImageContent()` / content blocks）；**推不出来的类别不要硬凑**（宁可少做一个并写明原因）。
+   UI：与闪念标签行**同一位置**的横排单选胶囊（复用 `HistoryChip`，默认“全部”），筛选状态持久化（SavedStateHandle）；**顺手删掉**“剪贴板列表顶部 18dp”那条补偿（上面又有行了）。
+4. **单测 + 文档**
+   跑 `.\gradlew.bat :app:testFullDebugUnitTest`（基线 106 套 / 592 条，期望 0 失败）。
+   文档：把本轮已完成的东西补记进本节（卡片统一 / 编辑与输入**复用同一套壳** / 标签选中态实心 accent+白字白点 / 轴槽文字 11.5sp+正文色 / 提示条左右滑消除+复位 / tab 分段控件（轨道+白片+3dp 投影+同心圆角）/ 闪念与剪贴板列表内边距），含**与 demo 的偏差**与遗留。
+
+#### 环境与协作注意（本轮踩过的坑，务必遵守）
+
+- **编译很慢**：全量 30+ 分钟、增量 2–9 分钟。**合并改动、减少编译次数**。
+- **不要并行跑构建**：有一次“停守护进程”把正在跑的编译当场杀掉，导致退出码 1 且零输出。
+- **僵尸编译进程**会让每次编译变成 20–30 分钟：`Get-Process java | Sort CPU` 看异常高的（>1000 秒）→ 定向 `Stop-Process`（**只杀 Gradle/Kotlin 的**，按命令行匹配 `GradleDaemon|gradle|kotlin`），必要时 `.\gradlew.bat --stop`。
+- **构建输出写日志文件再读**（`*> .tmp\build.log`），**不要用 `Select-String` 过滤**——多次因为过滤把错误行全吞掉，白等好几轮。
+- **不要用子任务改结构**：有一次子任务把 `HistoryPanelScreen.kt` 的大括号改错位就停了，留下编译不过的树；用户明确要求**主任务里做、过程可见**。
+- **不要用 `git add -A`**：仓库里有 `.ohc_apk/`、`.ohc_decompiled/`、`.ohc_jadx.log`、`PowerShell 7.6.6/`、`null/`（4000+ 文件）—— 已写进 `.gitignore`，提交时仍应**显式指定路径**（`app/`、`docs/`、`ui_demo*.html`）并用 `git status --porcelain` 复核暂存清单。
+- **可能另有 AI 在同一仓库提交**（本轮发生过：对方 `git reset` 把我们的提交摘掉再提交自己的）。提交前先 `git log --oneline -3` + `git reflog -5` 看清 HEAD。
+- **设备**：MEIZU 21，`adb` = `C:\Users\syp\AppData\Local\Android\Sdk\platform-tools\adb.exe`，USB 不稳（install 常需重试数轮）。装机后必须查 `adb shell run-as com.slideindex.app ls -lt files/crashes`（正常时最新仍是 `crash_20261007_170028.txt`）。
+
+#### 已有结论、不要再翻案的设计决定
+
+- 卡片**取消“今天/昨天/更早”分档**（用户明确要求），只保留**状态**：星标 = accent 9% 底 + accent 45% 描边 + 实心蓝星；完成 = 整卡 `alpha .62` + 正文划掉；顶部 1px 高光**只画在未星标卡**上。
+- 编辑弹窗与加号弹窗**复用同一套壳**（96% 宽 / 最大 720dp / 圆角 28 / 投影 18 / 内边距 26·26·26·22；顶部信息行 + 多行正文 min160~max320 + 标签行 + 底部整行主按钮）。
+- 标签**选中态 = 实心 accent 底 + 白字 + 白圆点 + 实心描边**（淡紫底+accent 字那版用户说看不清）。
+- **拖动时的“雾”**：架构固有（面板内自绘磨砂的快照在图层平移时不刷新）。**不要**为此改窗口结构（§0.16.3 那套已被用户打回）。
