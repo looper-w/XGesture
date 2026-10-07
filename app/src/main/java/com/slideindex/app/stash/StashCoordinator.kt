@@ -14,6 +14,7 @@ import com.slideindex.app.overlay.StashPanelInitialTab
 import com.slideindex.app.overlay.FloatBallTextPick
 import com.slideindex.app.overlay.ScreenPinManager
 import com.slideindex.app.overlay.ScreenshotLayoutMeta
+import com.slideindex.app.overlay.history.HistorySaveSignal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,14 +23,45 @@ import kotlinx.coroutines.withContext
 object StashCoordinator {
     private val scope = CoroutineScope(Dispatchers.Main)
 
-    fun addText(text: String, onDone: (Boolean) -> Unit = {}) {
+    /**
+     * 记下条目来源（卡片上那枚小 chip）。
+     *
+     * 来源是**可选**的展示信息，所以失败只吞掉 —— 不能让"存进闪念"这个主流程跟着失败，
+     * 也不能因为元数据写不进去就让用户以为没存上。传 null 的调用点 = 纯闪念，不显示 chip。
+     */
+    private suspend fun rememberSource(entryId: String?, source: String?) {
+        if (entryId == null || source == null) return
+        runCatching { StashAccess.metaRepository?.setSource(entryId, source) }
+    }
+
+    /**
+     * 通知把手侧「刚存下一条」：把手脉冲（设计稿 `.pip.pulse`），之后 peek 预览也用它。
+     *
+     * 把手窗与面板窗是两个 window，只能靠同进程静态量传事件（见 `HistorySaveSignal`）。
+     */
+    private fun notifySaved(text: String) {
+        HistorySaveSignal.notifySaved(text)
+    }
+
+    fun addText(
+        text: String,
+        source: String? = null,
+        onSaved: (String) -> Unit = {},
+        onDone: (Boolean) -> Unit = {},
+    ) {
         val repo = StashAccess.repository
         if (repo == null) {
             onDone(false)
             return
         }
         scope.launch {
-            onDone(repo.addText(text) != null)
+            val entry = repo.addText(text)
+            rememberSource(entry?.id, source)
+            if (entry != null) {
+                notifySaved(text)
+                onSaved(entry.id)
+            }
+            onDone(entry != null)
         }
     }
 
@@ -37,6 +69,7 @@ object StashCoordinator {
         bitmap: Bitmap,
         pinDisplayWidthPx: Int? = null,
         pinDisplayHeightPx: Int? = null,
+        source: String? = null,
         onDone: (Boolean) -> Unit = {}
     ) {
         val repo = StashAccess.repository
@@ -50,19 +83,21 @@ object StashCoordinator {
             return
         }
         scope.launch {
-            onDone(
-                repo.addImage(
-                    bitmap = copy,
-                    pinDisplayWidthPx = pinDisplayWidthPx,
-                    pinDisplayHeightPx = pinDisplayHeightPx
-                ) != null
+            val entry = repo.addImage(
+                bitmap = copy,
+                pinDisplayWidthPx = pinDisplayWidthPx,
+                pinDisplayHeightPx = pinDisplayHeightPx
             )
+            rememberSource(entry?.id, source)
+            if (entry != null) notifySaved("")
+            onDone(entry != null)
         }
     }
 
     fun addRich(
         parts: List<StashRichPart>,
         htmlText: String? = null,
+        source: String? = null,
         onDone: (Boolean) -> Unit = {}
     ) {
         val repo = StashAccess.repository
@@ -85,7 +120,12 @@ object StashCoordinator {
             return
         }
         scope.launch {
-            onDone(repo.addRich(copied, htmlText) != null)
+            val entry = repo.addRich(copied, htmlText)
+            rememberSource(entry?.id, source)
+            if (entry != null) {
+                notifySaved(copied.filterIsInstance<StashRichPart.Text>().joinToString("\n") { it.text })
+            }
+            onDone(entry != null)
         }
     }
 
@@ -159,6 +199,20 @@ object StashCoordinator {
         ScreenPinManager.pinClipboardEntry(context, entry)
     }
 
+    /**
+     * 跟手拉出：把手横向拖过阈值时调用，返回"是否真的开始跟手"。
+     *
+     * false 的情况：面板本来就开着、或侧栏窗没挂上（无障碍服务没开）——
+     * 此时把手的手势要退回原来的"拖过阈值就打开"逻辑。
+     */
+    fun beginHandleReveal(context: Context): Boolean =
+        FloatBallStashPanel.beginDragReveal(context)
+
+    /** 跟手拉出：松手（[commit] = 过半就归位，否则弹回）。 */
+    fun endHandleReveal(commit: Boolean) {
+        FloatBallStashPanel.endDragReveal(commit)
+    }
+
     fun addFromClipboard(context: Context, entry: ClipboardEntry, onDone: (Boolean) -> Unit = {}) {
         val repo = StashAccess.repository
         if (repo == null) {
@@ -166,7 +220,7 @@ object StashCoordinator {
             return
         }
         scope.launch {
-            val success = withContext(Dispatchers.IO) {
+            val created = withContext(Dispatchers.IO) {
                 val blocks = entry.resolvedContentBlocks().filter { block ->
                     when (block.kind) {
                         ClipboardBlockKind.TEXT -> block.text.isNotBlank()
@@ -185,32 +239,34 @@ object StashCoordinator {
                                 }
                             }
                         }
-                        parts.isNotEmpty() && repo.addRich(parts, entry.htmlText) != null
+                        parts.takeIf { it.isNotEmpty() }?.let { repo.addRich(it, entry.htmlText) }
                     }
                     blocks.size == 1 -> {
                         val only = blocks.first()
                         when (only.kind) {
-                            ClipboardBlockKind.TEXT -> repo.addText(only.text) != null
+                            ClipboardBlockKind.TEXT -> repo.addText(only.text)
                             ClipboardBlockKind.IMAGE -> {
                                 val bitmap = ClipboardImageStore.loadBitmap(context, only.fileName)
-                                bitmap != null && repo.addImage(bitmap) != null
+                                bitmap?.let { repo.addImage(it) }
                             }
                         }
                     }
                     else -> {
                         val text = entry.text.trim()
                         when {
-                            text.isNotEmpty() -> repo.addText(text) != null
+                            text.isNotEmpty() -> repo.addText(text)
                             entry.hasImageContent() -> {
                                 val bitmap = ClipboardImageStore.loadEntryThumbnail(context, entry)
-                                bitmap != null && repo.addImage(bitmap) != null
+                                bitmap?.let { repo.addImage(it) }
                             }
-                            else -> false
+                            else -> null
                         }
                     }
                 }
             }
-            onDone(success)
+            rememberSource(created?.id, StashMetaRepository.SOURCE_CLIPBOARD)
+            if (created != null) notifySaved(created.text.orEmpty())
+            onDone(created != null)
         }
     }
 }

@@ -1,15 +1,19 @@
 package com.slideindex.app.overlay.history
 
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.TextFields
@@ -19,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -41,6 +46,8 @@ import com.slideindex.app.stash.StashAccess
 import com.slideindex.app.stash.StashCoordinator
 import com.slideindex.app.stash.StashEntry
 import com.slideindex.app.stash.StashEntryType
+import com.slideindex.app.stash.StashMetaRepository
+import com.slideindex.app.stash.StashMetaStore
 import com.slideindex.app.stash.allImageFileNames
 import com.slideindex.app.stash.combinedText
 import com.slideindex.app.stash.resolvedContentBlocks
@@ -59,10 +66,13 @@ internal fun HistoryClipboardEntryCard(
     onSelectedImageIndexChange: (Int) -> Unit,
     previewWidthPx: Int,
     previewHeightPx: Int,
+    /** 这条的时间档（设计稿 `clipItemHtml` 用的是和闪念同一套 `.fresh/.mid/.old`）。 */
+    dayGroup: HistoryDayGroup? = null,
     onShowMessage: (Int) -> Unit,
     onCopy: () -> Unit,
     onStash: () -> Unit,
     onDelete: () -> Unit,
+    haptics: HistoryHaptics = rememberHistoryHaptics(),
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -138,6 +148,7 @@ internal fun HistoryClipboardEntryCard(
         entryId = entry.id,
         createdAtEpochMs = entry.createdAtEpochMs,
         starred = false,
+        dayGroup = dayGroup,
         headerTrailing = {
             IconButton(
                 onClick = {
@@ -196,12 +207,18 @@ internal fun HistoryClipboardEntryCard(
             HistoryCardActionIcon(
                 icon = Icons.Default.ContentCopy,
                 contentDescription = stringResource(R.string.clipboard_history_float_copy),
-                onClick = onCopy,
+                onClick = {
+                    haptics.confirm()
+                    onCopy()
+                },
             )
             HistoryCardActionIcon(
                 icon = Icons.Outlined.Archive,
                 contentDescription = stringResource(R.string.float_ball_action_stash),
-                onClick = onStash,
+                onClick = {
+                    haptics.confirm()
+                    onStash()
+                },
             )
             Spacer(modifier = Modifier.weight(1f))
             HistoryCardOverflowMenu(
@@ -213,6 +230,7 @@ internal fun HistoryClipboardEntryCard(
                                 label = pinLabel,
                                 icon = Icons.Default.PushPin,
                                 onClick = {
+                                    haptics.tick()
                                     when {
                                         entry.hasRichPinContent() -> StashCoordinator.pinRichFromClipboard(context, entry)
                                         hasImages && selectedBitmap != null -> {
@@ -229,7 +247,10 @@ internal fun HistoryClipboardEntryCard(
                             HistoryCardMenuAction(
                                 label = shareLabel,
                                 icon = Icons.Default.Share,
-                                onClick = { FloatBallTextPick.shareScreenshot(context, selectedBitmap) },
+                                onClick = {
+                                    haptics.tick()
+                                    FloatBallTextPick.shareScreenshot(context, selectedBitmap)
+                                },
                             ),
                         )
                         add(
@@ -237,6 +258,7 @@ internal fun HistoryClipboardEntryCard(
                                 label = saveImageLabel,
                                 icon = Icons.Outlined.Save,
                                 onClick = {
+                                    haptics.tick()
                                     val saved = FloatBallTextPick.saveScreenshot(context, selectedBitmap)
                                     onShowMessage(
                                         if (saved) R.string.float_ball_screenshot_saved else R.string.float_ball_action_failed,
@@ -249,7 +271,10 @@ internal fun HistoryClipboardEntryCard(
                             HistoryCardMenuAction(
                                 label = shareLabel,
                                 icon = Icons.Default.Share,
-                                onClick = { FloatBallTextPick.shareText(context, bodyText) },
+                                onClick = {
+                                    haptics.tick()
+                                    FloatBallTextPick.shareText(context, bodyText)
+                                },
                             ),
                         )
                     }
@@ -259,6 +284,7 @@ internal fun HistoryClipboardEntryCard(
                             icon = Icons.Default.Delete,
                             onClick = onDelete,
                             iconTint = MiuixTheme.colorScheme.error,
+                            destructive = true,
                         ),
                     )
                 },
@@ -280,6 +306,18 @@ internal fun HistoryStashEntryCard(
     onShare: () -> Unit,
     onToggleStar: () -> Unit,
     onDelete: () -> Unit,
+    /** 打开就地编辑条（设计稿 `.editbar`）。 */
+    onEdit: () -> Unit = {},
+    /** 卡片要展示的元数据（完成态 / 标签 / 追加 / 来源），见 `StashMetaRepository`。 */
+    meta: StashMetaStore = StashMetaStore(),
+    /** 标签名 -> 颜色（来自 `HistoryPanelViewModel.availableTags`）。 */
+    tagColors: Map<String, Long> = emptyMap(),
+    onSetDone: (Boolean) -> Unit = {},
+    /** 刚存下的那条：播一次高亮环（设计稿 `.item.flash`）。 */
+    flash: Boolean = false,
+    /** 这条的时间档（今天 / 昨天 / 更早）：设计稿按档换卡片观感，见 `HistoryPanelColors`。 */
+    dayGroup: HistoryDayGroup? = null,
+    haptics: HistoryHaptics = rememberHistoryHaptics(),
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -322,6 +360,36 @@ internal fun HistoryStashEntryCard(
     val saveImageLabel = stringResource(R.string.clipboard_action_save_image)
     val deleteLabel = stringResource(R.string.stash_action_delete)
     val moreLabel = stringResource(R.string.notification_filter_more_menu)
+    val pickLabel = stringResource(R.string.stash_action_open_pick)
+
+    /* ---- 卡片重排要用的元数据（完成态 / 标签 / 追加 / 来源），见 StashMetaRepository ---- */
+    val done = meta.isDone(entry.id)
+    val tagNames = meta.tagsOf(entry.id)
+    val appends = meta.appendsOf(entry.id)
+    val sourceLabel = stashSourceLabelRes(meta.sourceOf(entry.id))?.let { stringResource(it) }
+    val tagChips = tagNames.mapNotNull { name -> tagColors[name]?.let { name to Color(it) } }
+    // 设计稿 `isTodo`：主状态动作在「待办」条目上是「完成」，其它条目上是「星标」。
+    // 已完成的条目即使后来摘掉「待办」标签也保留这个按钮，否则没法取消完成。
+    val isTodo = StashMetaRepository.TODO_TAG_NAME in tagNames || done
+    val openInPick: () -> Unit = {
+        val imageIndex = when (entry.type) {
+            StashEntryType.RICH -> selectedImageIndex
+            else -> 0
+        }
+        PickResultFromHistoryCoordinator.openFromStash(context, entry, imageIndex)
+    }
+    val shareEntry: () -> Unit = {
+        when {
+            entry.type == StashEntryType.RICH && !expanded && richHasImages && richSelectedBitmap != null -> {
+                FloatBallTextPick.shareScreenshot(context, richSelectedBitmap)
+            }
+            entry.type == StashEntryType.RICH && !expanded && summaryText.isNotBlank() -> {
+                FloatBallTextPick.shareText(context, summaryText)
+            }
+            else -> onShare()
+        }
+    }
+
     val onLongPressDrag: () -> Unit = {
         val clipData = HistoryEntryDragHelper.buildClipForStashEntry(context, entry, repo)
         if (clipData == null) {
@@ -353,37 +421,15 @@ internal fun HistoryStashEntryCard(
         entryId = entry.id,
         createdAtEpochMs = entry.createdAtEpochMs,
         starred = entry.starred,
-        headerTrailing = {
-            IconButton(
-                onClick = {
-                    val imageIndex = when (entry.type) {
-                        StashEntryType.RICH -> selectedImageIndex
-                        else -> 0
-                    }
-                    PickResultFromHistoryCoordinator.openFromStash(context, entry, imageIndex)
-                },
-                modifier = Modifier.size(32.dp),
-            ) {
-                MiuixIcon(
-                    imageVector = Icons.Outlined.TextFields,
-                    contentDescription = stringResource(R.string.stash_action_open_pick),
-                    modifier = Modifier.size(18.dp),
-                    tint = MiuixTheme.colorScheme.onBackground,
-                )
-            }
-            IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
-                MiuixIcon(
-                    imageVector = if (entry.starred) Icons.Default.Star else Icons.Outlined.StarOutline,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = if (entry.starred) {
-                        MiuixTheme.colorScheme.primary
-                    } else {
-                        MiuixTheme.colorScheme.onBackground
-                    },
-                )
-            }
-        },
+        done = done,
+        // 闪念的时间画在卡片外的左侧时间轴槽里（`HistoryTimelineEntryRow`）。
+        showTimestamp = false,
+        // 设计稿的卡片里没有正文/操作行之间的分隔线。
+        showActionDivider = false,
+        // 头部原来那两个图标（取词 / 星标）都搬走了：星标成为操作行的主状态动作，
+        // 取词进 ⋮ 菜单 —— 于是头部整行不再存在（设计稿正是如此）。
+        flash = flash,
+        dayGroup = dayGroup,
         content = {
             when (entry.type) {
                 StashEntryType.TEXT -> {
@@ -401,6 +447,7 @@ internal fun HistoryStashEntryCard(
                             HistoryCollapsedSummaryText(
                                 text = entry.text.orEmpty(),
                                 maxLines = if (canExpand) 3 else Int.MAX_VALUE,
+                                strikethrough = done,
                             )
                         },
                     )
@@ -447,42 +494,112 @@ internal fun HistoryStashEntryCard(
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                             }
-                            HistoryCollapsedSummaryText(text = summaryText)
+                            HistoryCollapsedSummaryText(
+                            text = summaryText,
+                            strikethrough = done,
+
+                        )
                         },
                     )
                 }
             }
+            // 追加块（设计稿 `.item .box .append`）：数据层存的是一个列表，一条一段。
+            appends.forEach { append ->
+                HistoryCardAppendBlock(text = append.text)
+            }
+            // 底部一行（设计稿 `.item .box .foot`）：来源 chip + 标签 chip。
+            HistoryCardFootRow(sourceLabel = sourceLabel, tags = tagChips)
         },
         actions = {
+            // 设计稿 `.acts` 的行内动作只有「主状态 + 复制」，其余进 ⋮：
+            // 主状态 = 待办条目给「完成」，其它条目给「星标」。
+            if (isTodo) {
+                HistoryCardActionIcon(
+                    icon = if (done) Icons.Filled.CheckCircle else Icons.Outlined.CheckCircle,
+                    contentDescription = stringResource(
+                        if (done) R.string.stash_action_mark_undone else R.string.stash_action_mark_done,
+                    ),
+                    // 触觉在这些动作的落地处（`HistoryPanelScreen` 的 setDone/toggleStar/deleteEntry）
+                    // 统一给，卡片这里不再重复震 —— 否则同一次点击会震两下。
+                    onClick = { onSetDone(!done) },
+                    tint = if (done) MiuixTheme.colorScheme.primary else null,
+                    modifier = Modifier.offset(x = -HistoryActsOffsetX),
+                )
+            } else {
+                HistoryCardActionIcon(
+                    icon = if (entry.starred) Icons.Default.Star else Icons.Outlined.StarOutline,
+                    contentDescription = stringResource(
+                        if (entry.starred) R.string.stash_action_unstar else R.string.stash_action_star,
+                    ),
+                    onClick = onToggleStar,
+                    tint = if (entry.starred) MiuixTheme.colorScheme.primary else null,
+                    modifier = Modifier.offset(x = -HistoryActsOffsetX),
+                )
+            }
             HistoryCardActionIcon(
                 icon = Icons.Default.ContentCopy,
                 contentDescription = stringResource(R.string.clipboard_history_float_copy),
-                onClick = onCopy,
-            )
-            HistoryCardActionIcon(
-                icon = Icons.Default.Share,
-                contentDescription = null,
                 onClick = {
-                    when {
-                        entry.type == StashEntryType.RICH && !expanded && richHasImages && richSelectedBitmap != null -> {
-                            FloatBallTextPick.shareScreenshot(context, richSelectedBitmap)
-                        }
-                        entry.type == StashEntryType.RICH && !expanded && summaryText.isNotBlank() -> {
-                            FloatBallTextPick.shareText(context, summaryText)
-                        }
-                        else -> onShare()
-                    }
+                    haptics.confirm()
+                    onCopy()
                 },
+                modifier = Modifier.offset(x = -HistoryActsOffsetX),
             )
             Spacer(modifier = Modifier.weight(1f))
             HistoryCardOverflowMenu(
                 contentDescription = moreLabel,
                 actions = buildList {
+                    // 设计稿的 ⋮：加星标 / 进入取词 / 钉在屏幕 / 分享 / 保存图片 / —— / 删除。
+                    // 我们多一项「编辑」：设计稿是从卡片本体点开编辑条，那和"点卡片展开/收起"
+                    // 冲突（App 既有行为），所以搬到 ⋮ 里更稳妥。
+                    add(
+                        HistoryCardMenuAction(
+                            label = stringResource(R.string.stash_action_edit),
+                            icon = Icons.Outlined.Edit,
+                            onClick = {
+                                haptics.tick()
+                                onEdit()
+                            },
+                        ),
+                    )
+                    add(
+                        HistoryCardMenuAction(
+                            label = stringResource(
+                                if (entry.starred) R.string.stash_action_unstar else R.string.stash_action_star,
+                            ),
+                            icon = if (entry.starred) Icons.Default.Star else Icons.Outlined.StarOutline,
+                            onClick = onToggleStar,
+                            iconTint = if (entry.starred) MiuixTheme.colorScheme.primary else null,
+                        ),
+                    )
+                    add(
+                        HistoryCardMenuAction(
+                            label = pickLabel,
+                            icon = Icons.Outlined.TextFields,
+                            onClick = {
+                                haptics.tick()
+                                openInPick()
+                            },
+                        ),
+                    )
                     add(
                         HistoryCardMenuAction(
                             label = pinLabel,
                             icon = Icons.Default.PushPin,
-                            onClick = onPin,
+                            onClick = {
+                                haptics.tick()
+                                onPin()
+                            },
+                        ),
+                    )
+                    add(
+                        HistoryCardMenuAction(
+                            label = shareLabel,
+                            icon = Icons.Default.Share,
+                            onClick = {
+                                haptics.tick()
+                                shareEntry()
+                            },
                         ),
                     )
                     if (entry.type == StashEntryType.RICH && !expanded && richHasImages && richSelectedBitmap != null) {
@@ -491,6 +608,7 @@ internal fun HistoryStashEntryCard(
                                 label = saveImageLabel,
                                 icon = Icons.Outlined.Save,
                                 onClick = {
+                                    haptics.tick()
                                     val saved = FloatBallTextPick.saveScreenshot(context, richSelectedBitmap)
                                     onShowMessage(
                                         if (saved) R.string.float_ball_screenshot_saved else R.string.float_ball_action_failed,
@@ -503,8 +621,12 @@ internal fun HistoryStashEntryCard(
                         HistoryCardMenuAction(
                             label = deleteLabel,
                             icon = Icons.Default.Delete,
-                            onClick = onDelete,
+                            onClick = {
+                                haptics.confirm()
+                                onDelete()
+                            },
                             iconTint = MiuixTheme.colorScheme.error,
+                            destructive = true,
                         ),
                     )
                 },

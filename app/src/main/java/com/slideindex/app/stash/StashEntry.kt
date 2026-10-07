@@ -62,8 +62,15 @@ fun StashEntry.combinedText(): String =
         .trim()
         .ifBlank { text?.trim().orEmpty() }
 
-fun StashEntry.matchesQuery(query: String): Boolean {
+/**
+ * 关键词命中判断。
+ *
+ * [tagNames] 是该条目当前绑定的标签名（来自 `StashMetaRepository`，**不在** `StashEntry` 里，
+ * 所以由调用方传进来）。默认空列表 —— 既有调用点不传也能编过。
+ */
+fun StashEntry.matchesQuery(query: String, tagNames: List<String> = emptyList()): Boolean {
     val lower = query.lowercase()
+    if (tagNames.any { it.lowercase().contains(lower) }) return true
     return combinedText().contains(lower, ignoreCase = true) ||
         htmlText?.contains(lower, ignoreCase = true) == true ||
         imageFileName?.contains(lower, ignoreCase = true) == true

@@ -51,6 +51,7 @@ import com.slideindex.app.settings.PickResultTextModeDefault
 import com.slideindex.app.settings.SearchEngineStore
 import com.slideindex.app.settings.SearchEngineType
 import com.slideindex.app.stash.StashCoordinator
+import com.slideindex.app.stash.StashMetaRepository
 import com.slideindex.app.util.HapticHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1310,7 +1311,10 @@ object FloatBallPickResultPanel {
                         dismiss()
                     },
                     onStashText = { value ->
-                        StashCoordinator.addText(value) { success ->
+                        StashCoordinator.addText(
+                            value,
+                            source = StashMetaRepository.SOURCE_PICK,
+                        ) { success ->
                             showInPanelMessage(
                                 overlayContext.getString(
                                     if (success) R.string.stash_saved else R.string.stash_save_failed
@@ -1350,7 +1354,8 @@ object FloatBallPickResultPanel {
                         StashCoordinator.addImage(
                             bitmap = bitmap,
                             pinDisplayWidthPx = displayW,
-                            pinDisplayHeightPx = displayH
+                            pinDisplayHeightPx = displayH,
+                            source = StashMetaRepository.SOURCE_PICK,
                         ) { success ->
                             showInPanelMessage(
                                 overlayContext.getString(

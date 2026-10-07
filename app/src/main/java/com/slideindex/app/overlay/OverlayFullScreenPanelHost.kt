@@ -116,6 +116,46 @@ class OverlayFullScreenPanelHost(
     }
 
     /**
+     * 只切「可触摸」，不动可见性。
+     *
+     * 跟手拉出用的：面板窗**看得见**（跟着手指走），但拖动期间不能抢把手那个窗的手势 ——
+     * 面板窗是 MATCH_PARENT，只要它还吃触摸，把手就拿不到后续的 MOVE。
+     */
+    fun setTouchable(touchable: Boolean) {
+        runOnMain {
+            val wm = windowManager ?: return@runOnMain
+            val view = composeViewRef ?: return@runOnMain
+            val params = layoutParams ?: return@runOnMain
+            params.flags = if (touchable) {
+                params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            } else {
+                params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            }
+            runCatching { wm.updateViewLayout(view, params) }
+        }
+    }
+
+    /**
+     * 面板窗的**水平位置**（px，窗口左边缘坐标；gravity 是 TOP|START，所以正数向右，左右侧都不用反号）。
+     *
+     * 跟手拖出用它：窗口只有 78% 宽（见 [OverlayPanelLayoutParams.stashClipboardSidePanel]），
+     * 移动**窗口本身**（而不是窗口里的内容）才能让系统级背景模糊跟着实时重算 ——
+     * 这也是"拖动过程也是实时模糊"的关键（自绘 RenderEffect 快照一平移就失效，只剩白 tint）。
+     *
+     * 值没变就直接返回：拖动每帧都会调，避免无谓的 `updateViewLayout`。
+     */
+    fun setRevealOffsetPx(px: Int) {
+        runOnMain {
+            val wm = windowManager ?: return@runOnMain
+            val view = composeViewRef ?: return@runOnMain
+            val params = layoutParams ?: return@runOnMain
+            if (params.x == px) return@runOnMain
+            params.x = px
+            runCatching { wm.updateViewLayout(view, params) }
+        }
+    }
+
+    /**
      * Cross-window blur for translucent overlay panels (API 31+, [WindowManager.isCrossWindowBlurEnabled]).
      * Returns true when [FLAG_BLUR_BEHIND] is active — Compose should use semi-transparent surfaces.
      */

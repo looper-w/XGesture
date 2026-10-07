@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 闪念语音输入：overlay 在后台要拿麦克风，必须前台服务 + microphone 类型 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.READ_LOGS"
@@ -717,6 +720,24 @@
         <receiver
             android:name=".remind.RemindAlarmReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".stash.StashReminderReceiver"
+            android:exported="false" />
+
+        <activity
+            android:name=".voice.StashVoicePermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.SlideIndex.Transparent" />
+
+        <service
+            android:name=".voice.StashVoiceInputService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <receiver
             android:name=".timeddnd.TempDndNotificationReceiver"

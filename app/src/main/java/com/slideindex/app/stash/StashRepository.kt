@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import android.util.LruCache
 import androidx.core.content.FileProvider
 import androidx.core.graphics.scale
@@ -30,7 +31,16 @@ import kotlinx.serialization.json.Json
 
 @Singleton
 class StashRepository @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext context: Context,
+    /**
+     * 元数据仓库（标签 / 完成态 / 追加 / 来源 / 提醒）。
+     *
+     * ⚠️ **这个形参不能省**：`StashMetaRepository` 是自注册的单例（`init` 里把自己挂到
+     * `StashAccess.metaRepository`），但**没有任何一处注入它** —— 于是它从来没被构造过，
+     * 元数据层在真机上一直是死的（没有标签 chip、没有完成态、来源也永远为空）。
+     * 让它成为仓储的构造依赖，创建闪念仓储时就会一并创建它（Hilt 先造形参）。
+     */
+    private val metaRepository: StashMetaRepository,
 ) {
     private val appContext = context.applicationContext
     private val stashDir = File(appContext.filesDir, STASH_DIR_NAME).apply { mkdirs() }
@@ -44,6 +54,15 @@ class StashRepository @Inject constructor(
 
     private val _entries = MutableStateFlow<List<StashEntry>>(emptyList())
     val entries: StateFlow<List<StashEntry>> = _entries.asStateFlow()
+
+    /**
+     * 上一次读盘是否失败。失败期间拒绝一切写入，避免把坏文件当成空表覆盖掉。
+     *
+     * ⚠️ 必须声明在 `init` **之前**：Kotlin 按声明顺序执行属性初始化与 `init` 块，
+     * 声明在后面的话它会在 `init` 跑完后再被赋一次 `false`，把读盘失败的标志冲掉。
+     */
+    @Volatile
+    private var indexUnreadable = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -76,6 +95,10 @@ class StashRepository @Inject constructor(
             writeToDisk(trimmed)
         }
         _entries.value = trimmed
+        // 启动时收敛图片文件：`delete` 为了支持撤销不再立刻删图，孤儿统一在这里清。
+        if (!indexUnreadable) {
+            pruneOrphanImages(trimmed)
+        }
         StashAccess.repository = this
     }
 
@@ -188,11 +211,38 @@ class StashRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             withCrossProcessWrite {
                 val current = readFromDisk()
-                val removed = current.firstOrNull { it.id == id } ?: return@withCrossProcessWrite
-                deleteEntryImages(removed)
+                if (current.none { it.id == id }) return@withCrossProcessWrite
                 val next = current.filterNot { it.id == id }
                 writeToDisk(next)
                 _entries.value = next
+                // ⚠️ 这里**故意不删图片文件**：撤销（[restore]）还要用它。
+                // 孤儿文件由 [pruneOrphanImages] 在下次启动时按"还有没有条目引用"统一清掉。
+                //
+                // 顺手把它的元数据（标签 / 完成态 / 追加 / 来源）一起清掉。
+                // 另有一层兜底：`StashMetaRepository.pruneOrphans`（面板打开时按有效 id 收敛）。
+                forgetMeta(id)
+            }
+        }
+    }
+
+    /**
+     * 把一条（刚被删掉的）条目放回原位置 —— 删除的"撤销"。
+     *
+     * 图片文件没被删（见 [delete]），所以图片条目也能真的恢复。
+     * 原位置已经不存在（列表变短/被裁掉）时夹到表尾，不会丢。
+     */
+    suspend fun restore(entry: StashEntry, index: Int): Boolean {
+        return withContext(Dispatchers.IO) {
+            withCrossProcessWrite {
+                val current = readFromDisk()
+                if (current.any { it.id == entry.id }) return@withCrossProcessWrite false
+                val next = current.toMutableList().also {
+                    it.add(index.coerceIn(0, it.size), entry)
+                }
+                val trimmed = trimToMax(next)
+                writeToDisk(trimmed)
+                _entries.value = trimmed
+                true
             }
         }
     }
@@ -204,8 +254,31 @@ class StashRepository @Inject constructor(
                 current.forEach { deleteEntryImages(it) }
                 writeToDisk(emptyList())
                 _entries.value = emptyList()
+                current.forEach { forgetMeta(it.id) }
             }
         }
+    }
+
+    /**
+     * 删掉没有被任何条目引用的图片文件。
+     *
+     * 存在的意义：`delete` 不再立刻删图片（撤销要用），于是需要一个**统一的**收敛点；
+     * 顺带也清掉崩溃/异常路径留下的孤儿文件。只在启动时跑一次，成本是列一次目录。
+     */
+    private fun pruneOrphanImages(entries: List<StashEntry>) {
+        val referenced = entries.flatMapTo(HashSet()) { it.allImageFileNames() }
+        runCatching {
+            imageDir.listFiles()?.forEach { file ->
+                if (file.name !in referenced) file.delete()
+            }
+        }.onFailure { Log.w(TAG, "pruneOrphanImages failed", it) }
+    }
+
+    /**
+     * 清一条条目的元数据。**它失败了也不该让删除本身失败**，所以整段吞掉。
+     */
+    private suspend fun forgetMeta(entryId: String) {
+        runCatching { metaRepository.forget(entryId) }
     }
 
     suspend fun toggleStar(id: String) {
@@ -396,16 +469,60 @@ class StashRepository @Inject constructor(
         }.getOrNull()
     }
 
+    /**
+     * 改一条记录的正文。
+     *
+     * 之前仓储**完全没有**改正文的接口（只有 [toggleStar] 这一个窄改），所以设计稿里
+     * 「点卡片 → 就地编辑」是新增能力，不是改造。
+     *
+     * @return 是否命中并写盘。
+     */
+    suspend fun updateText(id: String, text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        return withContext(Dispatchers.IO) {
+            withCrossProcessWrite {
+                val entries = readFromDisk()
+                val index = entries.indexOfFirst { it.id == id }
+                if (index < 0) return@withCrossProcessWrite false
+                // 只碰 text：不动 type / contentBlocks，避免影响既有渲染与钉屏路径。
+                val next = entries.toMutableList().also {
+                    it[index] = it[index].copy(text = trimmed)
+                }
+                writeToDisk(next)
+                _entries.value = next
+                true
+            }
+        }
+    }
+
     private fun readFromDiskSync(): List<StashEntry> = readFromDisk()
 
     private fun readFromDisk(): List<StashEntry> {
-        if (!indexFile.exists()) return emptyList()
+        if (!indexFile.exists()) {
+            indexUnreadable = false
+            return emptyList()
+        }
         return runCatching {
             json.decodeFromString<List<StashEntry>>(indexFile.readText())
-        }.getOrDefault(emptyList())
+        }.onSuccess {
+            indexUnreadable = false
+        }.getOrElse { cause ->
+            // ⚠️ 解析失败**绝不能静默当空表**。
+            // 所有写路径都是「读全表 → 改 → 整表写回」，一次解析失败 + 任意一次写入
+            // 就会把用户的全部暂存覆盖成空表。这里置标志位，让 writeToDisk 拒绝写入；
+            // 只要之后有一次成功读取，标志位自动清掉（能自愈，不会永久卡住）。
+            indexUnreadable = true
+            Log.w(TAG, "stash index unreadable; refusing to overwrite it", cause)
+            emptyList()
+        }
     }
 
     private fun writeToDisk(entries: List<StashEntry>) {
+        if (indexUnreadable) {
+            Log.w(TAG, "skip write: index unreadable, refusing to wipe user data")
+            return
+        }
         indexFile.writeText(json.encodeToString(entries))
     }
 
@@ -416,6 +533,7 @@ class StashRepository @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "StashRepository"
         const val STASH_DIR_NAME = "stash"
         const val IMAGE_DIR_NAME = "images"
         const val INDEX_FILE_NAME = "index.json"

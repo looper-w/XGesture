@@ -47,7 +47,15 @@ object OverlayPanelLayoutParams {
         }
     }
 
-    /** 暂存/剪贴板侧栏：固定 [TYPE_APPLICATION_OVERLAY]，与悬浮球/触钮 z-order 一致。 */
+    /**
+     * 暂存/剪贴板侧栏：固定 [TYPE_APPLICATION_OVERLAY]，与悬浮球/触钮 z-order 一致。
+     *
+     * ⚠️ **窗口满屏（MATCH_PARENT）**，面板自己只占右侧 78%（见 `HistoryPanelUi.panelWidthOf`）。
+     *
+     * 曾经改成"窗口 = 屏宽 × 78% + 拖动移动窗口 + 系统模糊"（§0.16.3）来治"跟手拖出时只剩白 tint（雾）"，
+     * 但**用户看了实机后不满意，整批回退**：现在回到"窗口满屏 + 面板内容自己平移 + App 自绘磨砂罩"。
+     * 回退记录见 `docs/capsule-refactor-plan.md` §0.16.3。
+     */
     fun stashClipboardSidePanel(
         context: Context,
         focusable: Boolean = false,
@@ -62,7 +70,11 @@ object OverlayPanelLayoutParams {
     ).apply {
         // 侧栏浏览时不抢焦点，尽量保持底层 App 输入法不收起（对齐 ClipShare 单窗 NOT_FOCUSABLE 策略）。
         flags = flags or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+        // 窗口**满屏**：§0.16.3 那次改窄 + 移动窗口 + 系统模糊的改造已被用户打回，整批回退。
     }
+
+    /** 侧栏窗/面板占屏宽的比例（和 `HistoryPanelUi.PANEL_WIDTH_FRACTION` 必须保持一致）。 */
+    const val SIDE_PANEL_WIDTH_FRACTION = 0.78f
 
     fun pickResultPanel(context: Context): WindowManager.LayoutParams =
         fullScreenOverlay(

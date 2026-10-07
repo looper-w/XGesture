@@ -1,11 +1,13 @@
-@file:OptIn(ExperimentalFoundationApi::class)
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 
 package com.slideindex.app.overlay.history
 
 import android.graphics.Bitmap
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,7 +19,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,13 +48,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.slideindex.app.clipboard.ClipboardContentBlock
 import com.slideindex.app.stash.StashEntryType
 import com.slideindex.app.ui.miuix.CardSegment
@@ -247,57 +263,154 @@ internal fun HistoryEntryCardShell(
     entryId: String,
     createdAtEpochMs: Long,
     starred: Boolean = false,
-    headerTrailing: @Composable () -> Unit,
+    /**
+     * 已完成：卡片内容整体淡到 [HistoryPanelColors.DONE_CONTENT_ALPHA]
+     * （设计稿 `.item.done .box { opacity: .62 }`）。
+     *
+     * 只淡**内容**（文字 / 图标），不淡卡片底色 —— 底色那边已经由
+     * `HistoryPanelColors.cardBackground(done = true)` 处理过，两边都淡会灰得过头。
+     */
+    done: Boolean = false,
+    /**
+     * 时间是否画在卡片里。
+     *
+     * 闪念页签传 `false`：设计稿把时间移到了卡片**外面**的左侧时间轴槽（`.item .when` 在
+     * `.box` 之前），由 `HistoryTimelineEntryRow` 渲染。剪贴板页签仍是卡片内（设计稿
+     * `clipItemHtml` 里 `when` 就在 `.box` 内）。
+     */
+    showTimestamp: Boolean = true,
+    /** 正文与操作行之间那条分隔线。设计稿的卡片里没有它（闪念传 `false`）。 */
+    showActionDivider: Boolean = true,
+    /** 头部右侧内容。为 null 且不显示时间时，整个头部行都不出现。 */
+    headerTrailing: (@Composable () -> Unit)? = null,
+    /** 刚存下的那条：播一次高亮环（设计稿 `.item.flash`）。 */
+    flash: Boolean = false,
+    /**
+     * 这条属于哪一档时间（今天 / 昨天 / 更早）。
+     *
+     * 设计稿**按档换卡片观感**：今天实心+亮边+投影、昨天半透明、更早完全透明。
+     * 传 null（例如剪贴板页签）就退回"实心卡片"。
+     */
+    dayGroup: HistoryDayGroup? = null,
     content: @Composable () -> Unit,
     actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
 ) {
-    val scheme = MiuixTheme.colorScheme
-    val cardShape = RoundedCornerShape(16.dp)
-    val containerColor = HistoryPanelColors.cardBackground(starred)
-    CardSegment(
-        isFirst = true,
-        isLast = true,
-        color = containerColor,
-        contentColor = scheme.onSurfaceContainer,
-        cornerRadius = 16.dp,
-        outerHorizontalPadding = 0.dp,
+    val theme = historyTheme()
+    // 设计稿 `.box { border-radius: var(--r-lg) }` = 18dp。
+    val cardShape = RoundedCornerShape(HistoryRadii.lg)
+    // ⚠️ **不再按时间分档**（用户明确："第一点我是不想要有区分"）。
+    // 所有条目同一套外观：半透明白渐变底 + 一条 hairline 描边；**不给每张都加投影**
+    // （整屏几十张卡都投影会脏）。demo 那套"今天玻璃/昨天半透/更早透明"的三档全部作废。
+    // 唯一还变的是**状态**：星标（accent 底 + 描边）、完成（整卡淡 + 划掉）。
+    val background: Brush = when {
+        starred -> SolidColor(theme.accent.copy(alpha = 0.09f))
+        else -> theme.glassFill
+    }
+    val borderColor = when {
+        starred -> theme.accent.copy(alpha = 0.45f)
+        else -> theme.cardBorder
+    }
+    // 投影只留给"新存下那条"的闪环（见下面 flash），常规卡片一律不投影。
+    val cardElevation = 0.dp
+    val flashProgress = rememberHistoryCardFlash(flash)
+    Box(
         modifier = Modifier
             .fillMaxWidth()
+            // ⚠️ `.item.done .box { opacity: .62 }` 要**整张卡**（含底色/描边/投影）一起淡。
+            // Compose 的 `Modifier.alpha` 是一个 layer：它只包住**它之后**的绘制，所以必须放在
+            // background/border 之**前** —— 放在后面就只淡了文字，看起来"颜色没变化"（踩过）。
             .then(
-                if (starred) {
-                    Modifier.border(
-                        width = 1.dp,
-                        color = scheme.primary.copy(alpha = 0.45f),
+                if (done) Modifier.alpha(HistoryPanelColors.DONE_CONTENT_ALPHA) else Modifier,
+            )
+            .then(
+                if (cardElevation > 0.dp) {
+                    Modifier.shadow(
+                        elevation = cardElevation,
                         shape = cardShape,
+                        clip = false,
+                        ambientColor = theme.glassShadow,
+                        spotColor = theme.glassShadow,
                     )
                 } else {
                     Modifier
                 },
-            ),
-        insidePadding = PaddingValues(12.dp),
+            )
+            .clip(cardShape)
+            .background(brush = background, shape = cardShape)
+            // `inset 0 1px 0 var(--g-rim)`：卡片内顶一条 1px 高光（玻璃感的来源之一）。
+            .drawWithContent {
+                drawContent()
+                // 顶部那条极细高光只画在**未星标**的卡上：星标卡底色被 accent 覆盖，
+                // 再叠白线会显脏（用户实测过那根"莫名其妙的横白条"）。
+                if (starred) return@drawWithContent
+                drawLine(
+                    color = theme.glassRim,
+                    start = Offset(0f, 0.5f),
+                    end = Offset(size.width, 0.5f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .border(width = 1.dp, color = borderColor, shape = cardShape)
+            // 设计稿 `.item.flash .box { animation: flashin 1.4s }`：
+            // `0 0 0 2px accent` + `0 0 0 8px accent-soft` → 全程淡到无。
+            .then(
+                if (flashProgress > 0f) {
+                    Modifier
+                        .shadow(
+                            elevation = (HistoryCardFlashGlowDp * flashProgress).dp,
+                            shape = cardShape,
+                            clip = false,
+                            ambientColor = theme.accent,
+                            spotColor = theme.accent,
+                        )
+                        .border(
+                            width = (HistoryCardFlashRingDp * flashProgress).dp,
+                            color = theme.accent.copy(alpha = flashProgress),
+                            shape = cardShape,
+                        )
+                } else {
+                    Modifier
+                },
+            )
+            // `.box { padding: 13px 14px 6px }`。
+            .padding(start = 14.dp, end = 14.dp, top = 13.dp, bottom = 6.dp),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            // 设计稿里各块的间距是**块自己带的 margin**（`.thumb`/`.append`/`.foot` 都 margin-top:10px，
+            // `.acts` 是 2px），所以这里不再统一加行距。
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = formatHistoryRelativeTime(createdAtEpochMs),
-                    style = HistoryPanelTypography.meta(),
-                    color = scheme.onSurfaceVariantSummary,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    headerTrailing()
+            if (showTimestamp || headerTrailing != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (showTimestamp) {
+                        Text(
+                            text = formatHistoryRelativeTime(createdAtEpochMs),
+                            style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.tiny),
+                            color = theme.sub,
+                        )
+                    }
+                    // 只显示时间时也要把右侧内容推到行尾（SpaceBetween 在只剩一个孩子时
+                    // 会把它放到行首）。
+                    Spacer(modifier = Modifier.weight(1f))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        headerTrailing?.invoke()
+                    }
                 }
             }
             content()
-            HorizontalDivider(color = scheme.dividerLine.copy(alpha = 0.5f))
+            if (showActionDivider) {
+                HorizontalDivider(color = theme.hair)
+            }
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                // `.acts { margin-top: 2px }`；左侧那 13dp 的负 margin 由行首图标各自
+                // `offset(x = -HistoryActsOffsetX)` 实现（padding 不收负值，见 token 注释）。
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 actions()
@@ -306,22 +419,79 @@ internal fun HistoryEntryCardShell(
     }
 }
 
+/**
+ * 卡片操作行的一个图标按钮。
+ *
+ * 尺寸按设计稿：**48dp 命中区 + 22dp 字形**（Android 最小触摸目标）。
+ * 原先这里是 32dp / 20dp，低于规范。
+ *
+ * [tint] 传 null = 跟随正文色；主状态动作（星标 / 完成）在"已开启"时传主题色。
+ */
 @Composable
 internal fun HistoryCardActionIcon(
     icon: ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
+    tint: Color? = null,
+    modifier: Modifier = Modifier,
 ) {
-    val scheme = MiuixTheme.colorScheme
-    val iconTint = scheme.onBackground
-    IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+    val theme = historyTheme()
+    // 设计稿 `.acts button { width:48px; height:48px; border-radius: var(--r-sm); opacity:.84 }`
+    // + `.acts button.on { color: var(--accent-solid); opacity: 1 }`。
+    val on = tint != null
+    Box(
+        modifier = modifier
+            .size(CARD_ACTION_HIT_DP.dp)
+            .clip(RoundedCornerShape(HistoryRadii.sm))
+            .alpha(if (on) 1f else 0.84f)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
         top.yukonga.miuix.kmp.basic.Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(20.dp),
-            tint = iconTint,
+            modifier = Modifier.size(CARD_ACTION_GLYPH_DP.dp),
+            tint = tint ?: theme.text,
         )
     }
+}
+
+/** 操作行命中区边长（Android 最小触摸目标）。 */
+internal const val CARD_ACTION_HIT_DP = 48
+
+/** 操作行图标字形边长（设计稿 22dp）。 */
+internal const val CARD_ACTION_GLYPH_DP = 22
+
+/** 设计稿 `.item.flash`：`flashin 1.4s` 的高亮环（2dp 环 + 8dp 柔光）。 */
+private const val HistoryCardFlashDurationMs = 1_400
+private const val HistoryCardFlashRingDp = 2f
+private const val HistoryCardFlashGlowDp = 8f
+
+/**
+ * 新条目那一下高亮：进度 1 → 0（1.4s），不播时恒为 0。
+ *
+ * 用 [Animatable] 而不是 `animateFloatAsState`：前者能在 `flash = true` 时**从头播一次**，
+ * 后者只会盯着目标值 —— 滚出屏幕再滚回来、或者同一条被复用时都不会重播。
+ */
+@Composable
+private fun rememberHistoryCardFlash(flash: Boolean): Float {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(flash) {
+        if (flash) {
+            progress.snapTo(1f)
+            progress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = HistoryCardFlashDurationMs),
+            )
+        } else {
+            progress.snapTo(0f)
+        }
+    }
+    return progress.value
 }
 
 internal data class HistoryCardMenuAction(
@@ -329,6 +499,8 @@ internal data class HistoryCardMenuAction(
     val icon: ImageVector,
     val onClick: () -> Unit,
     val iconTint: Color? = null,
+    /** 危险动作（删除）：给它单独排一条分隔线，照设计稿的 `['sep']` 那一行。 */
+    val destructive: Boolean = false,
 )
 
 @Composable
@@ -342,12 +514,12 @@ internal fun HistoryCardOverflowMenu(
     Box {
         IconButton(
             onClick = { expanded = true },
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier.size(CARD_ACTION_HIT_DP.dp),
         ) {
             top.yukonga.miuix.kmp.basic.Icon(
                 imageVector = Icons.Default.MoreVert,
                 contentDescription = contentDescription,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(CARD_ACTION_GLYPH_DP.dp),
                 tint = scheme.onBackground,
             )
         }
@@ -355,7 +527,10 @@ internal fun HistoryCardOverflowMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            actions.forEach { action ->
+            actions.forEachIndexed { index, action ->
+                if (action.destructive && index > 0) {
+                    HorizontalDivider(color = scheme.dividerLine)
+                }
                 DropdownMenuItem(
                     text = { Text(action.label, style = HistoryPanelTypography.content()) },
                     onClick = {
@@ -375,19 +550,141 @@ internal fun HistoryCardOverflowMenu(
     }
 }
 
+/**
+ * 正文（折叠态摘要）。[strikethrough] = 已完成，设计稿
+ * `.item.done .box .body { text-decoration: line-through }`。
+ */
 @Composable
 internal fun HistoryCollapsedSummaryText(
     text: String,
     maxLines: Int = 3,
+    strikethrough: Boolean = false,
+
 ) {
     if (text.isBlank()) return
+    val theme = historyTheme()
     Text(
         text = text,
-        style = HistoryPanelTypography.content(),
-        color = MiuixTheme.colorScheme.onSurface,
+        // `.body { font-size: var(--f-sm); line-height: 1.6; letter-spacing: .1px }`
+        style = androidx.compose.ui.text.TextStyle(
+            fontSize = HistoryFontSizes.sm,
+            lineHeight = 20.sp,
+            letterSpacing = 0.1.sp,
+            textDecoration = if (strikethrough) TextDecoration.LineThrough else null,
+        ),
+        color = theme.text,
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+/**
+ * 「追加块」（设计稿 `.item .box .append`）：虚线分隔 + `＋ 内容`。
+ *
+ * 设计稿一条记录只挂一段追加；我们数据层存的是列表（`StashAppend`），所以调用方每条
+ * 各渲染一块 —— 比"只显示最后一条"信息更全。
+ */
+@Composable
+internal fun HistoryCardAppendBlock(text: String) {
+    if (text.isBlank()) return
+    val theme = historyTheme()
+    // `.append { border-top: 1px dashed var(--line); margin-top:10px; padding-top:9px;
+    //            font-size: var(--f-meta); color: var(--sub) }`
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        HistoryCardDashedDivider(color = theme.line)
+        Text(
+            text = "＋ $text",
+            style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.meta),
+            color = theme.sub,
+            modifier = Modifier.padding(top = 9.dp),
+        )
+    }
+}
+
+/** 设计稿 `.append { border-top: 1px dashed var(--line) }` —— 虚线用 drawBehind 画。 */
+@Composable
+private fun HistoryCardDashedDivider(color: Color) {
+    val strokePx = with(LocalDensity.current) { 1.dp.toPx() }
+    val dashPx = with(LocalDensity.current) { 4.dp.toPx() }
+    val gapPx = with(LocalDensity.current) { 3.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .drawBehind {
+                drawLine(
+                    color = color,
+                    start = Offset(0f, size.height / 2f),
+                    end = Offset(size.width, size.height / 2f),
+                    strokeWidth = strokePx,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(dashPx, gapPx)),
+                )
+            },
+    )
+}
+
+/**
+ * 卡片底部一行（设计稿 `.item .box .foot`）：来源 chip + 各标签 chip。
+ *
+ * 来源 = 这条是从哪儿来的（剪贴板 / 取词 / 图片）；用户自己记的纯闪念没有来源，不显示。
+ */
+@Composable
+internal fun HistoryCardFootRow(
+    sourceLabel: String?,
+    tags: List<Pair<String, Color>>,
+) {
+    if (sourceLabel == null && tags.isEmpty()) return
+    val theme = historyTheme()
+    // 设计稿是 flex-wrap；标签多了必须能换行，所以用 FlowRow 而不是 Row。
+    // `.foot { display:flex; gap:6px; margin-top:10px }`
+    FlowRow(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (sourceLabel != null) {
+            HistoryCardMiniChip(label = sourceLabel, dotColor = null, labelColor = theme.sub)
+        }
+        tags.forEach { (name, color) ->
+            HistoryCardMiniChip(label = name, dotColor = color, labelColor = theme.text)
+        }
+    }
+}
+
+/** 设计稿 `.chip.mini`：22dp 高、10.5sp、圆点 4.5dp，玻璃底 + 白描边；来源那枚是 `.ghost`（sub 色）。 */
+@Composable
+private fun HistoryCardMiniChip(
+    label: String,
+    dotColor: Color?,
+    labelColor: Color,
+) {
+    val theme = historyTheme()
+    val shape = RoundedCornerShape(HistoryRadii.pill)
+    Row(
+        modifier = Modifier
+            .height(22.dp)
+            .clip(shape)
+            .background(theme.glassFill)
+            .border(width = 1.dp, color = theme.glassBorder, shape = shape)
+            .padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (dotColor != null) {
+            Box(
+                modifier = Modifier
+                    .size(4.5.dp)
+                    .clip(RoundedCornerShape(HistoryRadii.pill))
+                    .background(dotColor),
+            )
+        }
+        Text(
+            text = label,
+            color = labelColor,
+            fontSize = HistoryFontSizes.tiny,
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

@@ -74,3 +74,8 @@ app/src/main/assets/bundled-native-engine/*.zip
 # --- Python 字节码缓存（scripts/ 下多个 py 工具） ---
 __pycache__/
 *.pyc
+.ohc_apk/
+.ohc_decompiled/
+.ohc_jadx.log
+PowerShell 7.6.6/
+null/

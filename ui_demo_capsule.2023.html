@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>闪念 · 贴边把手 + 两页签面板</title>
+<style>
+  /* ============================================================
+     Design tokens（浅色为默认）
+     ============================================================ */
+  :root {
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s7:32px;
+    --r-xs:8px; --r-sm:12px; --r-md:14px; --r-lg:18px; --r-xl:22px; --r-2xl:26px; --r-pill:999px;
+    --f-tiny:10.5px; --f-meta:11.5px; --f-sm:12.5px; --f-body:13.5px;
+    --f-title-s:15px; --f-title:19px; --f-display:26px;
+    --e-out:cubic-bezier(.22,1,.36,1); --e-io:cubic-bezier(.4,0,.2,1);
+    --d1:140ms; --d2:200ms; --d3:280ms;
+    --hit:48px;                                  /* Android 最小触摸目标 */
+
+    --page-bg:
+      radial-gradient(1100px 560px at 12% -8%, #E3E9F7 0%, transparent 62%),
+      radial-gradient(900px 500px at 92% 4%, #EFE8FA 0%, transparent 58%),
+      #F3F5FA;
+    --card-bg:linear-gradient(180deg, #FFFFFF, #FAFBFE);
+    --seg-bg:rgba(18,22,40,.05);
+    --sw-bg:rgba(18,22,40,.16);
+    --btn-bg:rgba(18,22,40,.04);
+    --btn-bd:rgba(18,22,40,.13);
+    --code-bg:rgba(18,22,40,.06);
+    --code-fg:#3B4A86;
+
+    --app-bg:#EEF1F7; --app-elev:#F7F8FC;
+    --text:#14161C; --sub:#666C80;
+    --hair:rgba(18,22,40,.07); --line:rgba(18,22,40,.09);
+    --accent:#5B6CF0; --accent-solid:#4A57D8; --accent-soft:rgba(91,108,240,.14);
+    --warn:#C2622B; --danger:#C43D3F;
+
+    --g-fill:linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.58));
+    --g-border:rgba(255,255,255,.92);
+    --g-rim:rgba(255,255,255,1);
+    --g-rim-dim:rgba(24,30,52,.05);
+    --g-gloss:rgba(255,255,255,.55);
+    --g-shadow:rgba(24,30,52,.30);
+    --g-shadow2:rgba(24,30,52,.16);
+    --g-solid:linear-gradient(180deg,#FFFFFF,#F4F6FB);
+
+    --scrim:rgba(20,24,44,.20);
+    --frame:#12161C;
+    --hdr-a:#3E68E0; --hdr-b:#7A5AE0;
+    --blur:20px;
+  }
+  [data-theme="dark"] {
+    --page-bg:
+      radial-gradient(1100px 560px at 12% -8%, #1B2030 0%, transparent 62%),
+      radial-gradient(900px 500px at 92% 4%, #1A1730 0%, transparent 58%),
+      #0C0D12;
+    --card-bg:linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.022));
+    --seg-bg:rgba(255,255,255,.06);
+    --sw-bg:rgba(255,255,255,.18);
+    --btn-bg:rgba(255,255,255,.075);
+    --btn-bd:rgba(255,255,255,.19);
+    --code-bg:rgba(255,255,255,.09);
+    --code-fg:#C3CBEE;
+
+    --app-bg:#0A0B0F; --app-elev:#12141A;
+    --text:#ECEEF4; --sub:#9BA1B2;
+    --hair:rgba(255,255,255,.08); --line:rgba(255,255,255,.10);
+    --accent:#6E7CF7; --accent-solid:#5563E8; --accent-soft:rgba(110,124,247,.16);
+    --warn:#F0A96B; --danger:#FF8F8F;
+
+    --g-fill:linear-gradient(180deg, rgba(52,57,74,.58), rgba(28,32,44,.52));
+    --g-border:rgba(255,255,255,.11);
+    --g-rim:rgba(255,255,255,.30);
+    --g-rim-dim:rgba(255,255,255,.05);
+    --g-gloss:rgba(255,255,255,.13);
+    --g-shadow:rgba(0,0,0,.70);
+    --g-shadow2:rgba(0,0,0,.40);
+    --g-solid:linear-gradient(180deg,#1D2029,#171A21);
+
+    --scrim:rgba(6,8,14,.44);
+    --frame:#161A20;
+    --hdr-a:#2A3AA0; --hdr-b:#5A3EA8;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; padding: 48px 40px 80px; color: var(--text); background: var(--page-bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", Roboto, sans-serif;
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; color: var(--code-fg);
+    font-size: 11.5px; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+  b { font-weight: 650; }
+  button { font-family: inherit; }
+
+  .page-head { max-width: 1260px; }
+  .page-head h1 { font-size: var(--f-display); font-weight: 700; letter-spacing: -.3px; margin: 0 0 10px; }
+  .page-head .sub { font-size: var(--f-body); line-height: 1.85; color: var(--sub); margin: 0; max-width: 1140px; }
+  .page-head .sub b { color: var(--text); }
+  .rule { height: 1px; background: linear-gradient(90deg, var(--hair), transparent); margin: 30px 0 26px; }
+  .sec { display: flex; align-items: baseline; gap: 12px; margin: 8px 0 8px; }
+  .sec .n { font-size: var(--f-meta); color: var(--sub); font-weight: 700; letter-spacing: 1px; }
+  .sec .t { font-size: var(--f-title-s); font-weight: 700; letter-spacing: -.1px; }
+  .secsub { font-size: var(--f-meta); color: var(--sub); line-height: 1.8; margin: 0 0 22px; max-width: 1060px; }
+  .stage { display: flex; gap: 56px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 58px; }
+
+  /* ============================================================
+     设备
+     ============================================================ */
+  .phone {
+    position: relative; width: 390px; height: 844px; flex: 0 0 auto;
+    border-radius: 44px; overflow: hidden; background: var(--app-bg);
+    box-shadow: 0 0 0 12px var(--frame), 0 0 0 13px rgba(255,255,255,.06),
+      0 34px 74px -22px rgba(0,0,0,.8), 0 10px 26px -14px rgba(0,0,0,.6);
+  }
+  .phone .punch { position: absolute; top: 12px; left: 50%; margin-left: -4px; width: 8px; height: 8px;
+    border-radius: 50%; background: #05060A; z-index: 95; }
+  .phone .homebar { position: absolute; bottom: 8px; left: 50%; margin-left: -60px; width: 120px; height: 4px;
+    border-radius: 2px; background: color-mix(in srgb, var(--text) 30%, transparent); z-index: 95; }
+  .statusbar { position: absolute; top: 0; left: 0; right: 0; height: 30px; z-index: 90;
+    display: flex; justify-content: space-between; align-items: center; padding: 0 22px; color: var(--text); }
+  .statusbar .tm { font-size: 12px; font-weight: 650; letter-spacing: .3px; }
+  .statusbar .icons { display: flex; align-items: center; gap: 6px; }
+  .statusbar .bars { display: flex; align-items: flex-end; gap: 1.6px; }
+  .statusbar .bars i { width: 2.6px; border-radius: 1px; background: currentColor; }
+  .statusbar .bat { width: 22px; height: 11px; border: 1.2px solid currentColor; border-radius: 3.5px;
+    opacity: .9; position: relative; }
+  .statusbar .bat::after { content: ''; position: absolute; top: 1.6px; left: 1.6px; bottom: 1.6px;
+    width: 12px; border-radius: 1.6px; background: currentColor; }
+  .statusbar .bat::before { content: ''; position: absolute; right: -3px; top: 3.4px; width: 1.8px;
+    height: 3.6px; border-radius: 0 1px 1px 0; background: currentColor; opacity: .6; }
+
+  /* 被覆盖的第三方 App */
+  .app { position: absolute; inset: 0; overflow: hidden; }
+  .app .hdr { height: 186px; padding: 48px 24px 0;
+    background: linear-gradient(158deg, var(--hdr-a), var(--hdr-b)); color: #fff; }
+  .app .hdr .t { font-size: var(--f-title); font-weight: 700; letter-spacing: -.2px; }
+  .app .hdr .s { font-size: var(--f-meta); opacity: .8; margin-top: 5px; letter-spacing: .3px; }
+  .app .hdr .u { width: 40px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.88); margin-top: 16px; }
+  .app .doc { padding: 26px 24px 0; }
+  .app .doc h2 { font-size: 21px; line-height: 1.42; letter-spacing: -.3px; font-weight: 700;
+    color: var(--text); margin: 0 0 12px; }
+  .app .doc .meta { display: flex; align-items: center; gap: 6px; font-size: var(--f-meta);
+    color: var(--sub); letter-spacing: .2px; }
+  .app .doc .meta .av { width: 14px; height: 14px; border-radius: 50%;
+    background: linear-gradient(140deg,#7C86C8,#B79AE0); }
+  .app .hero { position: relative; height: 250px; margin: 20px 24px 0; border-radius: var(--r-lg);
+    overflow: hidden; background: linear-gradient(158deg,#5F6AAE 0%, #8E7CC9 52%, #C0A0E2 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 26px -14px rgba(0,0,0,.6); }
+  .app .hero::after { content: ''; position: absolute; inset: 0;
+    background: radial-gradient(120% 80% at 80% 8%, rgba(255,255,255,.30), transparent 58%),
+                linear-gradient(180deg, transparent 55%, rgba(0,0,0,.22)); }
+  .app .doc .par { margin-top: 22px; display: grid; gap: 13px; }
+  .app .doc .par i { display: block; height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--line) 62%, transparent); }
+  .app .doc .par i:nth-child(2) { width: 92%; } .app .doc .par i:nth-child(3) { width: 86%; }
+  .app .doc .par i:nth-child(4) { width: 95%; } .app .doc .par i:nth-child(5) { width: 58%; }
+  .app .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 62px;
+    background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--app-bg) 88%, transparent));
+    display: flex; align-items: flex-end; justify-content: space-around; padding-bottom: 16px; }
+  .app .tabbar i { width: 18px; height: 18px; border-radius: 6px; background: var(--hair); }
+  .app .tabbar i.on { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+  /* ============================================================
+     玻璃
+     ============================================================ */
+  .g {
+    position: relative; background: var(--g-fill);
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.55);
+    backdrop-filter: blur(var(--blur)) saturate(1.55);
+    border: 1px solid var(--g-border);
+    box-shadow: inset 0 1px 0 var(--g-rim), inset 0 -1px 0 var(--g-rim-dim),
+      0 14px 34px -16px var(--g-shadow), 0 3px 10px -6px var(--g-shadow2);
+  }
+  .g::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: radial-gradient(130% 86% at 16% -22%, var(--g-gloss), transparent 56%),
+                linear-gradient(180deg, color-mix(in srgb, var(--g-gloss) 55%, transparent), transparent 38%); }
+  .g::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    opacity: .045; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  [data-glass="off"] .g { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--g-solid);
+    box-shadow: inset 0 1px 0 var(--g-rim), 0 10px 26px -16px var(--g-shadow); }
+  [data-glass="off"] .g::after { opacity: 0; }
+
+  .scrim { position: absolute; inset: 0; z-index: 20; background: var(--scrim);
+    opacity: 0; pointer-events: none; transition: opacity var(--d2) var(--e-io); }
+  .scrim.on { opacity: 1; pointer-events: auto; }
+
+  /* ============================================================
+     贴边把手 —— 屏上唯一的常驻元素
+     视觉 9×28，命中区 48×48（Android 最小触摸目标）
+     ============================================================ */
+  .pipwrap { position: absolute; right: 0; top: 44%; width: var(--hit); height: var(--hit); z-index: 28;
+    display: grid; place-items: center; cursor: grab; }
+  .pipwrap.grabbing { cursor: grabbing; }
+  .pipwrap:hover .pip { transform: translateX(-2px); }
+  .pip { position: relative; width: 9px; height: 28px; border-radius: 5px;
+    transition: transform var(--d2) var(--e-out), background var(--d2) var(--e-io),
+      box-shadow var(--d2) var(--e-io); }
+  /* 有待办未完成时只「变色」——不出数字、不加宽 */
+  .pip.due { background: var(--accent-solid); border-color: transparent;
+    box-shadow: 0 5px 14px -5px color-mix(in srgb, var(--accent-solid) 75%, transparent); }
+  .pip.pulse { animation: pippulse 900ms var(--e-out); }
+  @keyframes pippulse { 0%, 100% { transform: none; }
+    35% { transform: translateX(-3px) scaleY(1.18); } }
+
+  /* 合并前对照：另一个把手（剪贴板把手的老位置） */
+  .pipwrap.legacy { top: 62%; opacity: 0; pointer-events: none; transition: opacity var(--d2) var(--e-io); }
+  .pipwrap.legacy.on { opacity: 1; }
+  .pipwrap.legacy .pip { background: color-mix(in srgb, var(--warn) 70%, #fff); }
+
+  .gzone { position: absolute; top: 0; bottom: 0; right: 0; width: 48px; z-index: 22;
+    background: repeating-linear-gradient(45deg, rgba(255,110,110,.10) 0 5px, transparent 5px 10px);
+    border-left: 1px dashed rgba(255,110,110,.38); opacity: 0;
+    transition: opacity var(--d2) var(--e-io); pointer-events: none; }
+  .gzone.on { opacity: 1; }
+  .gzone span { position: absolute; top: 12%; right: 15px; font-size: 9px; color: #FF9B9B;
+    writing-mode: vertical-rl; letter-spacing: 2px; }
+
+  /* 存下后浮出内容预览：只闪一下的「事件」，不是常驻物 */
+  .peek { position: absolute; right: 58px; top: 44%; z-index: 44; max-width: 250px; padding: 9px 13px;
+    border-radius: var(--r-md); font-size: var(--f-meta); line-height: 1.5; color: var(--text);
+    opacity: 0; transform: translateX(8px); pointer-events: none; overflow-wrap: anywhere;
+    transition: opacity var(--d2) var(--e-io), transform var(--d3) var(--e-out); }
+  .peek.on { opacity: 1; transform: none; }
+  .peek .k { display: block; font-size: 9.5px; color: var(--sub); letter-spacing: .4px; margin-bottom: 3px; }
+
+  /* ============================================================
+     呼出输入槽 / 就地编辑条
+     ============================================================ */
+  .slot { position: absolute; right: 10px; top: 349px; width: 72px; height: 52px;
+    border-radius: var(--r-pill); overflow: hidden; z-index: 42;
+    opacity: 0; pointer-events: none; transform: translateX(10px);
+    transition: width var(--d3) var(--e-out), opacity var(--d2) var(--e-io),
+      transform var(--d3) var(--e-out), top var(--d3) var(--e-out); }
+  .slot.open { width: 300px; opacity: 1; pointer-events: auto; transform: none; }
+  .slot .row { display: flex; align-items: center; gap: 4px; height: 50px; padding: 0 5px 0 6px; }
+  .slot input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+    font: inherit; font-size: var(--f-body); color: var(--text); padding: 0; letter-spacing: .1px; }
+  .slot input::placeholder { color: var(--sub); }
+  .ib { width: var(--hit); height: var(--hit); flex: 0 0 auto; border-radius: 50%; border: 0;
+    background: transparent; color: var(--text); cursor: pointer; display: grid; place-items: center;
+    opacity: .92; transition: opacity var(--d1) var(--e-io), background var(--d1) var(--e-io); }
+  .ib:hover { opacity: 1; background: var(--hair); }
+  .ib.round { background: var(--accent-solid); color: #fff; opacity: 1;
+    box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--accent-solid) 70%, transparent); }
+  .ib.round:hover { background: color-mix(in srgb, var(--accent-solid) 86%, #fff); }
+  .ib svg { width: 18px; height: 18px; }
+
+  .editbar { position: absolute; right: 10px; top: 300px; width: 306px; border-radius: var(--r-xl);
+    padding: 14px 14px 12px; z-index: 60; opacity: 0; pointer-events: none;
+    transform: scale(.94) translateX(8px); transform-origin: right center;
+    transition: opacity var(--d2) var(--e-io), transform var(--d3) var(--e-out), top var(--d3) var(--e-out); }
+  .editbar.open { opacity: 1; pointer-events: auto; transform: none; }
+  .editbar .meta { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: var(--f-tiny); color: var(--sub); letter-spacing: .2px; margin-bottom: 8px; }
+  .editbar textarea { width: 100%; border: 0; outline: 0; resize: none; background: transparent;
+    font: inherit; font-size: var(--f-body); line-height: 1.6; color: var(--text); padding: 0;
+    min-height: 48px; letter-spacing: .1px; }
+  .editbar .tags { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .editbar .acts { display: flex; gap: 4px; margin-top: 8px; padding-top: 9px;
+    border-top: 1px solid var(--hair); }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px;
+    border-radius: var(--r-pill); font-size: var(--f-meta); color: var(--text); cursor: pointer;
+    user-select: none; flex: 0 0 auto; white-space: nowrap;
+    background: var(--g-fill); border: 1px solid var(--g-border);
+    -webkit-backdrop-filter: blur(8px) saturate(1.3); backdrop-filter: blur(8px) saturate(1.3);
+    box-shadow: inset 0 1px 0 var(--g-rim);
+    transition: transform var(--d1) var(--e-out), border-color var(--d1) var(--e-io); }
+  .chip:hover { transform: translateY(-1px); }
+  .chip .dot { width: 5px; height: 5px; border-radius: 50%; }
+  .chip.sel { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    font-weight: 650; box-shadow: inset 0 1px 0 rgba(255,255,255,.30),
+      0 6px 16px -8px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .chip.ghost { color: var(--sub); }
+  .chip.mini { height: 22px; padding: 0 8px; font-size: var(--f-tiny); gap: 4px; }
+  .chip.mini .dot { width: 4.5px; height: 4.5px; }
+
+  .actbtn { flex: 1; height: 38px; border-radius: var(--r-sm); border: 1px solid var(--btn-bd);
+    background: var(--btn-bg); color: var(--text); font-size: var(--f-meta); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    transition: background var(--d1) var(--e-io), transform var(--d1) var(--e-out); }
+  .actbtn:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+  .actbtn:active { transform: scale(.97); }
+  .actbtn svg { width: 13px; height: 13px; }
+  .actbtn.primary { background: var(--accent-solid); border-color: transparent; color: #fff;
+    box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--accent-solid) 75%, transparent); }
+  .actbtn.primary:hover { background: color-mix(in srgb, var(--accent-solid) 86%, #fff); }
+  .actbtn.danger { color: var(--danger); }
+
+  /* 通知条：带「撤销」动作（存下 / 删除 / 完成 都有回头路） */
+  .toast { position: absolute; left: 50%; bottom: 104px; transform: translate(-50%, 10px); z-index: 62;
+    display: flex; align-items: center; gap: 12px; max-width: 342px;
+    padding: 10px 10px 10px 16px; border-radius: var(--r-md); font-size: var(--f-meta); color: var(--text);
+    opacity: 0; pointer-events: none;
+    transition: opacity var(--d2) var(--e-io), transform var(--d3) var(--e-out); }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+  .toast .m { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toast .undo { flex: 0 0 auto; height: 30px; padding: 0 12px; border: 0; border-radius: var(--r-xs);
+    background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-solid);
+    font-size: var(--f-meta); font-weight: 650; cursor: pointer; }
+  .toast .undo:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  .toast .undo.hide { display: none; }
+
+  /* ⋮ 溢出菜单：把低频动作收起来，行内只留高频 —— 这样 5 个动作才装得下 48dp 触摸目标 */
+  .menu { position: absolute; right: 16px; top: 300px; width: 188px; z-index: 66;
+    padding: 6px; border-radius: var(--r-lg);
+    opacity: 0; pointer-events: none; transform: scale(.94); transform-origin: right top;
+    transition: opacity var(--d2) var(--e-io), transform var(--d2) var(--e-out); }
+  .menu.on { opacity: 1; pointer-events: auto; transform: none; }
+  .menu button { width: 100%; height: var(--hit); padding: 0 12px; border: 0; border-radius: var(--r-sm);
+    background: transparent; color: var(--text); font-size: var(--f-sm); cursor: pointer;
+    display: flex; align-items: center; gap: 10px; text-align: left; }
+  .menu button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+  .menu button svg { width: 17px; height: 17px; flex: 0 0 auto; }
+  .menu button.del { color: var(--danger); }
+  .menu .sep { height: 1px; background: var(--hair); margin: 5px 8px; }
+
+  /* ============================================================
+     面板（两页签：闪念 / 剪贴板）
+     ============================================================ */
+  .stream { position: absolute; top: 0; right: 0; bottom: 0; width: 78%; z-index: 50;
+    border-radius: var(--r-2xl) 0 0 var(--r-2xl); border-right: none;
+    display: flex; flex-direction: column; opacity: 0; pointer-events: none; transform: translateX(100%);
+    transition: opacity var(--d2) var(--e-io), transform var(--d3) var(--e-out); }
+  .stream.open { opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .stream .head { padding: 40px 16px 0; flex: 0 0 auto; }
+
+  /* 第一行：搜索 + 条数 + 关闭。标题栏和页签本来重名，腾出来放搜索 */
+  .stream .srchrow { display: flex; align-items: center; gap: 8px; }
+  .stream .srch { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
+    height: 40px; padding: 0 12px; border-radius: var(--r-pill);
+    border: 1px solid var(--btn-bd); background: var(--btn-bg);
+    transition: border-color var(--d2) var(--e-io), background var(--d2) var(--e-io); }
+  .stream .srch:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .stream .srch svg { width: 16px; height: 16px; color: var(--sub); flex: 0 0 auto; }
+  .stream .srch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+    font: inherit; font-size: var(--f-sm); color: var(--text); padding: 0; }
+  .stream .srch input::placeholder { color: var(--sub); }
+  .stream .srch .clr { width: 22px; height: 22px; flex: 0 0 auto; border: 0; border-radius: 50%;
+    background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text);
+    font-size: 10px; cursor: pointer; display: none; place-items: center; }
+  .stream .srch.filled .clr { display: grid; }
+  .stream .n { font-size: var(--f-tiny); color: var(--sub); white-space: nowrap; }
+  .stream .x { width: 40px; height: 40px; flex: 0 0 auto; border: 0; border-radius: 50%;
+    background: transparent; display: grid; place-items: center; color: var(--sub);
+    cursor: pointer; font-size: 13px; transition: background var(--d1) var(--e-io); }
+  .stream .x:hover { background: var(--hair); color: var(--text); }
+
+  .stream .ptabs { position: relative; display: flex; gap: 4px; padding: 14px 0 0; }
+  .stream .ptabs .tabind { position: absolute; top: 14px; left: 0; height: 34px; width: calc(50% - 2px);
+    border-radius: var(--r-sm); border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    transition: left var(--d3) var(--e-out); }
+  .stream .ptabs[data-i="1"] .tabind { left: calc(50% + 2px); }
+  .stream .ptabs button { position: relative; z-index: 1; flex: 1; height: 34px;
+    border: 1px solid transparent; background: transparent; border-radius: var(--r-sm);
+    font-size: var(--f-sm); color: var(--sub); cursor: pointer; transition: color var(--d2) var(--e-io); }
+  .stream .ptabs button.on { color: var(--text); font-weight: 650; }
+  @keyframes tabin-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+  @keyframes tabin-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+  .stream .scroll.tabin-r { animation: tabin-r 280ms var(--e-out); }
+  .stream .scroll.tabin-l { animation: tabin-l 280ms var(--e-out); }
+
+  /* 标签行 + 范围切换（范围钉在右侧，标签横向滚） */
+  /* 标签行（闪念与暂存已合并，不再有「只看闪念 / 含暂存」开关） */
+  .stream .chips { display: flex; gap: 6px; padding: 12px 0 8px; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 86%, transparent);
+    mask-image: linear-gradient(to right, #000 86%, transparent); }
+  .stream .chips::-webkit-scrollbar { display: none; }
+
+  .stream .scroll { flex: 1; overflow-y: auto; padding: 2px 16px 40px 0; }
+  .stream .scroll.flat { padding-left: 16px; }
+  .stream .scroll::-webkit-scrollbar { width: 0; }
+
+  .grp { position: relative; padding-left: 62px; margin-top: 18px; }
+  .grp > .glabel { position: absolute; left: 0; top: 1px; width: 48px; text-align: right;
+    font-size: var(--f-tiny); font-weight: 700; color: var(--sub); letter-spacing: 1px; }
+  .grp .vline { position: absolute; left: 54px; top: 8px; bottom: -14px; width: 1.5px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--text) 14%, transparent), transparent); }
+  .grp:last-child .vline { bottom: 46%; }
+
+  .item { position: relative; margin-bottom: 10px; }
+  .item .node { position: absolute; left: -8.5px; top: 17px; width: 7px; height: 7px; border-radius: 50%;
+    background: color-mix(in srgb, var(--text) 26%, transparent); z-index: 2; }
+  .item.fresh .node { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .item .when { display: flex; align-items: center; gap: 7px; font-size: var(--f-tiny);
+    color: var(--sub); margin: 0 0 6px 2px; letter-spacing: .3px; flex-wrap: wrap; }
+  .item .remind { display: inline-flex; align-items: center; gap: 3px; color: var(--accent-solid);
+    font-weight: 650; }
+  .item .remind svg { width: 11px; height: 11px; }
+  .item .box { position: relative; border-radius: var(--r-lg); padding: 13px 14px 6px; cursor: pointer;
+    border: 1px solid transparent; transition: transform var(--d1) var(--e-out); }
+  .item .box:hover { transform: translateX(-2px); }
+  .item.fresh .box { background: var(--g-fill); border-color: var(--g-border);
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(1.5); backdrop-filter: blur(var(--blur)) saturate(1.5);
+    box-shadow: inset 0 1px 0 var(--g-rim), 0 14px 30px -18px var(--g-shadow); }
+  .item.mid .box { background: color-mix(in srgb, var(--app-elev) 66%, transparent);
+    border-color: var(--hair); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .item.old .box { background: transparent; }
+  .item.old .box .body { color: var(--sub); }
+  .item .box .body { font-size: var(--f-sm); line-height: 1.6; color: var(--text); letter-spacing: .1px;
+    overflow-wrap: anywhere; }
+  /* 完成 = 划掉 + 变暗，留在原位（时间流是「我记过什么」的历史，不移除） */
+  .item.done .box { opacity: .62; }
+  .item.done .box .body { text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--text) 45%, transparent); }
+  .item .box .append { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 9px;
+    font-size: var(--f-meta); color: var(--sub); overflow-wrap: anywhere; }
+  .item .box .foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .item .box .acts { display: flex; align-items: center; gap: 0; margin-top: 2px; margin-left: -10px; }
+  .item .box .acts .sp { flex: 1; }
+  /* 动作带文字：纯图标一排会留下一大片空白，读起来就是「空」。
+     规则：第一个永远是这条目的「主状态动作」（待办→完成，其它→星标），第二个永远是复制，其余进 ⋮ */
+  .item .box .acts button { height: 40px; padding: 0 10px; border: 0; border-radius: var(--r-sm);
+    background: transparent; color: var(--text); font-size: var(--f-meta); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    opacity: .86; transition: background var(--d1) var(--e-io), opacity var(--d1) var(--e-io); }
+  .item .box .acts button:hover { background: color-mix(in srgb, var(--text) 9%, transparent); opacity: 1; }
+  .item .box .acts button svg { width: 17px; height: 17px; flex: 0 0 auto; }
+  .item .box .acts button.on { color: var(--accent-solid); opacity: 1; }
+  .item .box .acts button.icon { padding: 0 8px; }
+  .item .box .acts .kind { font-size: var(--f-tiny); font-weight: 650; color: var(--accent-solid);
+    letter-spacing: .3px; padding: 0 4px; }
+  /* 星标条目：对齐真实代码 HistoryPanelColors（primaryVariant 35% 底 + primary 45% 描边） */
+  .item.star .box { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .item.star .node { background: var(--accent-solid); }
+  .item .box .thumb { height: 66px; border-radius: var(--r-sm); margin-top: 10px;
+    background: linear-gradient(150deg,#5F6AAE,#8E7CC9); box-shadow: inset 0 1px 0 rgba(255,255,255,.3); }
+  .item.hidden { display: none; }
+
+  /* 空状态：一条都没有 / 筛不出来 / 搜不到 */
+  .empty { padding: 46px 20px 20px; text-align: center; }
+  .empty .big { font-size: var(--f-sm); color: var(--text); font-weight: 650; margin-bottom: 8px; }
+  .empty .hint { font-size: var(--f-meta); color: var(--sub); line-height: 1.8; }
+  .empty .go { margin-top: 16px; height: 34px; padding: 0 16px; border-radius: var(--r-pill);
+    border: 1px solid var(--btn-bd); background: var(--btn-bg); color: var(--text);
+    font-size: var(--f-meta); cursor: pointer; }
+  .empty .go:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+  .empty .arrow { margin-top: 30px; font-size: 22px; color: var(--accent-solid);
+    animation: nudge 1.6s var(--e-io) infinite; }
+  @keyframes nudge { 0%,100% { transform: translateX(0); } 50% { transform: translateX(6px); } }
+
+  /* 面板内直接记 */
+  .fab { position: absolute; right: 16px; bottom: 92px; width: 54px; height: 54px; z-index: 55;
+    border-radius: 19px; display: grid; place-items: center; cursor: pointer; color: #fff;
+    background: var(--accent-solid); border: 1px solid transparent;
+    box-shadow: 0 14px 28px -12px color-mix(in srgb, var(--accent-solid) 85%, transparent),
+      inset 0 1px 0 rgba(255,255,255,.28);
+    transition: transform var(--d3) var(--e-out), opacity var(--d2) var(--e-io),
+      bottom var(--d3) var(--e-out), background var(--d2) var(--e-io), color var(--d2) var(--e-io); }
+  .fab:hover { transform: translateY(-2px); }
+  .fab:active { transform: scale(.94); }
+  .fab svg { width: 22px; height: 22px; transition: transform var(--d3) var(--e-out); }
+  .fab.open { bottom: 158px; background: var(--g-fill); color: var(--text); border-color: var(--g-border);
+    box-shadow: inset 0 1px 0 var(--g-rim), 0 10px 22px -14px var(--g-shadow); }
+  .fab.open svg { transform: rotate(45deg); }
+  .fab.off { opacity: 0; pointer-events: none; transform: scale(.8); }
+
+  .composer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 56;
+    padding: 12px 16px 28px; border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+    transform: translateY(112%); opacity: 0; pointer-events: none;
+    transition: transform var(--d3) var(--e-out), opacity var(--d2) var(--e-io); }
+  .composer.on { transform: none; opacity: 1; pointer-events: auto; }
+  .composer .crow { display: flex; align-items: center; gap: 6px; }
+  .composer input { flex: 1; min-width: 0; height: var(--hit); padding: 0 15px; outline: 0;
+    border-radius: var(--r-pill); border: 1px solid var(--btn-bd); background: var(--btn-bg);
+    font: inherit; font-size: var(--f-body); color: var(--text); }
+  .composer input::placeholder { color: var(--sub); }
+  .composer .ok { width: var(--hit); height: var(--hit); flex: 0 0 auto; border: 0; border-radius: 50%;
+    background: var(--accent-solid); color: #fff; display: grid; place-items: center; cursor: pointer;
+    transition: background var(--d1) var(--e-io), color var(--d1) var(--e-io); }
+  .composer .ok svg { width: 19px; height: 19px; }
+  .composer .ok.dim { background: var(--btn-bg); color: var(--sub); }
+  .composer .hint { font-size: var(--f-tiny); color: var(--sub); margin: 9px 2px 0; letter-spacing: .2px; }
+
+  .item.flash .box { animation: flashin 1.4s var(--e-out); }
+  @keyframes flashin {
+    0% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px var(--accent-soft); }
+    100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+  }
+
+  /* 模拟输入法 */
+  .ime { position: absolute; left: 0; right: 0; bottom: 0; height: 258px; z-index: 70;
+    background: color-mix(in srgb, var(--app-bg) 84%, #6E7488); border-top: 1px solid var(--line);
+    transform: translateY(100%); transition: transform var(--d3) var(--e-out); padding: 10px 6px 0; }
+  .ime.on { transform: translateY(0); }
+  .ime .bar { display: flex; gap: 6px; margin-bottom: 9px; padding: 0 6px; }
+  .ime .bar div { height: 26px; border-radius: var(--r-xs); flex: 1; background: var(--line); }
+  .ime .k { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; padding: 0 4px; }
+  .ime .k span { height: 31px; border-radius: 7px; display: grid; place-items: center;
+    font-size: var(--f-sm); color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+  .ime .note { text-align: center; font-size: 9.5px; color: var(--sub); margin-top: 8px; }
+
+  /* ============================================================
+     控制面板 / 画廊
+     ============================================================ */
+  .ctl-panel { flex: 1 1 400px; min-width: 360px; max-width: 600px; }
+  .card { background: var(--card-bg); border: 1px solid var(--hair); border-radius: var(--r-lg);
+    padding: 18px 20px 16px; margin-bottom: 14px; }
+  .card h3 { font-size: var(--f-sm); font-weight: 650; margin: 0 0 14px;
+    color: color-mix(in srgb, var(--text) 88%, transparent); letter-spacing: .2px;
+    display: flex; align-items: center; gap: 8px; }
+  .card h3::before { content: ''; width: 3px; height: 12px; border-radius: 2px; background: var(--accent); }
+  .row-ctl { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .row-ctl:last-child { margin-bottom: 0; }
+  .row-ctl > label { font-size: var(--f-meta); color: var(--sub); min-width: 76px; flex: 0 0 auto; }
+  .seg { display: inline-flex; background: var(--seg-bg); border: 1px solid var(--hair);
+    border-radius: var(--r-sm); padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: transparent; color: var(--sub); font-size: var(--f-meta);
+    padding: 6px 13px; border-radius: 8px; cursor: pointer; transition: all var(--d1) var(--e-io); }
+  .seg button.on { background: var(--accent-solid); color: #fff; font-weight: 600; }
+  input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent-solid); }
+  .sw { position: relative; width: 42px; height: 24px; border-radius: var(--r-pill);
+    background: var(--sw-bg); cursor: pointer; transition: background var(--d2) var(--e-io); flex: 0 0 auto; }
+  .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+    transition: transform var(--d2) var(--e-out); }
+  .sw.on { background: var(--accent-solid); } .sw.on::after { transform: translateX(18px); }
+  .note { font-size: var(--f-meta); color: var(--sub); line-height: 1.85; margin: 0; }
+  .note ul { padding-left: 18px; margin: 6px 0 0; } .note li { margin-bottom: 7px; }
+  .note b { color: color-mix(in srgb, var(--text) 92%, transparent); }
+  .val { font-size: var(--f-meta); color: var(--sub); min-width: 46px; }
+
+  .gallery { display: flex; gap: 26px; flex-wrap: wrap; }
+  .cell .holder { width: 258px; height: 540px; overflow: hidden; position: relative; }
+  .cell .frame { width: 390px; height: 844px; transform-origin: top left; position: relative; }
+  .cell .caption { display: flex; align-items: baseline; gap: 8px; margin-top: 14px; }
+  .cell .caption .no { font-size: var(--f-tiny); color: var(--sub); font-weight: 700; letter-spacing: 1px; }
+  .cell .caption .ti { font-size: var(--f-sm); font-weight: 650; color: var(--text); }
+  .cell .sub { font-size: var(--f-tiny); color: var(--sub); line-height: 1.7; margin-top: 5px; max-width: 246px; }
+  footer { max-width: 1260px; margin-top: 46px; padding-top: 20px; border-top: 1px solid var(--hair);
+    font-size: var(--f-meta); color: var(--sub); line-height: 1.95; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>闪念 · 贴边把手 + 两页签面板</h1>
+  <p class="sub">
+    屏上<b>只有一个常驻元素</b>：一条贴边把手（视觉 9×28dp，<b>命中区 48×48dp</b> 达安卓最小触摸目标）。<br>
+    <b>它就是你已有的那个剪贴板把手</b>——不是新长出来的第二个。原来的剪贴板面板本来就是两页签（暂存夹 / 剪贴板），
+    所以合并只是把<b>「暂存夹」页签改名成「闪念」</b>并把暂存内容<b>彻底并进这一个流</b>（连「含暂存」开关都不要了）：
+    一个把手、一个面板、两个页签，<b>零新增表面</b>，也没有范围过滤。<br>
+    <b>入口三条</b>：① 拖 / 点把手 → 面板 ② 长按把手 → 直接就记 ③ 手势动作「闪念速记」→ 配到触发条 / 悬浮球。<br>
+    <b>这次补上的</b>：卡片操作行真的接上了（复制 / 星标 / 更多菜单）· 待办可「完成」（划掉 + 撤销 + 自动取消提醒）·
+    存下 / 删除 / 完成都能<b>撤销</b> · 面板有<b>搜索</b>（标题栏和页签本来重名，腾出来放它）· 闪念与暂存<b>彻底合并</b>（去掉「含暂存」开关）· 「完成」<b>只在待办条目上出现</b>· <b>空状态</b>引导 · 存下后浮出<b>内容预览</b>。
+  </p>
+  <div class="rule"></div>
+</div>
+
+<div class="sec"><span class="n">01</span><span class="t">可交互</span></div>
+<p class="secsub">屏上只有右侧那条细把手。拖它、点它、长按它；面板里点任一条目可就地编辑追加；卡片操作行、⋮ 菜单、搜索、撤销都是真的。</p>
+
+<div class="stage">
+  <div class="phone" id="live">
+    <div class="app" id="liveApp"></div>
+    <div class="scrim" id="scrim"></div>
+    <div class="gzone" id="gzone"><span>系统返回手势区 48dp</span></div>
+    <div class="statusbar" id="liveStatus"></div>
+
+    <div class="pipwrap legacy" id="pipLegacy" title="合并前的剪贴板把手（对照用）">
+      <i class="pip g"></i>
+    </div>
+    <div class="pipwrap" id="pipWrap" title="贴边把手 · 拖/点=面板，长按=直接记录">
+      <i class="pip g" id="pip"></i>
+    </div>
+
+    <div class="peek g" id="peek"><span class="k">已存下</span><span id="peekText"></span></div>
+
+    <div class="slot g" id="slot">
+      <div class="row">
+        <button class="ib" id="btnMic" type="button" title="语音（P2）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
+        <input id="slotInput" placeholder="想点什么… 回车存下">
+        <button class="ib round" id="btnDrop" type="button" title="存下">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12.5 10 17.5 19 7"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="editbar g" id="editbar">
+      <div class="meta"><span id="editWhen">刚刚</span><span id="editSrc">光标已在末尾，可直接追加</span></div>
+      <textarea id="editInput" rows="2"></textarea>
+      <div class="tags" id="editTags"></div>
+      <div class="acts">
+        <button class="actbtn" id="btnRemind" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.5 1.5M9 3h6"/></svg>提醒</button>
+        <button class="actbtn" id="btnDone" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.4l2.7 2.6L16 9.8"/></svg>完成</button>
+        <button class="actbtn danger" id="btnDelete" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>删除</button>
+        <button class="actbtn primary" id="btnSaveEdit" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg>保存</button>
+      </div>
+    </div>
+
+    <div class="toast g" id="toast">
+      <span class="m" id="toastMsg">已存下</span>
+      <button class="undo hide" id="toastUndo" type="button">撤销</button>
+    </div>
+
+    <div class="menu g" id="menu"></div>
+
+    <div class="stream g" id="stream">
+      <div class="head">
+        <div class="srchrow">
+          <label class="srch" id="srchWrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+            <input id="searchInput" placeholder="搜索闪念…">
+            <button class="clr" id="searchClear" type="button" title="清除">✕</button>
+          </label>
+          <span class="n" id="streamCount"></span>
+          <button class="x" id="streamClose" type="button">✕</button>
+        </div>
+        <div class="ptabs" id="streamTabs" data-i="0">
+          <i class="tabind"></i>
+          <button data-pt="stream" class="on" type="button">闪念</button>
+          <button data-pt="clip" type="button">剪贴板</button>
+        </div>
+        <div class="chips" id="streamChips"></div>
+      </div>
+      <div class="scroll" id="streamScroll"></div>
+      <div class="fab" id="fab" title="记一条（不用退出去长按把手）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="composer g" id="composer">
+        <div class="crow">
+          <button class="ib" id="composerMic" type="button" title="语音（P2）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+          <input id="composerInput" placeholder="想点什么… 回车存下">
+          <button class="ok dim" id="composerOk" type="button" title="存下">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg>
+          </button>
+        </div>
+        <div class="hint">存下后直接出现在下面这一屏（今天的顶部），不用去别处找</div>
+      </div>
+    </div>
+
+    <div class="ime" id="ime">
+      <div class="bar"><div></div><div></div><div></div><div></div></div>
+      <div class="k" id="imeKeys"></div>
+      <div class="note">模拟输入法 · 真机 overlay 窗读不到 WindowInsets.ime，须用 rememberOverlayImeBottomHeight()</div>
+    </div>
+
+    <div class="punch"></div>
+    <div class="homebar"></div>
+  </div>
+
+  <div class="ctl-panel">
+    <div class="card">
+      <h3>入口（就这三条）</h3>
+      <div class="row-ctl">
+        <button class="actbtn primary" id="btnNew" style="flex:0 0 auto;padding:0 16px;height:34px">长按把手 = 记一条</button>
+        <button class="actbtn" id="btnStream" style="flex:0 0 auto;padding:0 14px;height:34px">拖/点把手 = 面板</button>
+        <button class="actbtn" id="btnStreamExt" style="flex:0 0 auto;padding:0 14px;height:34px">外部契约 · 剪贴板页</button>
+        <button class="actbtn" id="btnReset" style="flex:0 0 auto;padding:0 14px;height:34px">复位</button>
+      </div>
+      <div class="row-ctl" style="margin-top:-4px">
+        <span class="note" style="margin:0;font-size:var(--f-tiny)">
+          闪念与暂存<b>已合并成一个流</b>，所以不再有「默认范围」这个差别 —— <b>顺带把外部契约的兼容风险一起去掉了</b>：
+          <code>xgesture://open/stash</code> 等入口与内部入口看到的内容完全一致。<br>
+          点把手<b>不改变页签</b>（记住上次停留的那一页）；外部剪贴板入口才强制落到「剪贴板」页。
+        </span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>外观 / 演示</h3>
+      <div class="row-ctl"><label>主题</label>
+        <div class="seg" id="segTheme"><button data-v="light" class="on">浅色</button><button data-v="dark">深色</button></div>
+      </div>
+      <div class="row-ctl"><label>玻璃</label><div class="sw on" id="swGlass"></div>
+        <span class="note" style="margin:0">关掉 → 实色降级（真机 <code>isCrossWindowBlurEnabled=false</code> 时）</span></div>
+      <div class="row-ctl"><label>模糊半径</label><input type="range" id="rngBlur" min="0" max="32" value="20">
+        <span class="val" id="blurVal">20px</span></div>
+      <div class="row-ctl"><label>输入法</label><div class="sw" id="swIme"></div>
+        <span class="note" style="margin:0">看输入槽会不会被键盘挡</span></div>
+      <div class="row-ctl"><label>返回手势区</label><div class="sw" id="swGzone"></div>
+        <span class="note" style="margin:0">显示右侧 <b>48dp</b> 热区。把手命中区现在正好 48×48，落在这里；<b>上下方的返回手势照常可用</b></span></div>
+      <div class="row-ctl"><label>合并前对照</label><div class="sw" id="swLegacy"></div>
+        <span class="note" style="margin:0">显示<b>另一个剪贴板把手</b>——这就是要合并掉的重复入口</span></div>
+      <div class="row-ctl"><label>待办</label>
+        <span class="note" style="margin:0">未完成 <b id="todoN">0</b> 条 → 把手<b>变色</b>（不出数字、不加宽）。这个数字现在是从数据算出来的，不再是手动置位的悬空状态</span></div>
+    </div>
+
+    <div class="card">
+      <h3>这一轮补的东西</h3>
+      <ul class="note">
+        <li><b>操作行接上了</b>：行内只留高频（完成 / 复制），其余收进 ⋮ 菜单。这样 5 个动作才装得下 48dp 触摸目标——全放行内会 240dp 超卡片宽</li>
+        <li><b>待办可完成</b>：划掉 + 变暗，留在原位（不移除，时间流是「我记过什么」的历史）；<b>完成即自动取消提醒</b></li>
+        <li><b>撤销</b>：存下 / 删除 / 完成，通知条上都有「撤销」</li>
+        <li><b>搜索</b>：标题栏和页签本来重名（都写「闪念」），把它腾出来放了搜索框；搜索会<b>忽略标签筛选和范围</b>，就近搜整个页签</li>
+        <li><b>空状态</b>：一条都没有 / 筛不出来 / 搜不到，三种各有引导</li>
+        <li><b>存下预览</b>：把手旁浮出内容前十几字，1.2s 消失。这是「刚发生的事」，不是常驻物——和被砍掉的胶囊不是一回事</li>
+        <li><b>提醒可见</b>：设了提醒的条目，时间旁边显示钟点</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>与仓库既有资产对应</h3>
+      <ul class="note">
+        <li><b>把手</b> → <code>HistoryFloatService</code>（常驻窗 / 可拖 Y / 位置持久化 / 全屏与横屏隐藏）——<b>复用它，不新建</b></li>
+        <li>返回手势避让 → <code>OverlayPanelSystemGestureExclusion</code>（只排除把手自己的 48×48，且位置变化时要重设）</li>
+        <li>长按时长 → 跟 <code>ViewConfiguration.getLongPressTimeout()</code>，不要写死</li>
+        <li>输入法 → <code>SearchPanelOverlayWindow</code> 抢焦点 + 补发三件套 + <code>OverlayImeInsets</code></li>
+        <li>搜索 → <code>SearchPanelOverlayWindow</code> 既有的搜索面板范式</li>
+        <li>数据 → <code>StashRepository</code> + 独立 <code>tags.json</code>；<b><code>done</code> 也要独立存</b>——写进 <code>index.json</code> 的老版本会忽略它并整体重写，完成状态就丢了</li>
+        <li>提醒 → <code>RemindAlarmScheduler</code>（推送，不占屏）</li>
+        <li>玻璃 → <code>LocalFrostedGlassBackdrop</code>（禁 miuix RuntimeShader，浮层会崩）</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="sec"><span class="n">02</span><span class="t">八个关键状态</span></div>
+<p class="secsub">① 屏上唯一常驻元素 ② 长按把手直接记 + 存下预览 ③ 往内拖跟手拉出 ④ 闪念页（搜索 + 标签，不再有范围开关） ⑤ ⋮ 溢出菜单 ⑥ 待办完成与提醒 ⑦ 空状态 ⑧ 剪贴板页</p>
+<div class="gallery" id="gallery"></div>
+
+<footer>
+  玻璃：跨应用真模糊 + 手写顶部光泽 / 内高光 / 内阴影 / 噪点 0.045｜禁 miuix RuntimeShader（浮层软件 Canvas 会崩）｜标签颜色仅 5px 色点与选中描边着色。<br>
+  Android 规范：触摸目标 ≥ 48dp；横向列表隐藏滚动条、只管滑。桌面演示稿里的鼠标拖拽滚动属于脚手架，不是设计。<br>
+  配套文档：<code>docs/capsule-tag-bar-analysis.md</code>
+</footer>
+
+<script>
+/* ===================== 数据 ===================== */
+/* 注意：done 在真机上必须独立存放（done.json）。写进 index.json 的话，
+   老版本读到会忽略这个字段并把整个文件重写回去，完成状态就丢了。 */
+const TAGS = [
+  { n: '工作', c: '#5B8DF6' }, { n: '想法', c: '#F0A93B' },
+  { n: '待办', c: '#57B87A' }, { n: '灵感', c: '#C77DF0' }, { n: '设计', c: '#E86E8C' },
+];
+const COL = Object.fromEntries(TAGS.map(t => [t.n, t.c]));
+
+let STREAM = [
+  { id: 's1', src: 'capsule', text: '把描边改成 1px，太粗会显廉价', tags: ['设计'], when: '刚刚', grp: '今天',
+    append: '改成 0.5px 试了，AMOLED 上反而糊；还是 1px + 降透明度' },
+  { id: 's2', src: 'capsule', text: '记得周五前把方案初稿发给老王', tags: ['工作'], when: '12 分钟前', grp: '今天', remind: '周五 09:00' },
+  { id: 's3', src: 'capsule', text: '买咖啡豆', tags: ['待办'], when: '今天 09:20', grp: '今天', remind: '18:30' },
+  { id: 's4', src: 'stash', from: '图片', text: '截图：搜索面板玻璃参数', tags: ['设计'], when: '今天 08:40', grp: '今天', img: true },
+  { id: 's5', src: 'capsule', text: '液态玻璃的价值不是好看，是让层级可读', tags: ['想法'], when: '今天 08:05', grp: '今天',
+    append: '推论：所以它必须「真模糊」，假模糊反而增加噪音' },
+  { id: 's6', src: 'stash', from: '取词', text: '从取词面板暂存的整段正文（富文本）', tags: ['工作'], when: '昨天 18:10', grp: '昨天', rich: true },
+  { id: 's7', src: 'capsule', text: '会议纪要：Q3 主线是降低常驻内存', tags: ['工作'], when: '昨天 17:40', grp: '昨天', starred: true,
+    append: '补充：先量 baseline，再谈优化目标' },
+  { id: 's8', src: 'capsule', text: '提词器的滚动速度要可调，不然读稿很累', tags: ['想法', '设计'], when: '昨天 11:02', grp: '昨天' },
+  { id: 's9', src: 'capsule', text: '和设计确认圆角用 14 还是 16', tags: ['设计'], when: '周三', grp: '更早' },
+  { id: 's10', src: 'stash', from: '剪贴板', text: 'LocalFrostedGlassBackdrop 的 tintColor 取 0x66F5F5F7', tags: [], when: '周三', grp: '更早' },
+];
+let CLIP_ITEMS = [
+  { t: 'https://developer.android.com/develop/ui/compose', when: '2 分钟前', grp: '今天', kind: '链接', tags: [] },
+  { t: 'LocalFrostedGlassBackdrop 的 tintColor 取 0x66F5F5F7', when: '今天 11:02', grp: '今天', kind: '文本', tags: ['设计'] },
+  { t: '截图：通知滤盒的过滤规则面板', when: '昨天', grp: '昨天', kind: '图片', img: true, tags: ['设计'] },
+  { t: 'ClipboardMonitorForegroundService 走 Shizuku 后台监听', when: '周一', grp: '更早', kind: '文本', tags: [] },
+];
+
+let filter = null;
+let query = '';
+let ptab = 'stream';
+let editingId = null;
+let flashId = null;
+let pipY = 371;
+let seq = 0;
+let tabinCls = '';
+let menuCtx = null;
+const newId = () => 'n' + Date.now().toString(36) + '-' + (++seq);
+const clampPipY = (v) => Math.max(96, Math.min(700, v));
+
+/* 未完成待办数：从数据算出来，不再是手动置位的悬空状态 */
+const pendingTodos = () => STREAM.filter(s => (s.tags || []).includes('待办') && !s.done).length;
+
+/* ===================== 片段 ===================== */
+const statusHtml = () => `<span class="tm">14:20</span><span class="icons">
+  <span class="bars"><i style="height:4px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:10px"></i></span>
+  <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round">
+    <path d="M1 3.6a9 9 0 0 1 12 0M3.4 6.2a5.6 5.6 0 0 1 7.2 0M7 8.9h.01"/></svg>
+  <span class="bat"></span></span>`;
+
+const appHtml = () => `
+  <div class="hdr"><div class="t">今日要闻</div><div class="s">科技 · 设计 · 产品</div><div class="u"></div></div>
+  <div class="doc">
+    <h2>液态玻璃之后，<br>系统 UI 会走向哪里</h2>
+    <div class="meta"><i class="av"></i><span>2026-10-05 · 8 分钟阅读</span></div>
+  </div>
+  <div class="hero"></div>
+  <div class="doc"><div class="par"><i></i><i></i><i></i><i></i><i></i></div></div>
+  <div class="tabbar"><i class="on"></i><i></i><i></i><i></i></div>`;
+
+const I = {
+  pick: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h10M4 17h13"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3.6 2.6 5.3 5.9.9-4.2 4.1 1 5.8-5.3-2.8-5.3 2.8 1-5.8L3.5 9.8l5.9-.9z"/></svg>',
+  starOn: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3.6 2.6 5.3 5.9.9-4.2 4.1 1 5.8-5.3-2.8-5.3 2.8 1-5.8L3.5 9.8l5.9-.9z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>',
+  stash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM3 4h18v4H3zM10 12h4"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3-1-6ZM12 14v7"/></svg>',
+  save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2h16v-2"/></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>',
+  done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.4l2.7 2.6L16 9.8"/></svg>',
+  doneOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5" fill="currentColor" stroke="none"/><path d="M8 12.4l2.7 2.6L16 9.8" stroke="#fff" stroke-width="2.1"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>',
+};
+/* 行内动作：48×48 命中区，低频的收进 ⋮ 菜单 */
+const actI = (act, id, k, title, cls) =>
+  `<i class="${cls || ''}" data-act="${act}" data-id="${id}" title="${title}">${I[k]}</i>`;
+const tagChip = (t, mini) => `<span class="chip ${mini ? 'mini' : ''}" style="cursor:default">
+  <i class="dot" style="background:${COL[t] || '#8C92A3'}"></i>${t}</span>`;
+
+const matchQ = (s) => {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return (s.text + ' ' + (s.append || '') + ' ' + (s.tags || []).join(' ')).toLowerCase().includes(q);
+};
+const matchClip = (s) => {
+  if (!query) return true;
+  return (s.t + ' ' + (s.kind || '')).toLowerCase().includes(query.toLowerCase());
+};
+/* 闪念与暂存已合并成一个流：不再有范围过滤，所有条目一律显示 */
+const visible = (s) => query ? matchQ(s) : (!filter || (s.tags || []).includes(filter));
+const clipVisible = (s) => query ? matchClip(s) : (!filter || (s.tags || []).includes(filter));
+
+/* 「完成」只在待办标签的条目上出现 —— 铺满所有条目会让整个流读成任务清单。
+   已完成的条目即使摘掉标签也保留按钮，否则没法取消完成。 */
+const isTodo = (s) => (s.tags || []).includes('待办') || !!s.done;
+/* 动作按钮带文字：纯图标一排会留下大片空白。第一个 = 主状态动作，第二个 = 复制，其余进 ⋮ */
+const actB = (act, id, k, label, title, cls) =>
+  `<button class="${cls || ''}" data-act="${act}" data-id="${id}" title="${title || label}" type="button">${I[k]}${label}</button>`;
+/* 行内 5 个动作 —— 宽度靠「时间回到卡片内部、去掉左侧 62dp 时间槽」换来的 260dp 才装得下。
+   第一个 = 主状态动作（待办→完成，其它→星标），其余 进入取词 / 复制 / 分享，低频进 ⋮ */
+function stashActions(s) {
+  const primary = isTodo(s)
+    ? actB('done', s.id, s.done ? 'doneOn' : 'done', '完成',
+        s.done ? '标记未完成' : '标记完成', s.done ? 'on' : '')
+    : actB('star', s.id, s.starred ? 'starOn' : 'star', '星标',
+        s.starred ? '取消星标' : '加星标', s.starred ? 'on' : '');
+  return `<div class="acts">
+    ${primary}
+    ${actB('copy', s.id, 'copy', '复制')}
+    <span class="sp"></span>
+    ${actB('more', s.id, 'more', '', '更多：进入取词 / 钉在屏幕 / 分享 / 保存图片 / 删除', 'icon')}
+  </div>`;
+}
+function clipActions(s, i) {
+  return `<div class="acts">
+    ${actB('copyc', i, 'copy', '复制')}
+    ${actB('stashc', i, 'stash', '暂存', '暂存到闪念')}
+    <span class="sp"></span>
+    ${actB('morec', i, 'more', '', '更多：进入取词 / 钉在屏幕 / 分享 / 保存图片 / 删除', 'icon')}
+  </div>`;
+}
+function whenRow(s) {
+  return `<div class="when"><span>${s.when}</span>
+    ${s.remind ? `<span class="remind">${I.clock}${s.remind}</span>` : ''}</div>`;
+}
+function itemHtml(s) {
+  const cls = s.grp === '今天' ? 'fresh' : (s.grp === '昨天' ? 'mid' : 'old');
+  const tags = (s.tags || []).map(t => tagChip(t, true)).join('');
+  const from = s.src === 'stash'
+    ? `<span class="chip mini ghost" style="cursor:default">${s.from || '暂存'}</span>` : '';
+  return `<div class="item ${cls}${s.starred ? ' star' : ''}${s.done ? ' done' : ''}${s.id === flashId ? ' flash' : ''} ${visible(s) ? '' : 'hidden'}">
+    <div class="node"></div>
+    ${whenRow(s)}
+    <div class="box" data-open="${s.id}">
+      <div class="body">${s.text}</div>
+      ${s.img ? '<div class="thumb"></div>' : ''}
+      ${s.append ? `<div class="append">＋ ${s.append}</div>` : ''}
+      ${(from || tags) ? `<div class="foot">${from}${tags}</div>` : ''}
+      ${stashActions(s)}
+    </div></div>`;
+}
+function clipItemHtml(s, i) {
+  const cls = s.grp === '今天' ? 'fresh' : (s.grp === '昨天' ? 'mid' : 'old');
+  return `<div class="item ${cls} ${clipVisible(s) ? '' : 'hidden'}" style="padding-left:0">
+    <div class="box">
+      <div class="when"><span>${s.when}</span>
+        <span class="kind">${s.kind || '文本'}</span></div>
+      <div class="body">${s.t}</div>
+      ${s.img ? '<div class="thumb"></div>' : ''}
+      ${clipActions(s, i)}
+    </div></div>`;
+}
+function emptyHtml() {
+  if (query) return `<div class="empty"><div class="big">没有找到含「${query}」的条目</div>
+    <div class="hint">搜索会忽略标签筛选和范围，就近搜整个页签</div>
+    <button class="go" data-empty="clearq" type="button">清除搜索</button></div>`;
+  if (filter) return `<div class="empty"><div class="big">没有「${filter}」标签的条目</div>
+    <div class="hint">换个标签，或者看全部</div>
+    <button class="go" data-empty="clearf" type="button">看全部</button></div>`;
+  return `<div class="empty"><div class="big">还没有记过任何东西</div>
+    <div class="hint">长按右边那条把手，随时记一条<br>或者在右下角点「＋」</div>
+    <div class="arrow">→</div></div>`;
+}
+function streamHtml() {
+  if (ptab === 'clip') {
+    const list = CLIP_ITEMS.map(clipItemHtml).join('');
+    return CLIP_ITEMS.some(clipVisible) ? list : emptyHtml();
+  }
+  const groups = ['今天', '昨天', '更早'].map(g => {
+    const items = STREAM.filter(s => s.grp === g);
+    if (!items.some(visible)) return '';
+    return `<div class="grp"><div class="glabel">${g}</div><div class="vline"></div>
+      ${items.map(itemHtml).join('')}</div>`;
+  }).join('');
+  return groups || emptyHtml();
+}
+function chipsHtml() {
+  let h = `<span class="chip ${filter ? '' : 'sel'}" data-f="">全部</span>`;
+  TAGS.forEach(t => h += `<span class="chip ${filter === t.n ? 'sel' : ''}" data-f="${t.n}">
+    <i class="dot" style="background:${t.c}"></i>${t.n}</span>`);
+  return h;
+}
+function editTagsHtml(sel) {
+  let h = '';
+  TAGS.forEach(t => h += `<span class="chip ${sel.includes(t.n) ? 'sel' : ''}" data-et="${t.n}">
+    <i class="dot" style="background:${t.c}"></i>${t.n}</span>`);
+  return h + `<span class="chip ghost" data-et="__new">＋</span>`;
+}
+
+/* ===================== 元素 ===================== */
+const $ = (id) => document.getElementById(id);
+const elApp = $('liveApp'), elScrim = $('scrim');
+const elPip = $('pip'), elPipWrap = $('pipWrap');
+const elSlot = $('slot'), elSlotInput = $('slotInput');
+const elEdit = $('editbar'), elEditInput = $('editInput'), elEditTags = $('editTags');
+const elStream = $('stream'), elStreamScroll = $('streamScroll'), elStreamChips = $('streamChips');
+const elToast = $('toast'), elIme = $('ime'), elMenu = $('menu'), elPeek = $('peek');
+let editTagSel = [];
+$('imeKeys').innerHTML = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm']
+  .map(r => r.split('').map(c => `<span>${c}</span>`).join('')).join('');
+
+/* ===================== 渲染 ===================== */
+function render() {
+  elApp.innerHTML = appHtml();
+  $('liveStatus').innerHTML = statusHtml();
+  elPipWrap.style.top = (pipY - 24) + 'px';
+  elPip.classList.toggle('due', pendingTodos() > 0);
+  $('todoN').textContent = String(pendingTodos());
+
+  elStreamChips.innerHTML = chipsHtml();
+  elStreamChips.style.display = ptab === 'stream' ? 'flex' : 'none';
+  elStreamScroll.className = 'scroll' + (ptab === 'stream' ? '' : ' flat') + tabinCls;
+  elStreamScroll.innerHTML = streamHtml();
+  const n = ptab === 'stream' ? STREAM.filter(visible).length : CLIP_ITEMS.filter(clipVisible).length;
+  const todayN = STREAM.filter(s => s.grp === '今天' && visible(s)).length;
+  $('streamCount').textContent = (ptab === 'stream' && !query && !filter)
+    ? `${n} 条 · 今天 ${todayN}` : `${n} 条`;
+  $('srchWrap').classList.toggle('filled', !!query);
+  $('searchInput').placeholder = ptab === 'stream' ? '搜索闪念…' : '搜索剪贴板…';
+  $('streamTabs').dataset.i = ptab === 'stream' ? '0' : '1';
+  [...$('streamTabs').children].forEach(b => b.classList.toggle('on', b.dataset.pt === ptab));
+  const canAdd = ptab === 'stream';
+  $('fab').classList.toggle('off', !canAdd);
+  if (!canAdd) { $('composer').classList.remove('on'); $('fab').classList.remove('open'); }
+  elScrim.classList.toggle('on', elStream.classList.contains('open'));
+}
+
+/* ===================== 通知条 + 撤销 ===================== */
+let toastTimer = null, undoFn = null;
+function showToast(msg, actLabel, act) {
+  $('toastMsg').textContent = msg;
+  undoFn = act || null;
+  const b = $('toastUndo');
+  b.textContent = actLabel || '撤销';
+  b.classList.toggle('hide', !actLabel);
+  elToast.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => elToast.classList.remove('on'), actLabel ? 4200 : 2200);
+}
+function hideToast() { clearTimeout(toastTimer); elToast.classList.remove('on'); undoFn = null; }
+
+/* ===================== 把手 ===================== */
+function openSlot() {
+  closeEdit(); hideToast();
+  closeStream();
+  elSlot.classList.add('open');
+  elSlot.style.top = (pipY - 26) + 'px';
+  setTimeout(() => elSlotInput.focus(), 150);
+}
+function closeSlot() { elSlot.classList.remove('open'); elSlotInput.value = ''; }
+
+function showPeek(text) {
+  $('peekText').textContent = text.length > 18 ? text.slice(0, 18) + '…' : text;
+  elPeek.style.top = (pipY - 24) + 'px';
+  elPeek.classList.add('on');
+  clearTimeout(showPeek._t);
+  showPeek._t = setTimeout(() => elPeek.classList.remove('on'), 1200);
+}
+function drop() {
+  const v = elSlotInput.value.trim();
+  if (!v) { closeSlot(); return; }
+  const id = newId();
+  STREAM.unshift({ id, src: 'capsule', text: v, tags: editTagSel.slice(), when: '刚刚', grp: '今天' });
+  closeSlot(); filter = null; query = ''; $('searchInput').value = '';
+  flashId = id; render();
+  elPip.classList.remove('pulse'); void elPip.offsetWidth; elPip.classList.add('pulse');
+  showPeek(v);
+  showToast('已存下', '撤销', () => {
+    STREAM = STREAM.filter(x => x.id !== id); flashId = null; render(); hideToast();
+  });
+  setTimeout(() => { flashId = null; }, 1500);
+}
+function addFromComposer() {
+  const inp = $('composerInput');
+  const v = inp.value.trim();
+  if (!v) { showToast('先写点什么'); inp.focus(); return; }
+  const id = newId();
+  STREAM.unshift({ id, src: 'capsule', text: v, tags: [], when: '刚刚', grp: '今天' });
+  inp.value = ''; syncComposerOk();
+  filter = null; query = ''; $('searchInput').value = '';
+  flashId = id; render(); inp.focus();
+  showToast('已存下', '撤销', () => {
+    STREAM = STREAM.filter(x => x.id !== id); flashId = null; render(); hideToast();
+  });
+  setTimeout(() => { flashId = null; }, 1500);
+}
+
+/* ===================== 面板 ===================== */
+/* 闪念与暂存已合并，所以不再有「默认范围」这个入参 ——
+   顺带把外部契约的兼容风险一起去掉了：所有入口看到的内容完全一致 */
+function openStream(nextTab) {
+  closeSlot(); closeEdit(); closeMenu(); hideToast();
+  if (nextTab) ptab = nextTab;
+  elStream.style.transition = ''; elStream.style.opacity = ''; elStream.style.transform = '';
+  elStream.classList.add('open'); render();
+}
+function closeStream() {
+  elStream.style.transition = ''; elStream.style.opacity = ''; elStream.style.transform = '';
+  elStream.classList.remove('open'); render();
+  $('composer').classList.remove('on'); $('fab').classList.remove('open');
+  closeMenu();
+}
+function revealStream(dx) {
+  const p = Math.max(0, Math.min(1, -dx / 130));
+  elStream.style.transition = 'none';
+  elStream.style.opacity = String(p);
+  elStream.style.transform = `translateX(${((1 - p) * 100).toFixed(2)}%)`;
+  elStream.classList.add('open');
+}
+function cancelRevealStream() {
+  elStream.style.transition = ''; elStream.style.opacity = ''; elStream.style.transform = '';
+  elStream.classList.remove('open');
+}
+
+/* ===================== 就地编辑 ===================== */
+function openEdit(id, anchorEl) {
+  const s = STREAM.find(x => x.id === id); if (!s) return;
+  closeMenu();
+  editingId = id; editTagSel = (s.tags || []).slice();
+  $('editWhen').textContent = s.when + (s.remind ? ' · 提醒 ' + s.remind : '');
+  elEditInput.value = s.text;
+  elEditTags.innerHTML = editTagsHtml(editTagSel);
+  elEdit.classList.add('open');
+  let top = 300;
+  try {
+    const r = anchorEl && anchorEl.getBoundingClientRect();
+    const p = $('live').getBoundingClientRect();
+    if (r && r.height > 0 && p.height > 0) top = r.top - p.top;
+  } catch (e) { /* ignore */ }
+  elEdit.style.top = Math.max(72, Math.min(844 - 256, top)) + 'px';
+  setTimeout(() => {
+    elEditInput.focus();
+    try { elEditInput.setSelectionRange(elEditInput.value.length, elEditInput.value.length); } catch (e) {}
+  }, 150);
+}
+function closeEdit() { elEdit.classList.remove('open'); editingId = null; }
+function saveEdit() {
+  const s = STREAM.find(x => x.id === editingId); if (!s) { closeEdit(); return; }
+  const before = { text: s.text, tags: (s.tags || []).slice() };
+  const v = elEditInput.value.trim();
+  if (v) s.text = v;
+  s.tags = editTagSel.slice();
+  closeEdit(); render();
+  showToast('已保存', '撤销', () => {
+    s.text = before.text; s.tags = before.tags; render(); hideToast();
+  });
+}
+function deleteEntry(id) {
+  const i = STREAM.findIndex(x => x.id === id); if (i < 0) return;
+  const [gone] = STREAM.splice(i, 1);
+  closeEdit(); closeMenu(); render();
+  showToast(`已删除：${gone.text.slice(0, 10)}…`, '撤销', () => {
+    STREAM.splice(i, 0, gone); render(); hideToast();
+  });
+}
+function toggleDone(id) {
+  const s = STREAM.find(x => x.id === id); if (!s) return;
+  const before = { done: !!s.done, remind: s.remind || null };
+  s.done = !s.done;
+  if (s.done) s.remind = null;                 /* 完成即取消提醒，否则到点还响 */
+  closeEdit(); closeMenu(); render();
+  showToast(s.done
+    ? ('已完成' + (before.remind ? ' · 提醒已取消' : ''))
+    : '已标记为未完成', '撤销', () => {
+      s.done = before.done; s.remind = before.remind; render(); hideToast();
+    });
+}
+
+/* ===================== ⋮ 溢出菜单 ===================== */
+function openMenu(anchorEl, ctx) {
+  closeEdit();
+  menuCtx = ctx;
+  const isClip = ctx.kind === 'clip';
+  const s = isClip ? CLIP_ITEMS[ctx.index] : STREAM.find(x => x.id === ctx.id);
+  if (!s) return;
+  const rows = isClip ? [
+    ['pick', '进入取词'], ['pin', '钉在屏幕'], ['share', '分享'], ['save', '保存图片'],
+    ['sep'], ['del', '删除'],
+  ] : [
+    ['star', s.starred ? '取消星标' : '加星标'], ['pick', '进入取词'], ['pin', '钉在屏幕'],
+    ['share', '分享'], ['save', '保存图片'],
+    ['sep'], ['del', '删除'],
+  ];
+  elMenu.innerHTML = rows.map(r => r[0] === 'sep' ? '<div class="sep"></div>'
+    : `<button data-mact="${r[0]}" type="button">${I[r[0]] || ''}${r[1]}</button>`).join('');
+  elMenu.classList.add('on');
+  let top = 300;
+  try {
+    const r = anchorEl && anchorEl.getBoundingClientRect();
+    const p = $('live').getBoundingClientRect();
+    if (r && r.height > 0 && p.height > 0) top = r.top - p.top - 8;
+  } catch (e) { /* ignore */ }
+  const h = elMenu.offsetHeight || 300;
+  elMenu.style.top = Math.max(60, Math.min(844 - h - 24, top)) + 'px';
+}
+function closeMenu() { elMenu.classList.remove('on'); menuCtx = null; }
+function runMenuAct(act) {
+  const ctx = menuCtx; if (!ctx) return;
+  const isClip = ctx.kind === 'clip';
+  const s = isClip ? CLIP_ITEMS[ctx.index] : STREAM.find(x => x.id === ctx.id);
+  if (!s) { closeMenu(); return; }
+  if (act === 'del') { isClip ? (CLIP_ITEMS.splice(ctx.index, 1), closeMenu(), render(),
+      showToast('已删除剪贴板记录')) : deleteEntry(s.id); return; }
+  if (act === 'star') {
+    s.starred = !s.starred; closeMenu(); render();
+    showToast(s.starred ? '已加星标' : '已取消星标', '撤销', () => {
+      s.starred = !s.starred; render(); hideToast();
+    });
+    return;
+  }
+  closeMenu();
+  const label = { pick: '进入取词', pin: '钉在屏幕', share: '分享', save: '保存图片' }[act] || act;
+  showToast(`${label}：真机走既有实现`);
+}
+function doCopy(text, after) {
+  try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) { /* 演示忽略 */ }
+  showToast('已复制' + (after ? ' · ' + after : ''));
+}
+
+/* ===================== 事件 ===================== */
+/* 把手：前 8px 锁定主方向 —— 横向=拉出面板，纵向=挪位置；点=面板；长按=直接记 */
+(function () {
+  let lp = null, longFired = false, drag = null, swallow = false;
+  const TH = 56;
+  elPipWrap.addEventListener('click', () => {
+    if (longFired || swallow) { longFired = false; swallow = false; return; }
+    openStream();                       /* 不改变页签：记住上次停留的那一页 */
+  });
+  elPipWrap.addEventListener('pointerdown', ev => {
+    longFired = false;
+    drag = { x0: ev.clientX, y0: ev.clientY, pip0: pipY, axis: null, moved: false };
+    try { elPipWrap.setPointerCapture(ev.pointerId); } catch (e) {}
+    elPipWrap.classList.add('grabbing');
+    /* 真机请用 ViewConfiguration.getLongPressTimeout()，不要写死 */
+    lp = setTimeout(() => { longFired = true; cancelRevealStream(); openSlot(); }, 400);
+  });
+  elPipWrap.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x0, dy = ev.clientY - drag.y0;
+    if (!drag.axis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      drag.moved = true;
+      clearTimeout(lp);
+    }
+    if (drag.axis === 'x') { if (dx < -6) revealStream(dx); }
+    else { pipY = clampPipY(drag.pip0 + dy); elPipWrap.style.top = (pipY - 24) + 'px'; }
+  });
+  const finish = (ev) => {
+    clearTimeout(lp);
+    elPipWrap.classList.remove('grabbing');
+    if (drag && drag.moved) {
+      const dx = ev ? (ev.clientX - drag.x0) : 0;
+      if (drag.axis === 'x') { if (dx < -TH) openStream(); else cancelRevealStream(); }
+      swallow = true;
+    }
+    drag = null;
+  };
+  elPipWrap.addEventListener('pointerup', finish);
+  elPipWrap.addEventListener('pointercancel', () => {
+    clearTimeout(lp); cancelRevealStream(); elPipWrap.classList.remove('grabbing'); drag = null;
+  });
+})();
+
+elSlotInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); drop(); } });
+$('btnDrop').addEventListener('click', drop);
+const micMsg = '语音为 P2：\n\n· 需 RECORD_AUDIO + FOREGROUND_SERVICE_MICROPHONE + FGS 类型 microphone（当前 manifest 都没有）\n'
+  + '· 按需申请、默认不申请；拒绝则隐藏入口\n· SpeechRecognizer 必须主线程使用，onResults 后 stopListening + destroy\n'
+  + '· 每次录音重建会话，用 Idle/Requesting/Listening/Processing/Error 状态机防重入';
+$('btnMic').addEventListener('click', () => alert(micMsg));
+$('composerMic').addEventListener('click', () => alert(micMsg));
+
+$('toastUndo').addEventListener('click', () => { if (undoFn) undoFn(); });
+
+$('btnSaveEdit').addEventListener('click', saveEdit);
+$('btnDelete').addEventListener('click', () => { if (editingId) deleteEntry(editingId); });
+$('btnDone').addEventListener('click', () => { if (editingId) toggleDone(editingId); });
+$('btnRemind').addEventListener('click', () => {
+  const s = STREAM.find(x => x.id === editingId); if (!s) return;
+  s.remind = s.remind ? null : '明天 09:00';
+  render();
+  $('editWhen').textContent = s.when + (s.remind ? ' · 提醒 ' + s.remind : '');
+  showToast(s.remind ? '已设提醒 · 明天 09:00（推送，不占屏）' : '已取消提醒');
+});
+elEditInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } });
+elEditTags.addEventListener('click', ev => {
+  const t = ev.target.closest('[data-et]'); if (!t) return;
+  const v = t.dataset.et;
+  if (v === '__new') { showToast('新建标签：内联输入（≤ 2 字最佳）'); return; }
+  editTagSel = editTagSel.includes(v) ? editTagSel.filter(x => x !== v) : editTagSel.concat(v);
+  elEditTags.innerHTML = editTagsHtml(editTagSel);
+});
+
+$('streamTabs').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-pt]'); if (!b) return;
+  const next = b.dataset.pt;
+  if (next === ptab) return;
+  tabinCls = next === 'clip' ? ' tabin-r' : ' tabin-l';
+  ptab = next; filter = null; closeMenu(); render();
+  tabinCls = '';
+});
+$('streamClose').addEventListener('click', closeStream);
+$('searchInput').addEventListener('input', ev => { query = ev.target.value.trim(); render(); });
+$('searchClear').addEventListener('click', ev => {
+  ev.preventDefault(); query = ''; $('searchInput').value = ''; render(); $('searchInput').focus();
+});
+elStreamChips.addEventListener('click', ev => {
+  if (chipDragMoved) { chipDragMoved = false; return; }
+  const t = ev.target.closest('[data-f]'); if (!t) return;
+  filter = t.dataset.f || null; render();
+});
+elStreamScroll.addEventListener('click', ev => {
+  if (panelDragMoved) { panelDragMoved = false; return; }
+  const emp = ev.target.closest('[data-empty]');
+  if (emp) { query = ''; $('searchInput').value = ''; filter = null; render(); return; }
+  const a = ev.target.closest('[data-act]');
+  if (a) {
+    const act = a.dataset.act, id = a.dataset.id;
+    if (act === 'done') return toggleDone(id);
+    if (act === 'copy') { const s = STREAM.find(x => x.id === id); return doCopy(s ? s.text : ''); }
+    if (act === 'star') {
+      const s = STREAM.find(x => x.id === id); if (!s) return;
+      s.starred = !s.starred; render();
+      return showToast(s.starred ? '已加星标' : '已取消星标', '撤销', () => {
+        s.starred = !s.starred; render(); hideToast(); });
+    }
+    if (act === 'more') return openMenu(a, { kind: 'stash', id });
+    if (act === 'copyc') return doCopy(CLIP_ITEMS[+id] ? CLIP_ITEMS[+id].t : '');
+    if (act === 'stashc') {
+      const c = CLIP_ITEMS[+id]; if (!c) return;
+      /* 真的建条目 —— 之前只弹了提示，所以切到闪念页什么也没有 */
+      const nid = newId();
+      STREAM.unshift({ id: nid, src: 'stash', from: '剪贴板', text: c.t,
+        tags: (c.tags || []).slice(), when: '刚刚', grp: '今天' });
+      filter = null; query = ''; $('searchInput').value = '';
+      flashId = nid; render();
+      showToast('已暂存到闪念', '撤销', () => {
+        STREAM = STREAM.filter(x => x.id !== nid); flashId = null; render(); hideToast();
+      });
+      setTimeout(() => { flashId = null; }, 1500);
+      return;
+    }
+    if (act === 'morec') return openMenu(a, { kind: 'clip', index: +id });
+  }
+  const b = ev.target.closest('[data-open]'); if (!b) return;
+  openEdit(b.dataset.open, b);
+});
+elMenu.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-mact]'); if (!b) return;
+  runMenuAct(b.dataset.mact);
+});
+elScrim.addEventListener('click', () => { closeStream(); closeEdit(); closeSlot(); hideToast(); });
+
+/* 点面板空白处关掉 ⋮ 菜单，但不影响其它点击 */
+elStream.addEventListener('pointerdown', ev => {
+  if (!ev.target.closest('[data-act="more"], [data-act="morec"]')) closeMenu();
+}, true);
+
+/* 面板上往右拖 = 收回（跟手） */
+let panelDragMoved = false;
+(function () {
+  let d = null;
+  const W = 390 * 0.78;
+  elStream.addEventListener('pointerdown', ev => {
+    if (!elStream.classList.contains('open')) return;
+    if (ev.target.closest('.chips, .fab, .composer, .editbar, .menu')) return;
+    d = { x0: ev.clientX, y0: ev.clientY, dx: 0, axis: null };
+  });
+  elStream.addEventListener('pointermove', ev => {
+    if (!d) return;
+    const dx = ev.clientX - d.x0, dy = ev.clientY - d.y0;
+    if (!d.axis) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      if (Math.abs(dy) > Math.abs(dx)) { d = null; return; }
+      d.axis = 'x';
+      try { elStream.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+    if (dx > 0) {
+      d.dx = dx;
+      elStream.style.transition = 'none';
+      elStream.style.transform = `translateX(${dx}px)`;
+      elStream.style.opacity = String(Math.max(0.15, 1 - dx / W));
+    }
+  });
+  const end = (ev) => {
+    if (!d) return;
+    const dx = ev ? (ev.clientX - d.x0) : 0;
+    const moved = d.axis === 'x' && d.dx > 4;
+    d = null;
+    if (!moved) return;
+    panelDragMoved = true;
+    if (dx > W * 0.32 || dx > 120) closeStream();
+    else { elStream.style.transition = ''; elStream.style.transform = ''; elStream.style.opacity = ''; }
+  };
+  elStream.addEventListener('pointerup', end);
+  elStream.addEventListener('pointercancel', end);
+})();
+
+$('fab').addEventListener('click', () => {
+  const on = $('composer').classList.toggle('on');
+  $('fab').classList.toggle('open', on);
+  syncComposerOk();
+  if (on) setTimeout(() => $('composerInput').focus(), 160);
+  else $('composerInput').blur();
+});
+function syncComposerOk() {
+  $('composerOk').classList.toggle('dim', !$('composerInput').value.trim());
+}
+$('composerOk').addEventListener('click', addFromComposer);
+$('composerInput').addEventListener('input', syncComposerOk);
+$('composerInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addFromComposer(); }
+});
+
+/* ⚠ 仅桌面演示稿的脚手架：Android 上横向列表靠原生触摸滑动，不需要这段 */
+let chipDragMoved = false;
+(function () {
+  let down = null;
+  elStreamChips.addEventListener('pointerdown', ev => {
+    if (ev.pointerType === 'touch') return;
+    down = { x: ev.clientX, left: elStreamChips.scrollLeft, moved: false };
+    /* 不要在这里 setPointerCapture —— 会把随后 click 的 target 重定向成容器，标签就点不动了 */
+  });
+  elStreamChips.addEventListener('pointermove', ev => {
+    if (!down) return;
+    const dx = ev.clientX - down.x;
+    if (!down.moved && Math.abs(dx) > 5) {
+      down.moved = true;
+      elStreamChips.classList.add('grabbing');
+      try { elStreamChips.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+    if (down.moved) elStreamChips.scrollLeft = down.left - dx;
+  });
+  const end = () => {
+    if (down && down.moved) chipDragMoved = true;
+    down = null; elStreamChips.classList.remove('grabbing');
+  };
+  elStreamChips.addEventListener('pointerup', end);
+  elStreamChips.addEventListener('pointercancel', end);
+  elStreamChips.addEventListener('pointerleave', end);
+})();
+
+/* ===================== 控制面板 ===================== */
+$('btnNew').addEventListener('click', openSlot);
+$('btnStream').addEventListener('click', () => openStream());
+$('btnStreamExt').addEventListener('click', () => openStream('clip'));
+$('btnReset').addEventListener('click', () => location.reload());
+$('segTheme').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x === b));
+  document.documentElement.setAttribute('data-theme', b.dataset.v);
+  galleryRender();
+});
+$('swGlass').addEventListener('click', e => {
+  const on = e.currentTarget.classList.toggle('on');
+  document.documentElement.setAttribute('data-glass', on ? 'on' : 'off');
+});
+$('rngBlur').addEventListener('input', e => {
+  document.documentElement.style.setProperty('--blur', e.target.value + 'px');
+  $('blurVal').textContent = e.target.value + 'px';
+});
+$('swIme').addEventListener('click', e => {
+  const on = e.currentTarget.classList.toggle('on');
+  elIme.classList.toggle('on', on);
+  elSlot.style.top = ((on ? 150 : pipY - 26)) + 'px';
+  elEdit.style.marginTop = on ? '-150px' : '0px';
+});
+$('swGzone').addEventListener('click', e => {
+  $('gzone').classList.toggle('on', e.currentTarget.classList.toggle('on'));
+});
+$('swLegacy').addEventListener('click', e => {
+  $('pipLegacy').classList.toggle('on', e.currentTarget.classList.toggle('on'));
+});
+
+/* ===================== 画廊 ===================== */
+function staticFrame(inner, theme) {
+  return `<div class="frame phone" data-theme="${theme}">
+    <div class="app">${appHtml()}</div>
+    <div class="statusbar">${statusHtml()}</div>${inner}
+    <div class="punch"></div><div class="homebar"></div></div>`;
+}
+const pipStatic = (due, top) => `<div class="pipwrap" style="top:${top === undefined ? 44 : top}%">
+  <i class="pip g ${due ? 'due' : ''}"></i></div>`;
+function slotStatic() {
+  return pipStatic(true) + `<div class="slot g open" style="top:347px">
+    <div class="row">
+      <button class="ib" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <input value="把描边改成 1px" readonly>
+      <button class="ib round" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></button>
+    </div></div>
+    <div class="peek g on" style="top:347px"><span class="k">已存下</span>把描边改成 1px，太粗会显廉价</div>`;
+}
+function revealStatic() {
+  return pipStatic(false) + `<div class="scrim on"></div>
+    <div class="stream g open" style="transform:translateX(40%);opacity:.55">
+      <div class="head"><div class="srchrow">
+        <label class="srch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg><input placeholder="搜索闪念…" readonly><button class="clr" type="button">✕</button></label>
+        <span class="n">10 条</span><button class="x" type="button">✕</button></div>
+        <div class="ptabs" data-i="0"><i class="tabind"></i><button class="on" type="button">闪念</button><button type="button">剪贴板</button></div>
+        <div class="chips">${chipsHtml()}</div></div>
+      <div class="scroll"></div></div>`;
+}
+function headStatic() {
+  return `<div class="srchrow">
+      <label class="srch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg><input placeholder="搜索闪念…" readonly><button class="clr" type="button">✕</button></label>
+      <span class="n" id="stCount"></span><button class="x" type="button">✕</button></div>
+    <div class="ptabs" data-i="0"><i class="tabind"></i><button class="on" type="button">闪念</button><button type="button">剪贴板</button></div>
+    <div class="chips">${chipsHtml()}</div>`;
+}
+function panelStatic() {
+  const prevFilter = filter, prevQ = query;
+  filter = null; query = '';
+  const groups = ['今天', '昨天', '更早'].map(g => {
+    const items = STREAM.filter(s => s.grp === g);
+    if (!items.some(visible)) return '';
+    return `<div class="grp"><div class="glabel">${g}</div><div class="vline"></div>${items.map(itemHtml).join('')}</div>`;
+  }).join('');
+  const n = STREAM.filter(visible).length;
+  filter = prevFilter; query = prevQ;
+  return `<div class="scrim on"></div>
+    <div class="stream g open">
+      <div class="head">${headStatic().replace('id="stCount"', '')}</div>
+      <div class="scroll">${groups}</div>
+      <div class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+    </div>`;
+}
+function menuStatic() {
+  const prevQ = query; query = '';
+  const one = STREAM.filter(s => s.grp === '今天').slice(0, 2).map(itemHtml).join('');
+  query = prevQ;
+  return `<div class="scrim on"></div>
+    <div class="stream g open">
+      <div class="head">${headStatic().replace('id="stCount"', '')}</div>
+      <div class="scroll"><div class="grp"><div class="glabel">今天</div><div class="vline"></div>${one}</div></div>
+      <div class="menu g on" style="top:186px">
+        <button type="button">${I.star}加星标</button>
+        <button type="button">${I.pick}进入取词</button>
+        <button type="button">${I.pin}钉在屏幕</button>
+        <button type="button">${I.share}分享</button>
+        <button type="button">${I.save}保存图片</button>
+        <div class="sep"></div>
+        <button class="del" type="button">${I.del}删除</button>
+      </div></div>`;
+}
+function doneStatic() {
+  const prevQ = query; query = '';
+  const rows = STREAM.filter(s => s.grp === '今天').map(itemHtml).join('');
+  query = prevQ;
+  return `<div class="scrim on"></div>
+    <div class="stream g open">
+      <div class="head">${headStatic().replace('id="stCount"', '')}</div>
+      <div class="scroll"><div class="grp"><div class="glabel">今天</div><div class="vline"></div>${rows}</div></div>
+      <div class="toast g on" style="bottom:96px"><span class="m">已完成 · 提醒已取消</span>
+        <button class="undo" type="button">撤销</button></div>
+    </div>`;
+}
+function emptyStatic() {
+  return `<div class="scrim on"></div>
+    <div class="stream g open">
+      <div class="head">${headStatic().replace('id="stCount"', '')}</div>
+      <div class="scroll">${emptyHtml()}</div>
+      <div class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+    </div>`;
+}
+function clipStatic() {
+  return `<div class="scrim on"></div>
+    <div class="stream g open">
+      <div class="head">
+        <div class="srchrow">
+          <label class="srch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg><input placeholder="搜索剪贴板…" readonly><button class="clr" type="button">✕</button></label>
+          <span class="n">${CLIP_ITEMS.length} 条</span><button class="x" type="button">✕</button></div>
+        <div class="ptabs" data-i="1"><i class="tabind"></i><button type="button">闪念</button><button class="on" type="button">剪贴板</button></div>
+      </div>
+      <div class="scroll flat">${CLIP_ITEMS.map(clipItemHtml).join('')}</div>
+    </div>`;
+}
+const STATES = [
+  { no: '01', ti: '屏上唯一常驻元素', sub: '一条 9×28dp 把手，命中区 <b>48×48dp</b>；落在这 48dp 返回手势区里只占自己那一块，上下方返回手势照常', inner: () => `<div class="gzone on"><span>系统返回手势区 48dp</span></div>` + pipStatic(true) },
+  { no: '02', ti: '长按把手 → 记一条 + 存下预览', sub: '输入槽从把手位置长出；回车存下后把手轻脉冲，旁边浮出内容前十几字，1.2s 消失', inner: () => slotStatic() },
+  { no: '03', ti: '往内拖 → 面板跟手拉出', sub: '按位移插值，拖过 56px 松手定住；关闭态是 translateX(100%)，从右缘真滑出来', inner: () => revealStatic() },
+  { no: '04', ti: '闪念页 · 搜索 + 标签 + 范围', sub: '标题栏和页签本来重名，腾出来放了搜索框；下方页签 + 标签行；闪念与暂存已合并，所以没有范围开关', inner: () => panelStatic() },
+  { no: '05', ti: '⋮ 溢出菜单', sub: '行内只留高频（完成 / 复制），星标 · 取词 · 钉屏 · 分享 · 保存图片 · 删除收进菜单。<b>「完成」只在带「待办」标签的条目上出现</b>——铺满所有条目会让整个流读成任务清单', inner: () => menuStatic() },
+  { no: '06', ti: '待办完成 · 划掉 + 撤销', sub: '完成即自动取消提醒；划掉变暗但留在原位（不移除）；通知条带「撤销」', inner: () => doneStatic() },
+  { no: '07', ti: '空状态', sub: '一条都没有时给引导 + 箭头指向「＋」；搜不到 / 筛不出来各有各自的文案和一个出口', inner: () => emptyStatic() },
+  { no: '08', ti: '剪贴板页 · 既有能力保留', sub: '每条 = 类型标签 + 复制 · 暂存到闪念（<b>真的建条目</b>，切到闪念页能看到）· ⋮（进入取词 / 钉屏 / 分享 / 保存图片 / 删除）', inner: () => clipStatic() },
+];
+function galleryRender() {
+  const th = document.documentElement.getAttribute('data-theme') || 'light';
+  $('gallery').innerHTML = STATES.map(s => `
+    <div class="cell">
+      <div class="holder"><div style="transform:scale(.62);transform-origin:top left">${staticFrame(s.inner(), th)}</div></div>
+      <div class="caption"><span class="no">${s.no}</span><span class="ti">${s.ti}</span></div>
+      <div class="sub">${s.sub}</div>
+    </div>`).join('');
+}
+
+/* ===================== 启动 ===================== */
+document.documentElement.setAttribute('data-theme', 'light');
+render();
+galleryRender();
+</script>
+</body>
+</html>

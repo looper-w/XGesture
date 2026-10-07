@@ -38,6 +38,19 @@ object HapticHelper {
         pulse(view, settings, PulseKind.CONFIRM)
     }
 
+    /**
+     * 通用「确认」反馈（存下 / 复制 / 删除 / 完成 / 星标）：
+     * **只受总开关与强度控制** —— 不像 [confirmLaunch] 那样再叠一层"启动确认"开关。
+     */
+    fun actionConfirm(view: View, settings: AppSettings) {
+        pulse(view, settings, PulseKind.CONFIRM)
+    }
+
+    /** 通用「轻点」反馈（菜单项 / 标签 chip）：同样只受总开关与强度控制。 */
+    fun actionTick(view: View, settings: AppSettings) {
+        pulse(view, settings, PulseKind.LETTER)
+    }
+
     fun preview(view: View, settings: AppSettings) {
         pulse(view, settings, PulseKind.CONFIRM)
     }

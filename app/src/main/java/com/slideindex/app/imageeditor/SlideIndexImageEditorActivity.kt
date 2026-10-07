@@ -50,6 +50,7 @@ import com.slideindex.app.overlay.resolvePinImageDisplaySizePx
 import com.slideindex.app.search.SearchEngineLauncher
 import com.slideindex.app.settings.SettingsRepository
 import com.slideindex.app.stash.StashCoordinator
+import com.slideindex.app.stash.StashMetaRepository
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlin.math.abs
@@ -570,6 +571,7 @@ class SlideIndexImageEditorActivity : AppCompatActivity() {
                 bitmap = bitmap,
                 pinDisplayWidthPx = displayW,
                 pinDisplayHeightPx = displayH,
+                source = StashMetaRepository.SOURCE_IMAGE,
             ) { success ->
                 Toast.makeText(
                     ctx,
