@@ -523,13 +523,25 @@ class ClipboardHistoryRepository @Inject constructor(
         store.queryLatest()
     }
 
+    /**
+     * 某个筛选下的**完整**条数（不是"已经加载了几页"）。
+     *
+     * 面板搜索框右侧那个数字用它：剪贴板是分页加载的，用「已加载条数」当总数会随着下滑变大
+     * （`docs/capsule-refactor-plan.md` §0.16.4 待办 1）。这里直接问 SQLite。
+     */
+    suspend fun countEntries(filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All): Int =
+        withContext(Dispatchers.IO) {
+            store.count(filter)
+        }
+
     suspend fun loadHistoryPage(
         createdBeforeMs: Long? = null,
-        limit: Int
+        limit: Int,
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
     ): ClipboardHistoryPage = withContext(Dispatchers.IO) {
         val pageSize = limit.coerceAtLeast(1)
-        val total = store.count()
-        val slice = store.queryPageBefore(createdBeforeMs, pageSize)
+        val total = store.count(filter)
+        val slice = store.queryPageBefore(createdBeforeMs, pageSize, filter)
         ClipboardHistoryPage(
             entries = slice,
             totalCount = total,

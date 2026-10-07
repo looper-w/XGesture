@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,14 +35,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -52,7 +47,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import com.slideindex.app.stash.StashTag
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.foundation.text.KeyboardActions
@@ -87,11 +81,13 @@ internal fun HistoryPanelHeader(
     /** 点搜索框时请宿主先"让窗口可聚焦 + 延时抢焦点"（overlay 窗默认 NOT_FOCUSABLE，见 Screen 里的 effect）。 */
     onSearchRequestFocus: () -> Unit,
     onDismiss: () -> Unit,
-    tags: List<StashTag>,
-    selectedTag: String?,
-    onTagSelected: (String?) -> Unit,
-    /** 标签行只在「闪念」页出现（设计稿 `elStreamChips.style.display = ptab === 'stream' ? 'flex' : 'none'`）。 */
-    showChips: Boolean = true,
+    /**
+     * 页签下方那一排胶囊（闪念 = 标签筛选，剪贴板 = 固定筛选）。
+     *
+     * 做成**插槽**而不是往头部塞两套参数：两个页签的行长得一样（`HistoryPanelChipRows.kt`），
+     * 但内容与语义完全不同，头部只管"这里有一行、留多少间距"。
+     */
+    chipRow: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val theme = historyTheme()
@@ -135,14 +131,11 @@ internal fun HistoryPanelHeader(
             modifier = Modifier.padding(top = 14.dp),
         )
 
-        // ---- 标签筛选行（剪贴板页没有标签概念，整行不出现）----
-        if (showChips) {
-            HistoryTagChips(
-                tags = tags,
-                selectedTag = selectedTag,
-                onTagSelected = onTagSelected,
-                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
-            )
+        // ---- 筛选行（闪念 = 标签，剪贴板 = 固定分类）----
+        if (chipRow != null) {
+            Box(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)) {
+                chipRow()
+            }
         }
     }
 }
@@ -269,9 +262,9 @@ private fun HistorySearchField(
     }
 }
 
-/** `.stream .x`：40×40 圆、透明底、sub 色。 */
+/** `.stream .x`：40×40 圆、透明底、sub 色。标签管理浮窗的关闭键也复用它。 */
 @Composable
-private fun HistoryHeaderCircleButton(
+internal fun HistoryHeaderCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
@@ -370,59 +363,6 @@ private fun HistoryPanelTabs(
             }
         }
     }
-}
-
-/**
- * `.stream .chips`：玻璃小药丸，**右端 86% 处渐隐**（`mask-image`）。
- * 「全部」= `filter == null` 时选中；选中态 = accent-soft 底 + accent 55% 描边 + 粗体。
- */
-@Composable
-@OptIn(ExperimentalLayoutApi::class)
-private fun HistoryTagChips(
-    tags: List<StashTag>,
-    selectedTag: String?,
-    onTagSelected: (String?) -> Unit,
-    /** 标签行只在「闪念」页出现（设计稿 `elStreamChips.style.display = ptab === 'stream' ? 'flex' : 'none'`）。 */
-    showChips: Boolean = true,
-    modifier: Modifier = Modifier,
-) {
-    val theme = historyTheme()
-    // 用户反馈横向滚动会把首尾标签切掉（"直接被截断 / 最后一个胶囊形态是什么鬼"）→
-    // 改成**换行**布局：标签少时一行放得下，多了自动换行，永远不会被裁。
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        HistoryChip(
-            label = "全部",
-            dotColor = null,
-            selected = selectedTag == null,
-            onClick = { onTagSelected(null) },
-        )
-        tags.forEach { tag ->
-            HistoryChip(
-                label = tag.name,
-                dotColor = Color(tag.colorArgb),
-                selected = selectedTag == tag.name,
-                onClick = { onTagSelected(tag.name) },
-            )
-        }
-    }
-}
-
-/** 右端渐隐（demo `mask-image: linear-gradient(to right, #000 86%, transparent)`）。 */
-private fun Modifier.historyChipsFadeMask(): Modifier = this.drawWithContent {
-    drawContent()
-    // DstIn + 水平渐变：右侧 14% 把已经画好的内容擦成透明。
-    drawRect(
-        brush = Brush.horizontalGradient(
-            0f to Color.Black,
-            0.86f to Color.Black,
-            1f to Color.Transparent,
-        ),
-        blendMode = BlendMode.DstIn,
-    )
 }
 
 /**

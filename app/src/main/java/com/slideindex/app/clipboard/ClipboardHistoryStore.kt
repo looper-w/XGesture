@@ -20,18 +20,38 @@ internal class ClipboardHistoryStore(
     private val ftsEnabled: Boolean
         get() = openHelper.ftsEnabled
 
-    fun count(): Int {
+    /**
+     * 条数。传 [filter] 就是「该筛选下的**完整**条数」—— 面板头部的条数靠它，
+     * 与「已经加载了几页」无关（§0.16.4 待办 1）。
+     */
+    fun count(filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All): Int {
+        val where = filter.sqlWhere()
         val db = readableDatabase
-        return db.rawQuery("SELECT COUNT(*) FROM $TABLE", null).use { cursor ->
+        val sql = if (where == null) {
+            "SELECT COUNT(*) FROM $TABLE"
+        } else {
+            "SELECT COUNT(*) FROM $TABLE WHERE $where"
+        }
+        return db.rawQuery(sql, null).use { cursor ->
             if (!cursor.moveToFirst()) 0 else cursor.getInt(0)
         }
     }
 
     fun queryLatest(): ClipboardEntry? = queryPageBefore(createdBeforeMs = null, limit = 1).firstOrNull()
 
-    fun queryPageBefore(createdBeforeMs: Long?, limit: Int): List<ClipboardEntry> {
+    fun queryPageBefore(
+        createdBeforeMs: Long?,
+        limit: Int,
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+    ): List<ClipboardEntry> {
         val pageSize = limit.coerceAtLeast(1)
-        val selection = if (createdBeforeMs == null) null else "$COL_CREATED < ?"
+        val cursorSelection = if (createdBeforeMs == null) null else "$COL_CREATED < ?"
+        val filterSelection = filter.sqlWhere()
+        // 游标条件与筛选条件是 AND：两者都不带用户输入（筛选条件是常量字面量，没有占位符），
+        // 所以拼字符串不会有注入面，参数表也只需管游标那一个。
+        val selection = listOfNotNull(cursorSelection, filterSelection)
+            .joinToString(" AND ")
+            .takeIf { it.isNotEmpty() }
         val selectionArgs = if (createdBeforeMs == null) null else arrayOf(createdBeforeMs.toString())
         val db = readableDatabase
         return db.query(
@@ -277,6 +297,28 @@ internal class ClipboardHistoryStore(
             val escaped = token.replace("\"", "\"\"")
             "\"$escaped\"*"
         }
+    }
+
+    /**
+     * 筛选 → SQL 谓词。**这是全部筛选语义的唯一实现**：面板头部的条数（[count]）与列表分页
+     * （[queryPageBefore]）共用它，不会出现"数字和列表对不上"。
+     *
+     * 四类**互斥**地落在 `has_image` / `entry_type` 两个列上（口语化说明见 `ClipboardHistoryFilter`
+     * 的文档表）：[ClipboardHistoryFilter.RichText] 特意排除了"整条就是链接"的 HTML（浏览器复制
+     * 链接就是 HTML + 文本），否则同一条会同时出现在「链接」和「富文本」两处。
+     */
+    private fun ClipboardHistoryFilter.sqlWhere(): String? = when (this) {
+        ClipboardHistoryFilter.All -> null
+        ClipboardHistoryFilter.Image -> "$COL_HAS_IMAGE = 1"
+        ClipboardHistoryFilter.File ->
+            "$COL_HAS_IMAGE = 0 AND $COL_TYPE = '${ClipboardEntryType.URI.name}'"
+        ClipboardHistoryFilter.RichText ->
+            "$COL_HAS_IMAGE = 0 AND $COL_TYPE = '${ClipboardEntryType.HTML.name}'" +
+                " AND NOT $LINK_PREDICATE"
+        ClipboardHistoryFilter.Link ->
+            "$COL_HAS_IMAGE = 0" +
+                " AND $COL_TYPE IN ('${ClipboardEntryType.TEXT.name}', '${ClipboardEntryType.HTML.name}')" +
+                " AND $LINK_PREDICATE"
     }
 
     private fun queryWhere(where: String, args: Array<String>, limit: Int? = null): List<ClipboardEntry> {
@@ -572,6 +614,17 @@ internal class ClipboardHistoryStore(
         private const val FTS_COL_SEARCH_TEXT = "search_text"
         private const val PREVIEW_MAX_LEN = 500
         const val SEARCH_RESULT_LIMIT = 500
+
+        /**
+         * "整条内容就是一条链接"。
+         *
+         * `search_blob` = 正文 + uri + intentUri（入库时拼好并 lower 过），而 TEXT / HTML 两类条目的
+         * 正文**必然非空**（`ClipboardReader` 只在有文本时才产出这两类），所以 `LIKE 'http://%'`
+         * 等价于"正文以它开头"。夹在长文中间的链接**不算**（理由见 `ClipboardHistoryFilter`）。
+         */
+        private const val LINK_PREDICATE =
+            "($COL_SEARCH LIKE 'http://%' OR $COL_SEARCH LIKE 'https://%'" +
+                " OR $COL_SEARCH LIKE 'www.%')"
 
         private fun decodeEntryStatic(json: Json, raw: String): ClipboardEntry? = runCatching {
             json.decodeFromString<ClipboardEntry>(raw)

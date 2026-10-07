@@ -3077,6 +3077,21 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="floating_panel_title">Collection panel</string>
     <string name="stash_panel_tab">Flashes</string>
     <string name="stash_tag_filter_all">All</string>
+    <string name="stash_tag_manage_title">Tags</string>
+    <string name="stash_tag_add">New tag</string>
+    <string name="stash_tag_name_hint">Tag name</string>
+    <string name="stash_tag_rename">Rename</string>
+    <string name="stash_tag_color">Color</string>
+    <string name="stash_tag_delete">Delete</string>
+    <!-- 「待办」= StashMetaRepository.TODO_TAG_NAME，是硬编码的中文关键字（四种语言下标签名都显示成「待办」），
+         所以这条提示里的标签名**不能翻译**，否则用户对不上号。 -->
+    <string name="stash_tag_protected_hint">“待办” is a keyword tag: it can’t be renamed or deleted</string>
+    <string name="stash_tag_exists">A tag with that name already exists</string>
+    <string name="stash_tag_deleted">Tag deleted</string>
+    <string name="clipboard_filter_image">Images</string>
+    <string name="clipboard_filter_link">Links</string>
+    <string name="clipboard_filter_rich">Rich text</string>
+    <string name="clipboard_filter_file">Files</string>
     <string name="stash_group_today">Today</string>
     <string name="stash_group_yesterday">Yesterday</string>
     <string name="stash_group_earlier">Earlier</string>

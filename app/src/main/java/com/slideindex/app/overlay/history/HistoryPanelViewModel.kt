@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.slideindex.app.clipboard.ClipboardEntry
+import com.slideindex.app.clipboard.ClipboardHistoryFilter
 import com.slideindex.app.clipboard.ClipboardHistoryRepository
 import com.slideindex.app.stash.StashEntry
 import com.slideindex.app.stash.StashMetaRepository
@@ -89,9 +90,19 @@ class HistoryPanelViewModel(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val clipboardEntryCount: StateFlow<Int> = clipboardRepository?.entryCount
-        ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-        ?: MutableStateFlow(0)
+    /** 剪贴板固定筛选（`ClipboardHistoryFilter`），SavedStateHandle 持久化。 */
+    val clipboardFilter: StateFlow<ClipboardHistoryFilter> =
+        savedStateHandle.getStateFlow(KEY_CLIPBOARD_FILTER, ClipboardHistoryFilter.All)
+
+    private val _clipboardFilterCount = MutableStateFlow(clipboardRepository?.entryCount?.value ?: 0)
+
+    /**
+     * 当前筛选下的**完整**条数（SQL `COUNT`）。
+     *
+     * 面板头部的数字用它，**不是** [filteredClipboardEntries]`.size` —— 后者只是"已经加载的那几页"，
+     * 用户往下滑会变大（§0.16.4 待办 1 要修的就是这个）。
+     */
+    val clipboardFilterCount: StateFlow<Int> = _clipboardFilterCount.asStateFlow()
 
     private val _clipboardPagedEntries = MutableStateFlow<List<ClipboardEntry>>(emptyList())
     private val _clipboardSearchResults = MutableStateFlow<List<ClipboardEntry>>(emptyList())
@@ -99,10 +110,20 @@ class HistoryPanelViewModel(
     private var clipboardReachedEnd = false
     private var clipboardLoadJob: Job? = null
     private var clipboardActivateJob: Job? = null
+    private var clipboardCountJob: Job? = null
     private var clipboardPagesInitialized = false
+    /** 当前 `_clipboardPagedEntries` 是按哪个筛选加载的（筛选切换时要整批重来）。 */
+    private var clipboardPagesFilter = ClipboardHistoryFilter.All
 
     val clipboardListLoading: StateFlow<Boolean> = _clipboardListLoading.asStateFlow()
 
+    /**
+     * 列表里真正要渲染的东西。
+     *
+     * 搜索时**忽略固定筛选**（与闪念页签"搜索时忽略标签筛选"同款，见 `filteredStashEntries`）：
+     * 搜索结果本来就整批拿回来（`SEARCH_RESULT_LIMIT`），再叠一层筛选只会让人搜不到自己刚复制的东西。
+     * 没在搜索时：分页本身就是按 [clipboardFilter] 从 SQLite 取的，不需要在这里再过滤一遍。
+     */
     val filteredClipboardEntries: StateFlow<List<ClipboardEntry>> = combine(
         _clipboardPagedEntries,
         _clipboardSearchResults,
@@ -110,6 +131,15 @@ class HistoryPanelViewModel(
     ) { paged, searched, query ->
         if (query.trim().isEmpty()) paged else searched
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 头部条数：搜索时 = 搜索命中条数（整批已加载，不随滚动变），否则 = 筛选后的库总数。 */
+    val clipboardViewCount: StateFlow<Int> = combine(
+        clipboardFilterCount,
+        filteredClipboardEntries,
+        clipboardSearchQuery,
+    ) { total, visible, query ->
+        if (query.trim().isEmpty()) total else visible.size
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val expandedEntryIds: StateFlow<Set<String>> =
         savedStateHandle.getStateFlow(KEY_EXPANDED_IDS, emptySet())
@@ -143,12 +173,43 @@ class HistoryPanelViewModel(
         viewModelScope.launch {
             clipboardRepository?.revision?.collect { revision ->
                 if (revision == 0L) return@collect
+                refreshClipboardFilterCount()
                 if (clipboardSearchQuery.value.isNotBlank()) {
                     runSearch(clipboardSearchQuery.value)
                     return@collect
                 }
                 syncPagedListAfterRevision()
             }
+        }
+        // 筛选切换：条数立刻按新筛选重算，分页整批作废重来（游标与"到底了没有"都是按旧筛选算的）。
+        viewModelScope.launch {
+            clipboardFilter.collect { filter ->
+                refreshClipboardFilterCount()
+                if (clipboardPagesFilter == filter) return@collect
+                clipboardPagesFilter = filter
+                clipboardReachedEnd = false
+                clipboardPagesInitialized = false
+                _clipboardPagedEntries.value = emptyList()
+                // 正在跑的加载是**按旧筛选**取的，必须丢掉：否则它回来会把旧筛选的那批写进
+                // `_clipboardPagedEntries`，列表和条数就对不上了。
+                clipboardLoadJob?.cancel()
+                _clipboardListLoading.value = false
+                refreshClipboardPages(showInitialLoading = true)
+            }
+        }
+    }
+
+    /** 重新算"当前筛选下的完整条数"（SQL COUNT，走 IO）。 */
+    private fun refreshClipboardFilterCount() {
+        val repo = clipboardRepository
+        val filter = clipboardFilter.value
+        clipboardCountJob?.cancel()
+        clipboardCountJob = viewModelScope.launch {
+            if (repo == null) {
+                _clipboardFilterCount.value = 0
+                return@launch
+            }
+            _clipboardFilterCount.value = repo.countEntries(filter)
         }
     }
 
@@ -166,6 +227,10 @@ class HistoryPanelViewModel(
 
     fun setSelectedTag(tag: String?) {
         savedStateHandle[KEY_SELECTED_TAG] = tag
+    }
+
+    fun setClipboardFilter(filter: ClipboardHistoryFilter) {
+        savedStateHandle[KEY_CLIPBOARD_FILTER] = filter
     }
 
     fun toggleExpanded(entryId: String) {
@@ -190,6 +255,8 @@ class HistoryPanelViewModel(
                 triggerContext = context,
                 skipWhenListening = false,
             )
+            // 条数也重算一次：监听进程（另一个进程）写库时我们这边收不到 revision。
+            refreshClipboardFilterCount()
             if (!clipboardPagesInitialized || _clipboardPagedEntries.value.isEmpty()) {
                 refreshClipboardPages(showInitialLoading = _clipboardPagedEntries.value.isEmpty())
             }
@@ -258,6 +325,7 @@ class HistoryPanelViewModel(
             repo.loadHistoryPage(
                 createdBeforeMs = null,
                 limit = HistoryFloatPagination.PAGE_SIZE,
+                filter = clipboardPagesFilter,
             )
         }.entries
         if (freshTop.isEmpty()) {
@@ -292,6 +360,7 @@ class HistoryPanelViewModel(
                 repo.loadHistoryPage(
                     createdBeforeMs = cursor,
                     limit = HistoryFloatPagination.PAGE_SIZE,
+                    filter = clipboardPagesFilter,
                 )
             }
             if (page.entries.isEmpty()) {
@@ -330,6 +399,7 @@ class HistoryPanelViewModel(
         private const val KEY_IMAGE_INDICES = "selected_image_indices"
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_SELECTED_TAG = "selected_tag"
+        private const val KEY_CLIPBOARD_FILTER = "clipboard_filter"
         /** 侧栏入场动画 + chrome z-order 抬升后再刷新剪贴板，避免与 WM/DB 并发。 */
         private const val CLIPBOARD_TAB_ACTIVATE_DELAY_MS = 450L
     }

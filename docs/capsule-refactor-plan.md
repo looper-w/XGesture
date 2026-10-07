@@ -786,26 +786,50 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 
 ---
 
-### 0.16.4 待执行（下一轮从这里开始）：条数改总数 / 标签自定义 / 剪贴板筛选 / 单测+文档
+### 0.16.4 已完成（本轮）：条数改总数 / 标签自定义 / 剪贴板筛选 / 单测+文档
 
-**当前基线（安全点）**：胶囊 UI 全套已提交 `c8fee4e1`（77 文件），工作区干净；设备上装的就是它构建的版本（编译/装机/无新崩溃均验过）。
+**上一轮基线（安全点）**：胶囊 UI 全套 `c8fee4e1`（77 文件）。
+**本轮结果**：`.\gradlew.bat :app:testFullDebugUnitTest` → **108 套 / 610 条 / 0 失败**（基线 106 套 / 592 条；新增 2 套 18 条）。
 
-#### 四件待办
+#### 四件待办 —— 完成情况
 
-1. **搜索框右侧条数改成“总数”**
-   现状：`HistoryPanelScreen.kt:194-208` 用 `filteredStashEntries.size` / `filteredClipboardEntries.size` = **已加载条数**，往下滑会变大（用户实测困惑）。
-   做法：剪贴板侧给 store/repository 加 `count()`（或取 `clipboardHistoryMaxEntries` 上限内的实际条数），stash 侧同理；两个页签统一显示总数，**不再随滚动变化**。
-2. **标签可自定义**
-   数据层已有 `addTag(name,color)` / `removeTag(name)` / `setTags(entryId,…)`；**还缺** `renameTag(old,new)`（必须**连带改写所有条目的绑定**，否则旧名孤儿）与 `setTagColor(name,color)`。
-   UI：标签行末尾加 **＋** 胶囊 → 屏幕居中浮窗（复用编辑/输入那套壳）：列表（色点+名字+改名+改色+删除）+ 新增（名字 + 8 个预设色）。
-   ⚠️ **“待办”只读**：`StashMetaRepository.TODO_TAG_NAME = "待办"` 是硬编码关键字 —— 完成态 / `isTodo` / 主操作是“完成”还是“星标” / 把手 `pendingTodoCount` 变色全靠它；UI 上禁用改名与删除并给提示。
-   字符串 **4 个语言**（`values` / `-zh` / `-ja` / `-ar`）都要加。
-3. **剪贴板页签加固定筛选**：`全部 / 图片 / 链接 / 富文本 / 文件`
-   先确认 `ClipboardEntry` 能可靠推出哪几类（kind / mime / uri / `hasImageContent()` / content blocks）；**推不出来的类别不要硬凑**（宁可少做一个并写明原因）。
-   UI：与闪念标签行**同一位置**的横排单选胶囊（复用 `HistoryChip`，默认“全部”），筛选状态持久化（SavedStateHandle）；**顺手删掉**“剪贴板列表顶部 18dp”那条补偿（上面又有行了）。
-4. **单测 + 文档**
-   跑 `.\gradlew.bat :app:testFullDebugUnitTest`（基线 106 套 / 592 条，期望 0 失败）。
-   文档：把本轮已完成的东西补记进本节（卡片统一 / 编辑与输入**复用同一套壳** / 标签选中态实心 accent+白字白点 / 轴槽文字 11.5sp+正文色 / 提示条左右滑消除+复位 / tab 分段控件（轨道+白片+3dp 投影+同心圆角）/ 闪念与剪贴板列表内边距），含**与 demo 的偏差**与遗留。
+1. **搜索框右侧条数改成“总数”** ✅
+   - 剪贴板：`ClipboardHistoryStore.count(filter)`（SQL `COUNT`，带筛选）→ `ClipboardHistoryRepository.countEntries` → `HistoryPanelViewModel.clipboardFilterCount` / `clipboardViewCount`。头部那个数字现在是**该筛选下的完整条数**，不再是"已经加载了几页"（原来用 `filteredClipboardEntries.size`，往下滑就变大）。
+   - 闪念：**没有**新增 `StashRepository.count()`。列表整份在内存（`MAX_ENTRIES = 200`），`stashEntries.size` 本身就是库总数，加一个"返回它自己"的方法只是死代码；本轮的修法是**把“今天 M”从筛选结果改回全量算**（原来筛标签时 M 会跟着跳）。
+   - **有意偏差**：搜索 / 筛标签时显示的是**命中条数**（同样是完整值、不随滚动变），不是库总数 —— 筛出 3 条却写“200 条”只会更困惑；demo 的 `.n` 也是可见条数。
+2. **标签可自定义** ✅
+   - 数据层：新增 `StashTagEdits`（纯函数 `add/remove/rename/setColor`，返回 `null` = 无变化、不写盘不广播）；`StashMetaRepository` 补上 `renameTag(old,new)` 与 `setTagColor(name,color)`，`addTag/removeTag` 改为委托纯逻辑并返回 `Boolean`。
+   - 改名**连带改写所有条目的绑定**（旧名不留孤儿）；目标名已存在时按**合并**处理（并到目标标签、保留目标的颜色与排序），否则 `tags` 里会出现两枚同名 chip。
+   - 「待办」= `TODO_TAG_NAME` 关键字：**改名与删除一律拒绝**（改走 = 悄悄废掉"完成"按钮与把手变色；改进来 = 一批普通条目突然变成待办），**改色允许**（颜色不参与关键字判定）。仓库层也拦一道，UI 禁用并给提示。
+   - UI：标签行末尾 **＋** 胶囊（`HistoryPanelChipRows.kt` 的 `HistoryTagChips`）→ `HistoryTagManagerModal.kt`，**复用编辑/输入那套壳**（96% 宽·最大 720dp·圆角 28·投影 18·内边距 26·26·26·22）。列表 = 色点 + 名字 + 改名 + 改色 + 删除；新增 = 名字 + 8 个预设色（前 5 个就是 `DEFAULT_TAGS` 的配色，改错了能改回去）。删除带**撤销**：删之前快照"哪些条目挂过它"，撤销时定义与绑定一起放回（`removeTag` 会清绑定，只加回定义是不够的）。
+   - 字符串 4 个语言都加了（`stash_tag_*`、`clipboard_filter_*`）。⚠️ 提示里的「待办」**不翻译**：标签名本身是硬编码中文，四种语言下都显示「待办」，翻译了用户对不上号。
+3. **剪贴板页签加固定筛选**：`全部 / 图片 / 链接 / 富文本 / 文件` ✅
+   - 分类落在**已经持久化的两个轻量列**上（`has_image` / `entry_type`，都是入库时算好、老库升级回填的），**在 SQL 层**做：`ClipboardHistoryStore` 的 `sqlWhere()` 是唯一实现，**头部条数与列表分页共用它**（否则会出现“写了 3 条只列出 2 条”）。四类互斥。
+   - 判据：图片 = `has_image = 1`（含"图文混排"）；文件 = `has_image = 0` 且 `entry_type = 'URI'`（`ClipboardReader` 只在"有 content/file 文件"和"有图片"两条路产出 `URI`）；富文本 = `has_image = 0` 且 `entry_type = 'HTML'` **且不是整条链接**；链接 = `has_image = 0` 且 `TEXT/HTML` 且 `search_blob` 以 `http://` / `https://` / `www.` 开头。
+   - **推不出来的没硬凑**（两处偏差都写进了 `ClipboardHistoryFilter` 的文档与单测）：① 长文**中间夹带**的链接不算「链接」—— 那要逐条跑正则，只能退回内存过滤"已加载的那几页"，条数又会随滚动变，正是这轮要修的病；② `INTENT`（`intent://`、分享出来的 app 链接）不单列一类，只在「全部」里出现（硬塞进「链接」会让"打开链接"对不上）。另外"纯文本"不属于四类中任何一类，只在「全部」里出现 —— 这四类本来就是"看某一类"，不是分区。
+   - UI：与闪念标签行**同一位置、同一套 `HistoryChip`**（`HistoryClipboardFilterChips`）；`HistoryPanelHeader` 的 `tags/selectedTag/showChips` 换成一个 `chipRow` 插槽，两个页签各自组装；筛选状态存 `SavedStateHandle`；**删掉了"剪贴板列表顶部 18dp"那条补偿**（顶部改 2dp，与闪念列表一致）；空状态区分"真的没有记录"（全部筛选下 0 条）与"筛不出来/搜不到"。
+   - 搜索时**忽略固定筛选**（与闪念"搜索时忽略标签筛选"同款，见 `filteredStashEntries` 的注释）：搜索结果整批已加载，再叠一层筛选只会让人搜不到刚复制的东西。
+4. **单测 + 文档** ✅
+   - 新增 `StashTagEditsTest`（8 例，纯 JVM）：改名连带改写绑定 / 合并重名 / 「待办」拒绝改名删除 / 删除清绑定 / 新增去重 / 改色允许。
+   - 新增 `ClipboardHistoryStoreFilterTest`（10 例，Robolectric + 真 SQLite）：10 条覆盖各种形态的条目，验证四类分类、**互斥**、`count` 与分页同源、keyset 分页带筛选仍然正确、删除后筛选条数收敛。
+
+#### 上一轮已完成（UI 复刻，提交 `c8fee4e1`）
+
+- **卡片统一**：取消"今天/昨天/更早"分档（用户要求），只保留状态（星标 / 完成）；顶部 1px 高光只画在未星标卡上。
+- **编辑弹窗与加号弹窗复用同一套壳**：96% 宽 / 最大 720dp / 圆角 28 / 投影 18 / 内边距 26·26·26·22；顶部信息行 + 多行正文 min160~max320 + 标签行 + 底部整行主按钮。本轮新增的标签管理浮窗**也是这一套**（三块浮窗必须长得一样）。
+- **标签选中态** = 实心 accent 底 + 白字 + 白圆点 + 实心描边（淡紫底 + accent 字那版用户说看不清）。
+- **轴槽文字**：分组名/时间 11.5sp + 正文色（原来太细太淡，滚起来读不出时间）。
+- **提示条**：左右滑消除 + 复位；撤销 4200ms、无撤销 2200ms；挂在**整屏**底部 104dp 居中（不是面板里）。
+- **tab 分段控件**：轨道 + 白片 + 3dp 投影 + 同心圆角（滑块四周与轨道同距 3dp，圆角 = 轨道 12 − 3 = 9）。
+- **闪念与剪贴板列表内边距**对齐（本轮把剪贴板那条 18dp 补偿删掉后，两边都是顶部 2dp）。
+
+#### 遗留（下一轮可做）
+
+- `HistoryTagFilterRow.kt` 已经是**死代码**（第一版标签行，横向滚动那版被头部里的 `HistoryTagChips` 取代，全仓库无人引用）。这轮没删是为了不扩大改动面，下轮可以直接删掉。
+- 标签管理浮窗**没有排序/拖动**（`StashTag.order` 字段在，但只能按新增顺序排）；**没有长按拖动**，也没有"标签使用条数"提示。
+- 剪贴板筛选胶囊**不显示各类条数**（要 5 次 SQL COUNT，且胶囊会变宽）；如果以后想要，`countEntries(filter)` 已经现成。
+- 拖动面板时那层"雾"仍在（架构固有，见下）。
+- 剪贴板"共 N 条记录"页脚在有筛选时显示的是**该筛选**的条数。
 
 #### 环境与协作注意（本轮踩过的坑，务必遵守）
 
@@ -813,6 +837,7 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 - **不要并行跑构建**：有一次“停守护进程”把正在跑的编译当场杀掉，导致退出码 1 且零输出。
 - **僵尸编译进程**会让每次编译变成 20–30 分钟：`Get-Process java | Sort CPU` 看异常高的（>1000 秒）→ 定向 `Stop-Process`（**只杀 Gradle/Kotlin 的**，按命令行匹配 `GradleDaemon|gradle|kotlin`），必要时 `.\gradlew.bat --stop`。
 - **构建输出写日志文件再读**（`*> .tmp\build.log`），**不要用 `Select-String` 过滤**——多次因为过滤把错误行全吞掉，白等好几轮。
+- ⚠️ **注释里别写 `image/*` 这种片段**：Kotlin 的块注释**可以嵌套**，KDoc 里出现 `/*` 会开一个永不闭合的注释，编译器只在文件末尾报 `Syntax error: Unclosed comment`（本轮为此白跑了一轮 3 分 47 秒的编译）。写成 "mime 以 `image/` 开头"。
 - **不要用子任务改结构**：有一次子任务把 `HistoryPanelScreen.kt` 的大括号改错位就停了，留下编译不过的树；用户明确要求**主任务里做、过程可见**。
 - **不要用 `git add -A`**：仓库里有 `.ohc_apk/`、`.ohc_decompiled/`、`.ohc_jadx.log`、`PowerShell 7.6.6/`、`null/`（4000+ 文件）—— 已写进 `.gitignore`，提交时仍应**显式指定路径**（`app/`、`docs/`、`ui_demo*.html`）并用 `git status --porcelain` 复核暂存清单。
 - **可能另有 AI 在同一仓库提交**（本轮发生过：对方 `git reset` 把我们的提交摘掉再提交自己的）。提交前先 `git log --oneline -3` + `git reflog -5` 看清 HEAD。

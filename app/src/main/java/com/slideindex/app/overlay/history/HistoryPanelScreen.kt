@@ -78,6 +78,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.savedstate.compose.LocalSavedStateRegistryOwner
 import com.slideindex.app.R
 import com.slideindex.app.clipboard.ClipboardAccess
+import com.slideindex.app.clipboard.ClipboardHistoryFilter
 import com.slideindex.app.clipboard.ClipboardThumbnailCache
 import com.slideindex.app.clipboard.ClipboardWriter
 import com.slideindex.app.overlay.FloatBallTextPick
@@ -133,7 +134,9 @@ internal fun HistoryPanelScreen(
     val stashEntries by viewModel.stashEntries.collectAsStateWithLifecycle()
     val filteredStashEntries by viewModel.filteredStashEntries.collectAsStateWithLifecycle()
     val stashSearchQuery by viewModel.stashSearchQuery.collectAsStateWithLifecycle()
-    val clipboardEntryCount by viewModel.clipboardEntryCount.collectAsStateWithLifecycle()
+    /** 剪贴板**完整**条数（SQL COUNT，含当前固定筛选），不是"已加载条数"。 */
+    val clipboardViewCount by viewModel.clipboardViewCount.collectAsStateWithLifecycle()
+    val clipboardFilter by viewModel.clipboardFilter.collectAsStateWithLifecycle()
     val filteredClipboardEntries by viewModel.filteredClipboardEntries.collectAsStateWithLifecycle()
     val clipboardSearchQuery by viewModel.clipboardSearchQuery.collectAsStateWithLifecycle()
     val clipboardListLoading by viewModel.clipboardListLoading.collectAsStateWithLifecycle()
@@ -161,6 +164,8 @@ internal fun HistoryPanelScreen(
     /** 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照。 */
     var editTarget by remember { mutableStateOf<HistoryEditTarget?>(null) }
     var editBarHeight by remember { mutableStateOf(0.dp) }
+    /** 标签管理浮窗（§0.16.4 待办 2）：与输入条/编辑条**同一套居中模态壳**。 */
+    var tagManagerOpen by remember { mutableStateOf(false) }
     val composerFocusRequester = remember { FocusRequester() }
     // overlay 窗里 WindowInsets.ime 常常是 0，必须用这个（设计稿里的 IME 说明也点了名）。
     val overlayImeBottom = com.slideindex.app.overlay.rememberOverlayImeBottomHeight()
@@ -191,19 +196,28 @@ internal fun HistoryPanelScreen(
         HistoryPanelTab.Clipboard -> R.string.clipboard_search_hint
     }
     // 条数（设计稿 `.srchrow .n`）：没搜索也没筛标签时给「N 条 · 今天 M」，否则只给「N 条」。
+    //
+    // ⚠️ N 一律是**完整条数**，不是"已经加载的条数"（§0.16.4 待办 1）：
+    // - 闪念：列表整份在内存里（`StashRepository.MAX_ENTRIES = 200`），所以 `stashEntries.size`
+    //   就是库总数，"今天 M"也从**全量**数（筛标签时若从筛选结果里数，数字会跟着筛选跳）；
+    // - 剪贴板：分页加载，必须问数据库（`clipboardViewCount` = 当前筛选下的 SQL COUNT），
+    //   否则往下滑数字会一直涨（用户实测："条数越滑越大"）。
+    //
+    // 筛标签 / 搜索时给的是**命中条数**（同样是完整值，不随滚动变）：这时若还显示库总数，
+    // 用户筛出 3 条却看到"200 条"，只会更困惑。
     val countLabel = when (selectedTab) {
         HistoryPanelTab.Stash -> {
-            val todayCount = filteredStashEntries.count {
+            val todayCount = stashEntries.count {
                 historyDayGroupOf(it.createdAtEpochMs, System.currentTimeMillis()) == HistoryDayGroup.Today
             }
             if (stashSearchQuery.isBlank() && selectedTag == null) {
-                stringResource(R.string.stash_count_today, filteredStashEntries.size, todayCount)
+                stringResource(R.string.stash_count_today, stashEntries.size, todayCount)
             } else {
                 stringResource(R.string.stash_count, filteredStashEntries.size)
             }
         }
         HistoryPanelTab.Clipboard -> {
-            stringResource(R.string.stash_count, filteredClipboardEntries.size)
+            stringResource(R.string.stash_count, clipboardViewCount)
         }
     }
 
@@ -227,8 +241,10 @@ internal fun HistoryPanelScreen(
         }
     }
     // 搜索框与输入条/编辑条都需要窗口临时可聚焦（overlay 窗默认 FLAG_NOT_FOCUSABLE）。
-    LaunchedEffect(searchFocused, composerOpen, editTarget) {
-        onSearchFocusChanged(searchFocused || composerOpen || editTarget != null)
+    LaunchedEffect(searchFocused, composerOpen, editTarget, tagManagerOpen) {
+        onSearchFocusChanged(
+            searchFocused || composerOpen || editTarget != null || tagManagerOpen,
+        )
     }
 
     LaunchedEffect(searchBootstrapEpoch.intValue, panelTargetVisible) {
@@ -255,10 +271,14 @@ internal fun HistoryPanelScreen(
         }
     }
 
-    DisposableEffect(activeSearchQuery, selectedTab, composerOpen, editTarget) {
+    DisposableEffect(activeSearchQuery, selectedTab, composerOpen, editTarget, tagManagerOpen) {
         onRegisterBackInterceptor {
-            // 返回键依次收：编辑条 → 输入条 → 清搜索（→ 关面板）。
+            // 返回键依次收：标签管理 → 编辑条 → 输入条 → 清搜索（→ 关面板）。
             when {
+                tagManagerOpen -> {
+                    tagManagerOpen = false
+                    true
+                }
                 editTarget != null -> {
                     editTarget = null
                     true
@@ -321,6 +341,58 @@ internal fun HistoryPanelScreen(
         }
     }
     val metaRepo = StashAccess.metaRepository
+
+    /* ---------------- 标签管理（§0.16.4 待办 2） ---------------- */
+
+    /** 打开标签管理：输入条/编辑条与它互斥（都是"屏幕居中模态"，同时开着会叠在一起）。 */
+    val openTagManager: () -> Unit = {
+        composerOpen = false
+        editTarget = null
+        tagManagerOpen = true
+    }
+    val addTag: (String, Long) -> Unit = { name, colorArgb ->
+        scope.launch {
+            val added = metaRepo?.addTag(name, colorArgb) ?: false
+            // 重名时数据层什么都不做（不会有两枚同名标签），这里给个为什么没反应。
+            if (added) haptics.tick() else showPanelMessage(R.string.stash_tag_exists)
+        }
+    }
+    val renameTag: (String, String) -> Unit = { oldName, newName ->
+        haptics.confirm()
+        scope.launch { metaRepo?.renameTag(oldName, newName) }
+    }
+    val setTagColor: (String, Long) -> Unit = { name, colorArgb ->
+        haptics.tick()
+        scope.launch { metaRepo?.setTagColor(name, colorArgb) }
+    }
+    /**
+     * 删除标签 + 撤销。
+     *
+     * `removeTag` 会**连带清掉所有条目的绑定**，所以撤销不能只把标签定义加回来 ——
+     * 还要把"原来哪些条目挂着它"原样补回去（快照在删除前取）。
+     * 「待办」是硬编码关键字（完成态 / `isTodo` / 把手 `pendingTodoCount` 全靠它），这里兜底拒绝。
+     */
+    val deleteTag: (String) -> Unit = { name ->
+        val tag = availableTags.firstOrNull { it.name == name }
+        if (tag == null || com.slideindex.app.stash.StashTagEdits.isProtected(name)) {
+            showPanelMessage(R.string.stash_tag_protected_hint)
+        } else {
+            val affected = stashMeta.assignments.filterValues { name in it }.keys.toList()
+            haptics.confirm()
+            scope.launch {
+                metaRepo?.removeTag(name)
+                showUndoMessage(R.string.stash_tag_deleted) {
+                    scope.launch {
+                        metaRepo?.addTag(name, tag.colorArgb)
+                        affected.forEach { entryId ->
+                            val restored = metaRepo?.tagsOf(entryId).orEmpty() + name
+                            metaRepo?.setTags(entryId, restored.distinct())
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /** 打开就地编辑条：快照当前正文 / 标签 / 完成态（设计稿 `openEdit`）。 */
     val openEdit: (com.slideindex.app.stash.StashEntry) -> Unit = { entry ->
@@ -663,10 +735,21 @@ internal fun HistoryPanelScreen(
                     // 只负责把窗口切成可聚焦；抢焦点由搜索框自己在 `LaunchedEffect(editorEnabled)` 里做。
                     onSearchRequestFocus = { onSearchFocusChanged(true) },
                     onDismiss = onDismiss,
-                    tags = availableTags,
-                    selectedTag = selectedTag,
-                    onTagSelected = viewModel::setSelectedTag,
-                    showChips = selectedTab == HistoryPanelTab.Stash,
+                    chipRow = {
+                        // 两个页签同一位置的一行胶囊：闪念 = 标签（末尾 ＋ 进管理），剪贴板 = 固定筛选。
+                        when (selectedTab) {
+                            HistoryPanelTab.Stash -> HistoryTagChips(
+                                tags = availableTags,
+                                selectedTag = selectedTag,
+                                onTagSelected = viewModel::setSelectedTag,
+                                onManageTags = openTagManager,
+                            )
+                            HistoryPanelTab.Clipboard -> HistoryClipboardFilterChips(
+                                selected = clipboardFilter,
+                                onSelected = viewModel::setClipboardFilter,
+                            )
+                        }
+                    },
                 )
                 HorizontalPager(
                     state = pagerState,
@@ -715,7 +798,8 @@ internal fun HistoryPanelScreen(
                                 onShowMessage = showPanelMessage,
                             )
                             HistoryPanelTab.Clipboard -> HistoryClipboardTabBody(
-                                entryCount = clipboardEntryCount,
+                                totalCount = clipboardViewCount,
+                                filter = clipboardFilter,
                                 filteredEntries = filteredClipboardEntries,
                                 searchQuery = clipboardSearchQuery,
                                 haptics = haptics,
@@ -755,9 +839,9 @@ internal fun HistoryPanelScreen(
         }
 
         // ---------------- 全屏居中模态层 ----------------
-        // 窗口是满屏的，所以这两块能真正居中在**屏幕**上（而不是面板那 78% 里）；
+        // 窗口是满屏的，所以输入条 / 编辑条 / 标签管理都能真正居中在**屏幕**上（而不是面板那 78% 里）；
         // 底下那层压暗同样是满屏的，点空白即关闭当前浮窗。
-        val modalOpen = composerOpen || editTarget != null
+        val modalOpen = composerOpen || editTarget != null || tagManagerOpen
         if (modalOpen) {
             Box(
                 modifier = Modifier
@@ -768,7 +852,11 @@ internal fun HistoryPanelScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) {
-                        if (editTarget != null) editTarget = null else composerOpen = false
+                        when {
+                            tagManagerOpen -> tagManagerOpen = false
+                            editTarget != null -> editTarget = null
+                            else -> composerOpen = false
+                        }
                     },
             )
         }
@@ -779,6 +867,17 @@ internal fun HistoryPanelScreen(
                 .width(maxWidth * 0.96f)
                 .widthIn(max = 720.dp),
         ) {
+            HistoryTagManagerModal(
+                open = tagManagerOpen,
+                tags = availableTags,
+                imeBottom = overlayImeBottom,
+                onDismiss = { tagManagerOpen = false },
+                onAdd = addTag,
+                onRename = renameTag,
+                onSetColor = setTagColor,
+                onDelete = deleteTag,
+                modifier = Modifier.fillMaxWidth(),
+            )
             HistoryComposerModal(
                 open = composerOpen,
                 text = composerText,
@@ -1075,7 +1174,10 @@ private fun HistoryStashTabBody(
 
 @Composable
 private fun HistoryClipboardTabBody(
-    entryCount: Int,
+    /** 当前筛选下的**完整**条数（SQL COUNT），与"已加载条数"无关。 */
+    totalCount: Int,
+    /** 当前固定筛选：只影响空状态的文案（列表本身已经是筛过的）。 */
+    filter: ClipboardHistoryFilter,
     filteredEntries: List<com.slideindex.app.clipboard.ClipboardEntry>,
     searchQuery: String,
     haptics: HistoryHaptics,
@@ -1142,8 +1244,14 @@ private fun HistoryClipboardTabBody(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
+                    // 只有"真的什么都没有"才是空历史；筛了分类却一条都没有 = 筛不出来，
+                    // 该说"没有匹配"而不是"还没有记录"（闪念页签同款三选一）。
                     text = stringResource(
-                        if (entryCount == 0) R.string.clipboard_empty else R.string.clipboard_search_empty,
+                        if (totalCount == 0 && filter == ClipboardHistoryFilter.All) {
+                            R.string.clipboard_empty
+                        } else {
+                            R.string.clipboard_search_empty
+                        },
                     ),
                     style = MiuixTheme.textStyles.body2,
                     color = scheme.onSurfaceVariantSummary,
@@ -1173,8 +1281,9 @@ private fun HistoryClipboardTabBody(
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     end = 12.dp,
-                    // 剪贴板页签**没有标签行**，所以这里要自己把间距让出来，否则第一条贴住页签行。
-                    top = 18.dp,
+                    // 顶部只留 2dp：上面那行筛选胶囊已经给出了间距（这里原本有 18dp 的"补偿"，
+                    // 那是剪贴板页**没有**筛选行时的权宜，现在两个页签都有行了，补偿要撤掉）。
+                    top = 2.dp,
                     bottom = 8.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1213,13 +1322,13 @@ private fun HistoryClipboardTabBody(
                         },
                     )
                 }
-                if (!isSearching && entryCount > 0) {
+                if (!isSearching && totalCount > 0) {
                     item(key = "clipboard_record_count") {
                         Text(
                             text = pluralStringResource(
                                 R.plurals.clipboard_history_float_record_count,
-                                entryCount,
-                                entryCount,
+                                totalCount,
+                                totalCount,
                             ),
                             style = MiuixTheme.textStyles.body2,
                             color = scheme.onSurfaceVariantSummary,

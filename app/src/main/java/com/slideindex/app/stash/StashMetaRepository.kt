@@ -148,24 +148,29 @@ class StashMetaRepository @Inject constructor(
         current.copy(assignments = next)
     }
 
-    suspend fun addTag(name: String, colorArgb: Long) = mutate { current ->
-        val trimmed = name.trim()
-        if (trimmed.isEmpty() || current.tags.any { it.name == trimmed }) {
-            current
-        } else {
-            current.copy(tags = current.tags + StashTag(trimmed, colorArgb, current.tags.size))
-        }
-    }
+    /**
+     * 新增一枚标签定义。@return 是否真的加上了（重名 / 空名 → false，UI 据此提示"已有同名标签"）。
+     */
+    suspend fun addTag(name: String, colorArgb: Long): Boolean =
+        mutateIfChanged { StashTagEdits.add(it, name, colorArgb) }
 
-    /** 删除一枚标签定义，同时清掉所有条目对它的绑定。 */
-    suspend fun removeTag(name: String) = mutate { current ->
-        current.copy(
-            tags = current.tags.filterNot { it.name == name },
-            assignments = current.assignments
-                .mapValues { (_, names) -> names - name }
-                .filterValues { it.isNotEmpty() },
-        )
-    }
+    /** 删除一枚标签定义，同时清掉所有条目对它的绑定。「待办」拒绝删除。 */
+    suspend fun removeTag(name: String): Boolean =
+        mutateIfChanged { StashTagEdits.remove(it, name) }
+
+    /**
+     * 改名，**连带改写所有条目的绑定**（否则旧名会变成孤儿）；目标名已存在时按合并处理。
+     *
+     * 具体规则与"为什么"都在 [StashTagEdits.rename]（纯函数，有单测）。
+     *
+     * @return 是否真的改了。
+     */
+    suspend fun renameTag(oldName: String, newName: String): Boolean =
+        mutateIfChanged { StashTagEdits.rename(it, oldName, newName) }
+
+    /** 改色（「待办」也允许：颜色不参与关键字判定）。 */
+    suspend fun setTagColor(name: String, colorArgb: Long): Boolean =
+        mutateIfChanged { StashTagEdits.setColor(it, name, colorArgb) }
 
     /* ---------------- 完成态 ---------------- */
 
@@ -310,6 +315,19 @@ class StashMetaRepository @Inject constructor(
             _store.value = next
         }
     }
+
+    /**
+     * 与 [mutate] 同一条写路径，但允许 [transform] 用 `null` 表示"没变化"：
+     * 这时**不写盘、不广播**，只回一个 false 给 UI。
+     */
+    private suspend fun mutateIfChanged(transform: (StashMetaStore) -> StashMetaStore?): Boolean =
+        mutex.withLock {
+            val current = readFromDiskSync()
+            val next = transform(current) ?: return@withLock false
+            writeToDisk(next)
+            _store.value = next
+            true
+        }
 
     private fun readFromDiskSync(): StashMetaStore {
         if (!storeFile.exists()) return StashMetaStore()
