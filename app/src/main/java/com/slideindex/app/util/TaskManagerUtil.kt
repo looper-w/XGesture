@@ -31,6 +31,7 @@ object TaskManagerUtil {
     private const val MIN_REMOVE_TASK_API = 1
     private const val MIN_TASK_IDS_API = 3
     private const val MIN_FORCE_STOP_API = 8
+    private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
     private const val MIN_SHORTCUTS_API = 9
     const val ROOT_PROBE_BINDER_TIMEOUT_MS = 45_000L
     const val REQUEST_CODE = 1001
@@ -526,6 +527,31 @@ object TaskManagerUtil {
             false
         }
     }
+
+    /**
+     * 强行停止当前前台应用（真杀进程）。
+     *
+     * 与 [removeCurrentFrontAppTask] 的语义差别：后者只把任务从最近任务列表移除（等同 OHO+ 划掉
+     * 卡片），持有前台服务或正在播放媒体的应用进程仍会存活；本方法走 force-stop，进程立即结束，
+     * 代价是该包进入 Android 的 stopped 状态，重新手动启动前收不到广播 / 闹钟。
+     *
+     * 自身进程、SystemUI 与当前桌面始终跳过，避免误杀。
+     */
+    fun forceStopCurrentFrontApp(): Boolean {
+        val packageName = OverlayService.foregroundPackage?.takeIf { it.isNotBlank() } ?: return false
+        if (packageName == appContext().packageName) return false
+        if (packageName == SYSTEM_UI_PACKAGE) return false
+        if (packageName == currentHomePackage()) return false
+        return forceStopPackage(packageName)
+    }
+
+    private fun currentHomePackage(): String? = runCatching {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        appContext().packageManager
+            .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+    }.getOrNull()
 
     fun forceStopPackage(packageName: String): Boolean {
         if (packageName.isBlank()) return false

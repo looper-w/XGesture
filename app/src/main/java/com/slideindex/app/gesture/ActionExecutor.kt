@@ -296,6 +296,10 @@ class ActionExecutor(
                 launchHelper.closeCurrentApp()
                 true
             }
+            GestureAction.ForceStopCurrentApp -> {
+                launchHelper.forceStopCurrentApp()
+                true
+            }
             GestureAction.FreeWindowCurrentApp -> {
                 launchHelper.freeWindowForegroundApp(settings)
                 true

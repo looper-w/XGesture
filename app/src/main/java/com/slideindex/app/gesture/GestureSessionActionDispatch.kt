@@ -350,7 +350,8 @@ internal fun GestureSession.handleClassifiedGesture(
             endSession()
         }
 
-        GestureAction.CloseCurrentApp, GestureAction.FreeWindowCurrentApp -> {
+        GestureAction.CloseCurrentApp, GestureAction.ForceStopCurrentApp,
+        GestureAction.FreeWindowCurrentApp -> {
             sessionCallbacks.hapticConfirmLaunch()
             sessionActionExecutor.execute(action, sessionSettings)
             endSession()

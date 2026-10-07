@@ -119,6 +119,8 @@ enum class GestureActionType(val id: Int) {
     VOLUME_UP(91),
     /** 音量减小一级（媒体流），同时弹出系统音量面板。 */
     VOLUME_DOWN(92),
+    /** 强行停止当前前台应用：真杀进程（force-stop 语义），需 Shizuku / root。 */
+    FORCE_STOP_CURRENT_APP(93),
     ;
 
     companion object {
@@ -216,6 +218,17 @@ sealed class GestureAction {
 
     data object CloseCurrentApp : GestureAction() {
         override val type = GestureActionType.CLOSE_CURRENT_APP
+        override val payload = ""
+    }
+
+    /**
+     * 强行停止当前前台应用。
+     *
+     * 与 [CloseCurrentApp] 的区别：后者只把任务从最近任务列表里移除（等同 OHO+ 划卡片），
+     * 持有前台服务 / 正在播放媒体的应用仍会继续运行；本动作直接强杀进程。
+     */
+    data object ForceStopCurrentApp : GestureAction() {
+        override val type = GestureActionType.FORCE_STOP_CURRENT_APP
         override val payload = ""
     }
 
@@ -768,6 +781,7 @@ sealed class GestureAction {
                 GestureActionType.HOME -> Home
                 GestureActionType.RECENTS -> Recents
                 GestureActionType.CLOSE_CURRENT_APP -> CloseCurrentApp
+                GestureActionType.FORCE_STOP_CURRENT_APP -> ForceStopCurrentApp
                 GestureActionType.FREE_WINDOW_CURRENT_APP -> FreeWindowCurrentApp
                 GestureActionType.CLICK_PASSTHROUGH -> ClickPassthrough
                 GestureActionType.FLASHLIGHT -> Flashlight

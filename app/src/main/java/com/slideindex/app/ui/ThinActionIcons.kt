@@ -424,6 +424,29 @@ internal object ThinActionIcons {
         }
     }
 
+    /** 圈内叉：强行停止当前应用（区别于 NONE 的圈内斜杠与 Close 的裸叉）。 */
+    val ForceStopApp: ImageVector by lazy {
+        createThinIcon("ThinForceStopApp") {
+            path(
+                stroke = strokeBrush,
+                strokeLineWidth = STROKE_WIDTH,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(12f, 4.5f)
+                curveTo(7.86f, 4.5f, 4.5f, 7.86f, 4.5f, 12f)
+                curveTo(4.5f, 16.14f, 7.86f, 19.5f, 12f, 19.5f)
+                curveTo(16.14f, 19.5f, 19.5f, 16.14f, 19.5f, 12f)
+                curveTo(19.5f, 7.86f, 16.14f, 4.5f, 12f, 4.5f)
+                close()
+                moveTo(9.2f, 9.2f)
+                lineTo(14.8f, 14.8f)
+                moveTo(14.8f, 9.2f)
+                lineTo(9.2f, 14.8f)
+            }
+        }
+    }
+
     /** 100% 精准对齐：FreeWindow 箭头尾部恰好位于左竖线 (X:2.5) 与上横线 (Y:4.5) 的延伸交点 (2.5, 4.5) */
     val FreeWindow: ImageVector by lazy {
         createThinIcon("ThinFreeWindow") {

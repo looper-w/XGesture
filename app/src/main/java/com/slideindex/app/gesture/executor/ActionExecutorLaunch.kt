@@ -135,6 +135,12 @@ internal class ActionExecutorLaunch(
         Thread { TaskManagerUtil.removeCurrentFrontAppTask() }.start()
     }
 
+    /** 强行停止当前前台应用（真杀进程），与 [closeCurrentApp] 的「移除最近任务卡片」语义不同。 */
+    fun forceStopCurrentApp() {
+        if (!TaskManagerUtil.hasPermission()) return
+        Thread { TaskManagerUtil.forceStopCurrentFrontApp() }.start()
+    }
+
     /**
      * 小窗化当前应用。
      *

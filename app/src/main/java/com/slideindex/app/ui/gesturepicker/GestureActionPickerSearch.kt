@@ -134,6 +134,14 @@ fun gestureActionSearchAliases(context: Context, action: GestureAction): List<St
         context.getString(R.string.gesture_search_volume_3),
         "volume down",
     )
+    GestureActionType.FORCE_STOP_CURRENT_APP -> listOf(
+        context.getString(R.string.gesture_search_force_stop_1),
+        context.getString(R.string.gesture_search_force_stop_2),
+        context.getString(R.string.gesture_search_force_stop_3),
+        "force stop",
+        "kill app",
+        "kill",
+    )
     GestureActionType.SIMULATE_KEY_EVENT -> listOf(
         context.getString(R.string.gesture_search_keyevent_1),
         context.getString(R.string.gesture_search_keyevent_2),
@@ -184,6 +192,7 @@ fun gestureActionDescriptionText(context: Context, action: GestureAction): Strin
         GestureActionType.OPEN_VOLUME_PANEL -> context.getString(R.string.gesture_action_open_volume_panel_desc)
         GestureActionType.VOLUME_UP -> context.getString(R.string.gesture_action_volume_up_desc)
         GestureActionType.VOLUME_DOWN -> context.getString(R.string.gesture_action_volume_down_desc)
+        GestureActionType.FORCE_STOP_CURRENT_APP -> context.getString(R.string.gesture_action_force_stop_current_app_desc)
         GestureActionType.CURRENT_APP_INFO -> context.getString(R.string.gesture_action_current_app_info_desc)
         GestureActionType.SIMULATE_KEY_EVENT -> context.getString(R.string.gesture_action_simulate_key_event_desc)
         else -> null
@@ -240,6 +249,7 @@ fun gestureActionLabelText(context: Context, action: GestureAction): String = wh
         GestureActionType.HOME -> context.getString(R.string.gesture_action_home)
         GestureActionType.RECENTS -> context.getString(R.string.gesture_action_recents)
         GestureActionType.CLOSE_CURRENT_APP -> context.getString(R.string.gesture_action_close_current_app)
+        GestureActionType.FORCE_STOP_CURRENT_APP -> context.getString(R.string.gesture_action_force_stop_current_app)
         GestureActionType.FREE_WINDOW_CURRENT_APP -> context.getString(R.string.gesture_action_free_window_current_app)
         GestureActionType.CLICK_PASSTHROUGH -> context.getString(R.string.gesture_action_click_passthrough)
         GestureActionType.FLASHLIGHT -> context.getString(R.string.gesture_action_flashlight)
@@ -389,6 +399,7 @@ fun gestureActionLabel(action: GestureAction, settings: AppSettings? = null): St
         GestureActionType.HOME -> stringResource(R.string.gesture_action_home)
         GestureActionType.RECENTS -> stringResource(R.string.gesture_action_recents)
         GestureActionType.CLOSE_CURRENT_APP -> stringResource(R.string.gesture_action_close_current_app)
+        GestureActionType.FORCE_STOP_CURRENT_APP -> stringResource(R.string.gesture_action_force_stop_current_app)
         GestureActionType.FREE_WINDOW_CURRENT_APP -> stringResource(R.string.gesture_action_free_window_current_app)
         GestureActionType.CLICK_PASSTHROUGH -> stringResource(R.string.gesture_action_click_passthrough)
         GestureActionType.FLASHLIGHT -> stringResource(R.string.gesture_action_flashlight)
@@ -508,6 +519,7 @@ fun gestureActionDescription(action: GestureAction): String? = when (action.type
     GestureActionType.VOLUME_PANEL -> stringResource(R.string.gesture_action_volume_panel_desc)
     GestureActionType.VOLUME_UP -> stringResource(R.string.gesture_action_volume_up_desc)
     GestureActionType.VOLUME_DOWN -> stringResource(R.string.gesture_action_volume_down_desc)
+    GestureActionType.FORCE_STOP_CURRENT_APP -> stringResource(R.string.gesture_action_force_stop_current_app_desc)
     GestureActionType.SCREEN_TRANSLATE -> stringResource(R.string.gesture_action_screen_translate_desc)
     GestureActionType.UNIVERSAL_COPY -> stringResource(R.string.gesture_action_universal_copy_desc)
     GestureActionType.SCREEN_SEARCH -> stringResource(R.string.gesture_action_screen_search_desc)
@@ -601,6 +613,7 @@ fun gestureActionPermissionHintText(context: Context, action: GestureAction): St
         }
         GestureActionType.TOGGLE_WIFI, GestureActionType.TOGGLE_MOBILE_DATA,
         GestureActionType.EXECUTE_SHELL_COMMAND,
+        GestureActionType.FORCE_STOP_CURRENT_APP,
         -> {
             if (TaskManagerUtil.hasPermission()) return null
             context.getString(PrivilegeUiStrings.shellActionPermissionRes())

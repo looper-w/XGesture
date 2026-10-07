@@ -49,6 +49,7 @@ internal fun gestureActionTypeOutlinedIcon(type: GestureActionType): ImageVector
     GestureActionType.HOME -> ThinActionIcons.Home
     GestureActionType.RECENTS -> ThinActionIcons.Recents
     GestureActionType.CLOSE_CURRENT_APP -> ThinActionIcons.Close
+    GestureActionType.FORCE_STOP_CURRENT_APP -> ThinActionIcons.ForceStopApp
     GestureActionType.FREE_WINDOW_CURRENT_APP -> ThinActionIcons.FreeWindow
     GestureActionType.CLICK_PASSTHROUGH -> ThinActionIcons.ClickPassthrough
     GestureActionType.FLASHLIGHT -> ThinActionIcons.Flashlight
@@ -141,6 +142,7 @@ internal fun gestureActionTypeThinIcon(type: GestureActionType): ImageVector = w
     GestureActionType.HOME -> ThinActionIcons.Home
     GestureActionType.RECENTS -> ThinActionIcons.Recents
     GestureActionType.CLOSE_CURRENT_APP -> ThinActionIcons.Close
+    GestureActionType.FORCE_STOP_CURRENT_APP -> ThinActionIcons.ForceStopApp
     GestureActionType.FREE_WINDOW_CURRENT_APP -> ThinActionIcons.FreeWindow
     GestureActionType.CLICK_PASSTHROUGH -> ThinActionIcons.ClickPassthrough
     GestureActionType.FLASHLIGHT -> ThinActionIcons.Flashlight

@@ -2183,6 +2183,8 @@
     <string name="gesture_action_home">Home</string>
     <string name="gesture_action_recents">Recents</string>
     <string name="gesture_action_close_current_app">Close current app</string>
+    <string name="gesture_action_force_stop_current_app">Force stop current app</string>
+    <string name="gesture_action_force_stop_current_app_desc">Kill the foreground app process outright (requires Shizuku or root)</string>
     <string name="gesture_action_free_window_current_app">Open current app in freeform</string>
     <string name="gesture_action_click_passthrough">Click through</string>
     <string name="gesture_action_flashlight">Flashlight</string>
@@ -3639,6 +3641,9 @@ or revoke permanent Root for Shell in APatch.</string>
     <string name="gesture_search_volume_1">Native volume control</string>
     <string name="gesture_search_volume_2">Native volume</string>
     <string name="gesture_search_volume_3">Volume panel</string>
+    <string name="gesture_search_force_stop_1">Force stop</string>
+    <string name="gesture_search_force_stop_2">Kill app</string>
+    <string name="gesture_search_force_stop_3">Stop process</string>
     <string name="gesture_search_keyevent_1">Simulate key</string>
     <string name="gesture_search_keyevent_2">Key simulation</string>
     <string name="ring_launcher_slot_title">Ring launcher · Slot %1$d</string>
