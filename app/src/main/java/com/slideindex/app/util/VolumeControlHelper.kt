@@ -3,8 +3,10 @@ package com.slideindex.app.util
 import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import com.slideindex.app.privilege.PrivilegeGateway
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 object VolumeControlHelper {
@@ -164,21 +166,76 @@ object VolumeControlHelper {
     fun readFraction(context: Context, stream: Stream): Float {
         val manager = audioManager(context) ?: return 0f
         val audioStream = toAudioStream(stream)
-        val max = manager.getStreamMaxVolume(audioStream)
-        if (max <= 0) return 0f
-        return manager.getStreamVolume(audioStream).toFloat() / max
+        val min = streamMin(manager, audioStream)
+        val max = streamMax(manager, audioStream, min)
+        return (manager.getStreamVolume(audioStream).coerceIn(min, max) - min).toFloat() / (max - min)
     }
 
     fun setFraction(context: Context, stream: Stream, fraction: Float) {
         if (stream.requiresPolicyAccess() && !hasAccess(context)) return
         val manager = audioManager(context) ?: return
         val audioStream = toAudioStream(stream)
-        val max = manager.getStreamMaxVolume(audioStream)
-        if (max <= 0) return
-        val level = (fraction.coerceIn(0f, 1f) * max).roundToInt().coerceIn(0, max)
-        if (level == manager.getStreamVolume(audioStream)) return
-        manager.setStreamVolume(audioStream, level, 0)
+        val min = streamMin(manager, audioStream)
+        val max = streamMax(manager, audioStream, min)
+        val level = (fraction.coerceIn(0f, 1f) * (max - min)).roundToInt() + min
+        applyStreamLevel(manager, audioStream, level, min, max)
     }
+
+    /**
+     * 分层写入音量（移植自 One Hand Control 的实现）：
+     *
+     * 1. 先用 [AudioManager.setStreamVolume] 做绝对设置 —— 正常 ROM 一次到位；
+     * 2. 立即回读校验：ColorOS 等 ROM 对非前台应用会**静默忽略**绝对设置（不抛异常、值不变），
+     *    因此是否生效只能靠回读判断，不能靠 try/catch；
+     * 3. 未生效则改用相对步进 [AudioManager.adjustStreamVolume]（ADJUST_RAISE / ADJUST_LOWER）
+     *    一格一格补齐，单次最多 [MAX_ADJUST_STEPS] 步，且每一步都回读，避免走过头。
+     *
+     * 正常 ROM 上第 2 步就相等并直接返回，行为与"只做绝对设置"完全一致（只多一次读取）。
+     *
+     * @return 实际生效的音量级数
+     */
+    fun applyStreamLevel(manager: AudioManager, stream: Int, target: Int, min: Int, max: Int): Int {
+        val want = target.coerceIn(min, max)
+        if (manager.getStreamVolume(stream).coerceIn(min, max) == want) return want
+
+        try {
+            manager.setStreamVolume(stream, want, 0)
+        } catch (error: Exception) {
+            Log.w(TAG, "setStreamVolume(stream=$stream, want=$want) threw", error)
+        }
+
+        var actual = manager.getStreamVolume(stream).coerceIn(min, max)
+        if (actual == want) return actual
+        Log.i(TAG, "setStreamVolume no effect stream=$stream want=$want actual=$actual; stepping")
+
+        val steps = minOf(abs(want - actual), MAX_ADJUST_STEPS)
+        var done = 0
+        while (done < steps && actual != want) {
+            try {
+                manager.adjustStreamVolume(
+                    stream,
+                    if (want > actual) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                    0,
+                )
+                actual = manager.getStreamVolume(stream).coerceIn(min, max)
+                done++
+            } catch (error: Exception) {
+                Log.w(TAG, "adjustStreamVolume step=$done failed stream=$stream", error)
+                return actual
+            }
+        }
+        return actual
+    }
+
+    private fun streamMin(manager: AudioManager, audioStream: Int): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            manager.getStreamMinVolume(audioStream)
+        } else {
+            0
+        }
+
+    private fun streamMax(manager: AudioManager, audioStream: Int, min: Int): Int =
+        manager.getStreamMaxVolume(audioStream).coerceAtLeast(min + 1)
 
     fun toAudioStream(stream: Stream): Int = when (stream) {
         Stream.MEDIA -> AudioManager.STREAM_MUSIC
@@ -197,4 +254,7 @@ object VolumeControlHelper {
         context.applicationContext.getSystemService(NotificationManager::class.java)
 
     private const val TAG = "VolumeControlHelper"
+
+    /** 单次应用最多补多少级（与 One Hand Control 的 `const/16 0x18` 一致）。 */
+    private const val MAX_ADJUST_STEPS = 24
 }
