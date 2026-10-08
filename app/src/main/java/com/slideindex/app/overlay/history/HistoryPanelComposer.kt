@@ -36,7 +36,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -46,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -55,6 +59,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
@@ -100,16 +105,37 @@ internal fun HistoryComposerFabSlot(
  * 形状与编辑条同一套：不透明玻璃底 + `glassBorder` 描边 + 12dp 投影 + 22dp 圆角；
  * ⚠️ overlay 窗读不到 `WindowInsets.ime`，用调用方传进来的 [imeBottom] 把整块**往上抬**
  * （居中浮窗被输入法盖住就白做了）。
+ *
+ * ---
+ * ## §0.16.16：正文是**块编辑器**（文字与图片同一列、按顺序）
+ *
+ * 老实现是"一个 `BasicTextField` + 框下一排缩略图"：图永远在正文**外面**，
+ * 只有存下时靠光标位置把正文切成两半、把图夹进去（§0.16.15）—— 用户在输入框里
+ * **看不见图**，也表达不出"图 A、文字、图 B"这种交错。本次改成**纵向块流**：
+ * 每个 `DraftBlock.Text` 一个输入框、每个 `DraftBlock.Image` 一张整宽的图，
+ * 顺序就是 [blocks] 的顺序（图片真的在正文里了）。
+ *
+ * 为什么非这样不可（不是偷懒）：本仓库解析到的 foundation 1.13.0-alpha03 里
+ * `BasicTextField(state = TextFieldState)` **没有** `inlineContent` 参数，
+ * `TextFieldState` / `TextFieldBuffer` 上**没有** `appendInlineContent`（那是
+ * `AnnotatedString.Builder` 的、只被 `BasicText` 消费）。也就是"文字流里嵌图"
+ * 在本版本走不通，块编辑器是唯一能把图**放进正文里**的做法。
+ *
+ * ⚠️ 代价（刻意接受，别当 bug 改）：每块是各自的输入框，"一段连续正文"的观感靠
+ * 统一字号/行高 + 块间 7dp 间距维持；跨块的连续选择/换行不如单个输入框顺滑。
+ *
+ * ⚠️ 仍然用**已废弃**的 `BasicTextField(value/onValueChange)` 重载：
+ * 块内"退格删图"必须能读到 `selection`（`TextFieldValue`），而本版本没有 state 版重载。
  */
-// 与下面的 `HistoryComposerInput` 同一个理由：本仓库解析到的 foundation 只有
-// `BasicTextField(value, onValueChange)` 这批**已废弃**的重载（没有 state 版），
-// 而"插到光标处"必须拿到 `selection`，所以这里用 `TextFieldValue` 那个重载。
 @Suppress("DEPRECATION")
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun HistoryComposerModal(
     open: Boolean,
-    text: String,
-    onTextChange: (String) -> Unit,
+    /** 正文的块序列（唯一真相在 [StashComposerDraft.blocks]，这里传进来的是一份快照）。 */
+    blocks: List<DraftBlock>,
+    /** 改块序列：调用方落回 [StashComposerDraft.updateBlocks]（镜像同步也在那里）。 */
+    onBlocksChange: ((List<DraftBlock>) -> List<DraftBlock>) -> Unit,
     onSubmit: () -> Unit,
     onVoiceError: (Int) -> Unit = {},
     availableTags: List<com.slideindex.app.stash.StashTag> = emptyList(),
@@ -119,18 +145,15 @@ internal fun HistoryComposerModal(
     reminderAtMs: Long? = null,
     /** 点那枚 ⏰ 胶囊：打开提醒时间选择器（§0.16.9）。 */
     onReminderClick: () -> Unit = {},
-    /** 已选图片的本地路径（trampoline 落下来的，见 §0.16.12）。 */
-    imagePaths: List<String> = emptyList(),
-    /** 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。 */
-    onAddImage: () -> Unit = {},
-    onRemoveImage: (String) -> Unit = {},
     /**
-     * 正文光标位置变了（§0.16.15 加图"插到光标处"要用它）。
+     * 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。
      *
-     * 带默认值 = **向后兼容**：这个组件在别处也有调用点（当时没有"插到光标处"这个需求），
-     * 不传就等于不需要光标。
+     * 回调带回来的每张图都由**本组件**插到"当前光标处"（见 [insertImagesAtCursor]）——
+     * 调用方只负责拉起选图（以及窗的挂起/恢复），不用懂块怎么切。
      */
-    onSelectionChange: (Int) -> Unit = {},
+    onAddImage: (onPicked: (List<String>) -> Unit) -> Unit = { },
+    /** 删掉一张图（✕ 或退格）：调用方要把 cache 里那份临时文件也删掉，别留垃圾。 */
+    onRemoveImage: (String) -> Unit = {},
     imeBottom: Dp,
     focusRequester: FocusRequester,
     onBarHeightChanged: (Dp) -> Unit = {},
@@ -139,36 +162,6 @@ internal fun HistoryComposerModal(
     val theme = historyTheme()
     val density = LocalDensity.current
     val focusManager = LocalFocusManager.current
-    /**
-     * 输入框的**内部**值（而不是直接用入参 [text]）：光标位置只存在于 `TextFieldValue.selection`，
-     * 而"加图插到光标处"（§0.16.15）必须知道它。对外 API 仍是 `String` + `onTextChange`
-     * （既有调用点和草稿那套都按 String 走），这里换一层只是为了把 `selection` 留住。
-     */
-    var fieldValue by remember(open) { mutableStateOf(TextFieldValue(text)) }
-    /**
-     * 上一次"我们自己发出去"的文本。
-     *
-     * 用途是分辨 [text] 的两种变化：
-     * - **我们自己的输入回环**（用户打字 → `onTextChange` → 父级 → `text` 又回来）：
-     *   这时绝不能拿 `TextFieldValue(text)` 重建内部值 —— 那会把光标**重置到开头**
-     *   （中文输入法里等于每打一个字光标就跳一次）；
-     * - **父级主动清空**（保存成功时 `composerText = ""`）：这时必须重建，否则输入框里留着旧字。
-     *
-     * 判据就是"父级给的 text 和我们最后发出去的不一样"，只有那种情况才认作"外部改动"。
-     */
-    var lastEmitted by remember(open) { mutableStateOf(text) }
-    if (text != lastEmitted) {
-        // 外部改动：正文与光标一起重置（`TextFieldValue(text)` 的 selection 落在 0）。
-        // ⚠️ 在组合里直接赋值 state 是安全的（这是 Compose 官方的"从入参推导 state"写法）：
-        // 它只会在本次组合里立刻生效，不会无限触发重组。
-        fieldValue = TextFieldValue(text)
-        lastEmitted = text
-    }
-    // 初始位置（尤其"打开时草稿里已经有正文"那条路）也要报出去一次，否则父级手上是上一次的
-    // 光标位置，用户不打字、直接点选图 → 插到错的地方。
-    LaunchedEffect(fieldValue.text, fieldValue.selection) {
-        onSelectionChange(fieldValue.selection.start)
-    }
     // 与搜索框同一套节奏：先让展开动画起来再抢焦点，否则 overlay 窗里 IME 常常不弹。
     LaunchedEffect(open) {
         if (open) {
@@ -198,79 +191,21 @@ internal fun HistoryComposerModal(
                     onBarHeightChanged(with(density) { it.size.height.toDp() })
                 },
         ) {
-            // ---- 复用就地编辑条那一套壳：标题行 / 多行正文 / 标签行 / 底部整行主按钮 ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.stash_composer_fab),
-                    style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.meta),
-                    color = theme.sub,
-                    modifier = Modifier.weight(1f),
-                )
-                HistoryVoiceMicButton(
-                    onResult = { recognized ->
-                        onTextChange(if (text.isBlank()) recognized else "$text $recognized")
-                    },
-                    onError = onVoiceError,
-                    size = 34.dp,
-                    iconSize = 16.dp,
-                )
-            }
-            Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
-                if (text.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.stash_composer_hint),
-                        style = androidx.compose.ui.text.TextStyle(fontSize = 14.5.sp),
-                        color = theme.sub,
-                        maxLines = 1,
-                    )
-                }
-                BasicTextField(
-                    // ⚠️ 这里用 `TextFieldValue` 的重载（与下面 `HistoryComposerInput` 文档里写的
-                    // "本仓库的 foundation 没有 state 版重载"不冲突：`value = TextFieldValue` 是
-                    // 另一个**已废弃**的重载，一直存在）。选它纯粹是为了拿到 `selection`。
-                    value = fieldValue,
-                    onValueChange = { updated ->
-                        // 先记"我们自己发的这份"，再往上传：父级拿到 text 之后会原样回传，
-                        // 上面的 `text != lastEmitted` 判据就是靠这一行避免"每打一个字光标跳回开头"。
-                        lastEmitted = updated.text
-                        fieldValue = updated
-                        onTextChange(updated.text)
-                    },
-                    singleLine = false,
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontSize = 15.sp,
-                        lineHeight = 24.sp,
-                        color = theme.text,
-                    ),
-                    cursorBrush = SolidColor(theme.accentSolid),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 320.dp)
-                        .focusRequester(focusRequester),
-                )
-            }
-            // 加图片（§0.16.12）：一枚「＋ 图片」胶囊 + 已选缩略图（每张右上角可删）。
-            androidx.compose.foundation.layout.FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                HistoryChip(
-                    label = stringResource(R.string.stash_composer_image_add),
-                    dotColor = null,
-                    selected = false,
-                    onClick = onAddImage,
-                )
-                imagePaths.forEach { path ->
-                    HistoryComposerThumbnail(
-                        path = path,
-                        onRemove = { onRemoveImage(path) },
-                    )
-                }
-            }
+            // ---- 复用就地编辑条那一套壳：标题行 / 块编辑器 / 标签行 / 底部整行主按钮 ----
+            Text(
+                text = stringResource(R.string.stash_composer_fab),
+                style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.meta),
+                color = theme.sub,
+            )
+            HistoryComposerBody(
+                blocks = blocks,
+                onBlocksChange = onBlocksChange,
+                onSubmit = onSubmit,
+                onVoiceError = onVoiceError,
+                onAddImage = onAddImage,
+                onRemoveImage = onRemoveImage,
+                focusRequester = focusRequester,
+            )
             // ⏰ 提醒胶囊**永远**在（标签可以为空），按用户建议塞在标签行的行尾、不新起一行（§0.16.9）。
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
@@ -312,8 +247,426 @@ internal fun HistoryComposerModal(
     }
 }
 
+/**
+ * 正文的**块流**（§0.16.16）：一块标题小行（「＋图片」+ 语音）+ 文字/图片交错的正文列。
+ *
+ * 这一层独占四件块之间的协作，别的层都不用管：
+ * ① 每个文字块的 `FocusRequester` 与"最近一次 `selection`"（后者在选图跳走之后还要用）；
+ * ② 「＋图片」把图插到**当前光标处**（把所在文字块切成两半，图夹中间）；
+ * ③ 语音识别结果插到**当前光标处**（老行为是一律追加末尾）；
+ * ④ 文字块在**位置 0** 退格时删掉**前一个图片块**，焦点落到前一个文字块末尾。
+ *
+ * 高度沿用老输入框的 [HistoryComposerBodyMinHeightDp] / [HistoryComposerBodyMaxHeightDp]：
+ * 用户手上那块弹窗的尺寸不该因为"正文变块"而跳。
+ */
+@Composable
+private fun HistoryComposerBody(
+    blocks: List<DraftBlock>,
+    onBlocksChange: ((List<DraftBlock>) -> List<DraftBlock>) -> Unit,
+    onSubmit: () -> Unit,
+    onVoiceError: (Int) -> Unit,
+    onAddImage: (onPicked: (List<String>) -> Unit) -> Unit,
+    onRemoveImage: (String) -> Unit,
+    focusRequester: FocusRequester,
+) {
+    /**
+     * 每块的焦点句柄。`remember` 一次、按 id 取用：**不能**跟着块生灭 ——
+     * 焦点衔接（删图后跳到上一个文字块）恰恰发生在"新块刚加进来、下一帧才要去要焦点"的那一刻。
+     */
+    val focusRequesters = remember { mutableStateMapOf<String, FocusRequester>() }
+    /**
+     * 各文字块**最近一次**的选区。用途是"图片插到光标处"：点「＋图片」会让输入框失焦
+     * （系统相册是另一个 Activity），那时再去问输入框要 `selection` 是拿不到的，
+     * 只有这里留着的那一份是准的。
+     */
+    val latestValues = remember { mutableStateMapOf<String, TextFieldValue>() }
+    /**
+     * 焦点**将要**落到哪个块、光标放在第几个字符。
+     *
+     * 为什么要"将要"：插入/删除**当帧**那块还不存在（或还没测量），`requestFocus()`
+     * 会静默失败（overlay 窗里尤其明显）；这里先写下来，等对应的
+     * [HistoryComposerTextBlock] 组合出来之后由它自己消费。
+     */
+    val pendingCursor = remember { mutableStateMapOf<String, Int>() }
+    /**
+     * 最近一次被聚焦的文字块（**不**在失焦时清掉）。
+     *
+     * 点「＋图片」那一瞬间正文就失焦了，清掉的话"插到哪一块"就没了；保留它 =
+     * "图插到我最后打字的那一块的光标处"，正好是用户的心智模型（[latestValues] 同理）。
+     */
+    var lastFocusedBlockId by remember { mutableStateOf<String?>(null) }
+
+    /** 当前"插入/修改"的落点：优先最后聚焦那块（还在的话），否则退到最后一个文字块。 */
+    fun targetTextBlockId(): String? =
+        lastFocusedBlockId?.takeIf { id -> blocks.any { it.id == id && it is DraftBlock.Text } }
+            ?: blocks.lastOrNull { it is DraftBlock.Text }?.id
+
+    /** 把 [paths] 里的图**按顺序**插到当前光标处（取消选图 = 空列表 = 什么都不做）。 */
+    fun insertImagesAtCursor(paths: List<String>) {
+        if (paths.isEmpty()) return
+        val targetId = targetTextBlockId()
+        // ⚠️ `onBlocksChange` 的 transform 是在快照之外跑的纯函数，所以在**这里**（当帧）读
+        // 光标与块顺序，别在 transform 里再读一次外层快照。
+        val cursor = targetId?.let { latestValues[it]?.selection?.start } ?: 0
+        onBlocksChange { list ->
+            // 图片块在**每次** transform 里新建：id 必须由 `newBlockId()` 单调发出来，
+            // 复用同一份 `DraftBlock.Image` 实例会让两块撞 id（Compose 的 `key` 会当成同一块）。
+            val images = paths.map { path ->
+                DraftBlock.Image(id = StashComposerDraft.newBlockId(), path = path)
+            }
+            // 落点的**块下标**在这里现算一次：外面那一帧读到的顺序可能已经被另一次改动
+            // （比如刚删了一张图）挪过位置。
+            val index = list.indexOfFirst { it.id == targetId }
+            val block = list.getOrNull(index) as? DraftBlock.Text
+            // 光标还给"图后面那段文字的开头"，用户可以接着写。
+            var cursorTargetId: String? = null
+            val next = list.toMutableList().apply {
+                if (block != null) {
+                    // 光标处切块：前段留在原块、后段进新块、图夹在中间 ——
+                    // 这正就是"插到正文里的光标处"。光标在开头得到 [空文字, 图, 后段]，
+                    // 在结尾得到 [前段, 图, 空文字]。
+                    val cut = cursor.coerceIn(0, block.value.length)
+                    val head = block.copy(value = block.value.substring(0, cut))
+                    val tail = StashComposerDraft.newEmptyTextBlock().copy(value = block.value.substring(cut))
+                    set(index, head)
+                    addAll(index + 1, images)
+                    add(index + 1 + images.size, tail)
+                    cursorTargetId = tail.id
+                } else {
+                    // 兜底：没有文字块可切（理论上不可能，见空块不变式）→ 图追加到最后，
+                    // 并在**图后面**补一个空文字块当落点，否则用户会发现图下面打不了字。
+                    addAll(images)
+                    if (lastOrNull() !is DraftBlock.Text) {
+                        val tail = StashComposerDraft.newEmptyTextBlock()
+                        add(tail)
+                        cursorTargetId = tail.id
+                    }
+                }
+                if (cursorTargetId == null) {
+                    // 现在图后面的那一块（有后段就是它；兜底路径里就是刚补的空文字块）。
+                    val after = getOrNull(index + images.size)
+                    if (after is DraftBlock.Text) cursorTargetId = after.id
+                }
+            }
+            cursorTargetId?.let { id -> pendingCursor[id] = 0 }
+            next
+        }
+    }
+
+    /** 语音识别结果插到当前光标处（§0.16.16；老行为是一律追加到末尾）。 */
+    fun insertVoiceAtCursor(recognized: String) {
+        if (recognized.isEmpty()) return
+        val targetId = targetTextBlockId() ?: return
+        val current = blocks.lastOrNull { it.id == targetId } as? DraftBlock.Text ?: return
+        val cursor = (latestValues[targetId]?.selection?.start ?: current.value.length)
+            .coerceIn(0, current.value.length)
+        onBlocksChange { list ->
+            // ⚠️ 这个 lambda 必须**返回列表**（`updateBlocks` 要拿它当新的块序列）——
+            // 所以先算出新列表，再做"记下光标"这个副作用，别让赋值语句成为最后一个表达式。
+            val next = list.map { item ->
+                if (item.id == targetId && item is DraftBlock.Text) {
+                    item.copy(value = item.value.take(cursor) + recognized + item.value.drop(cursor))
+                } else {
+                    item
+                }
+            }
+            // 光标跟到识别结果后面：不然吐完一句，下一句会插到刚才那句前面去。
+            pendingCursor[targetId] = cursor + recognized.length
+            next
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 「＋ 图片」：保持老位置（正文上方、标签行之前）—— 就地编辑条里那枚
+            // 「＋ 图片」也在正文下面这一带，两处位置接近，用户不会以为换功能了。
+            //
+            // ⚠️ 这里**只**有那枚胶囊：老实现下面还跟着一排缩略图，现在图直接进正文（§0.16.16），
+            // 再排一排"框外的图"就等于同一张图在界面上出现两次。
+            HistoryChip(
+                label = stringResource(R.string.stash_composer_image_add),
+                dotColor = null,
+                selected = false,
+                onClick = {
+                    // §0.16.12：overlay 里不能直接拉系统选图，走中转 Activity（回来的是本地文件路径）。
+                    // §0.16.14：先把面板窗挂起（它是无障碍覆盖层，不挂起会盖在相册上面），
+                    // 回调里**第一件事**就是恢复 —— 取消（picked 为空）也要恢复。
+                    //
+                    // 插入点由本层自己算（它手上有每块的光标/焦点）：这里**不能**
+                    // `focusManager.clearFocus()`，那会把"要插到哪个块"这条信息抹掉。
+                    onAddImage { picked -> insertImagesAtCursor(picked) }
+                },
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            HistoryVoiceMicButton(
+                onResult = { recognized -> insertVoiceAtCursor(recognized) },
+                onError = onVoiceError,
+                size = 34.dp,
+                iconSize = 16.dp,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+                .heightIn(
+                    min = HistoryComposerBodyMinHeightDp,
+                    max = HistoryComposerBodyMaxHeightDp,
+                ),
+            // 块间距 7dp：太小看不出"这是两块"（尤其空块），太大就断成两个输入框了。
+            verticalArrangement = Arrangement.spacedBy(HistoryComposerBlockGap),
+        ) {
+            blocks.forEachIndexed { index, block ->
+                when (block) {
+                    is DraftBlock.Text -> key(block.id) {
+                        HistoryComposerTextBlock(
+                            block = block,
+                            // 整份正文只剩这一块时才显示占位提示（老实现的判据是 `text.isEmpty()`）。
+                            showHint = blocks.size == 1 && block.value.isEmpty(),
+                            onValueChange = { updated ->
+                                latestValues[block.id] = updated
+                                onBlocksChange { list ->
+                                    list.map { item ->
+                                        if (item.id == block.id && item is DraftBlock.Text) {
+                                            item.copy(value = updated.text)
+                                        } else {
+                                            item
+                                        }
+                                    }
+                                }
+                            },
+                            onFocusChanged = { focused -> if (focused) lastFocusedBlockId = block.id },
+                            onBackspaceOnLeadingEdge = {
+                                // 位置 0 的退格 = 想删掉**前一个块**；只有前一个块是图时才需要这套
+                                // 特殊处理（文字块之间的退格交给 IME 自己）。
+                                val previous = blocks.getOrNull(index - 1) as? DraftBlock.Image
+                                if (previous != null) {
+                                    onBlocksChange { list -> list.filterNot { it.id == previous.id } }
+                                    onRemoveImage(previous.path)
+                                    // 焦点回到前一个文字块末尾（那块就是光标左边那段文字）。
+                                    val before = blocks.getOrNull(index - 2) as? DraftBlock.Text
+                                    if (before != null) pendingCursor[before.id] = before.value.length
+                                }
+                            },
+                            focusRequester = focusRequester,
+                            ownFocusRequester = focusRequesters.getOrPut(block.id) { FocusRequester() },
+                            pendingCursor = pendingCursor,
+                            onSubmit = onSubmit,
+                        )
+                    }
+
+                    is DraftBlock.Image -> key(block.id) {
+                        HistoryComposerBodyImage(
+                            path = block.path,
+                            onRemove = {
+                                onBlocksChange { list -> list.filterNot { it.id == block.id } }
+                                onRemoveImage(block.path)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 正文里的一个**文字块**（§0.16.16）—— 也就是一个 `BasicTextField`。
+ *
+ * 三件事都在这里收口（别挪到外面去）：
+ * ① `TextFieldValue` 是**块内** state：一次输入的回环（打字 → 上抛 → 父级 → 回传）
+ *    如果每次都拿父级的值重建内部值，光标会被重置到开头（中文输入法尤其明显），
+ *    所以只认"父级的值和我们最后发出去的不一样"（真正的外部改动，比如保存成功清空）；
+ * ② `pendingCursor`：插入/删除之后由 [HistoryComposerBody] 写下的"下一帧光标该在哪"；
+ * ③ 退格：**位置 0** 且这一帧"文本没变"时，把事件交给上一层的 [onBackspaceOnLeadingEdge]
+ *    （删前一个图片块）。判据必须写在这里 —— 只有这里同时拿得到
+ *    `TextFieldValue` 的 `selection` 与 `composition`。
+ */
+@Suppress("DEPRECATION")
+@Composable
+private fun HistoryComposerTextBlock(
+    block: DraftBlock.Text,
+    /** 是不是唯一一块且为空（占位提示「想点什么…回车存下」）。 */
+    showHint: Boolean,
+    onValueChange: (TextFieldValue) -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    /**
+     * 位置 0 退格。
+     *
+     * 为什么只给一个"发生了"的信号、不在这里直接删：切块/删块的规则只在
+     * [HistoryComposerBody] 那一层维护（它同时管焦点衔接），这里只当"事件源"。
+     */
+    onBackspaceOnLeadingEdge: () -> Unit,
+    focusRequester: FocusRequester,
+    ownFocusRequester: FocusRequester,
+    pendingCursor: MutableMap<String, Int>,
+    onSubmit: () -> Unit,
+) {
+    val theme = historyTheme()
+    val hint = stringResource(R.string.stash_composer_hint)
+    var fieldValue by remember(block.id) {
+        mutableStateOf(TextFieldValue(block.value, selection = TextRange(block.value.length)))
+    }
+    /** 上一次"我们自己发出去"的文本：用来分辨"输入回环"和"父级主动改动"。 */
+    var lastEmitted by remember(block.id) { mutableStateOf(block.value) }
+    if (block.value != lastEmitted) {
+        // 外部改动（保存成功清空 / 撤销）：整块的值与光标一起重建。
+        fieldValue = TextFieldValue(block.value, selection = TextRange(block.value.length))
+        lastEmitted = block.value
+    }
+    // 消费"下一帧光标该在哪"：等这个块真的组合出来（`requestFocus` 才有节点可要焦点）再要。
+    // ⚠️ 只在组合里**取走**（`remove` 有副作用但对同一个 id 幂等）：写成 `LaunchedEffect` 会晚一帧，
+    // 那时用户可能已经在别处打字，光标会被拽回来。
+    pendingCursor.remove(block.id)?.let { position ->
+        val clamped = position.coerceIn(0, fieldValue.text.length)
+        fieldValue = fieldValue.copy(selection = TextRange(clamped))
+        SideEffect {
+            // 组合结束、节点已经挂上去了，这时要焦点才要得到。
+            runCatching { ownFocusRequester.requestFocus() }
+        }
+    }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (showHint) {
+            Text(
+                text = hint,
+                style = androidx.compose.ui.text.TextStyle(fontSize = 14.5.sp),
+                color = theme.sub,
+                maxLines = 1,
+            )
+        }
+        BasicTextField(
+            // ⚠️ 用 `TextFieldValue` 的**已废弃**重载：选它纯粹是为了拿到 `selection`
+            // （"图插到光标处"和"位置 0 退格"都靠它），本版本没有 state 版重载。
+            value = fieldValue,
+            onValueChange = { updated ->
+                val previous = fieldValue
+                onValueChange(updated)
+                fieldValue = updated
+                lastEmitted = updated.text
+                // ---- 退格删图（§0.16.16）----
+                // 光标在**位置 0**、且是折叠选区（没在选字）时按退格：IME 没有任何字符可删，
+                // 于是回调里 `text` 与上一帧一模一样 —— 这个"空转的一次 onValueChange"
+                // 就是"位置 0 的退格"。它比 `onKeyEvent` 稳：软键盘的退格在一些 IME 下
+                // 根本不上报按键（只有 `onValueChange` 会来）。
+                //
+                // 为什么不直接用"文本没变"当判据：那会把**光标移动**也算成退格。三个附加条件排掉它：
+                // ① 上一帧本来就非空 —— 空块上的退格必须是**静默无效**（否则两个空块之间会来回删）；
+                // ② 没有输入法组合串 —— 组合期间 IME 会为了刷新组合区而空转，那时删图是误删；
+                // ③ 上一帧光标不在 0 —— "上一帧就在 0 且文本没变"更像点选/移动光标，不认它。
+                //
+                // ⚠️ 没有把握的地方（简报里也写了）：② 是**两头都判**的，某些输入法在
+                // "组合串刚被退格清空"和"这次退格事件"之间会有一帧仍带着组合串，
+                // 那一帧会被这里放过 —— 表现就是"要再按一次退格才删掉图"。
+                // 宁可多按一次，也不要在用户还在选词时把图删了。
+                val backspaceOnLeadingEdge = updated.text == previous.text &&
+                    updated.selection.collapsed &&
+                    updated.selection.start == 0 &&
+                    previous.text.isNotEmpty() &&
+                    previous.selection.start != 0 &&
+                    updated.composition == null &&
+                    previous.composition == null
+                if (backspaceOnLeadingEdge) onBackspaceOnLeadingEdge()
+            },
+            singleLine = false,
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontSize = 15.sp,
+                lineHeight = 24.sp,
+                color = theme.text,
+            ),
+            cursorBrush = SolidColor(theme.accentSolid),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            // 回车存下（与老实现一致）；`imeAction = Done` 时软键盘显示的是"完成"。
+            // ⚠️ `onDone` 的类型是 `KeyboardActionScope.() -> Unit`（**不带参数**，`KeyboardActionScope` 只是接收者）：
+            // 写成 `{ _ -> onSubmit() }` 会被当成一个"带参数的函数类型"，编译不过。
+            keyboardActions = KeyboardActions(onDone = { onSubmit() }),
+            modifier = Modifier
+                .fillMaxWidth()
+                // 空块的最小高度：不然图下面那一块只有 0 高，点不到光标（§0.16.16 的硬要求）。
+                .heightIn(min = HistoryComposerEmptyBlockMinHeight)
+                .focusRequester(ownFocusRequester)
+                .focusRequester(focusRequester)
+                .onFocusChanged { state -> onFocusChanged(state.isFocused) },
+        )
+    }
+}
+
+/**
+ * 正文里的一张**图片块**（§0.16.16）：占正文整宽、高 [HistoryComposerBodyImageHeight]、
+ * 圆角同正文，右上角 ✕ 删除。
+ *
+ * 为什么不用老那枚 64dp 缩略图（[HistoryComposerThumbnail]）：那是"框外一排小图"的尺寸，
+ * 放正文里既看不出是哪张、也表达不了"它和文字平级"。解码采样相应放大
+ * （见 [decodeComposerBodyImage]，仍然 `inSampleSize` 采样，不给内存添乱）。
+ */
+@Composable
+private fun HistoryComposerBodyImage(
+    path: String,
+    onRemove: () -> Unit,
+) {
+    val theme = historyTheme()
+    val shape = RoundedCornerShape(HistoryRadii.sm)
+    val bitmap = remember(path) { decodeComposerBodyImage(path) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(HistoryComposerBodyImageHeight)
+            .clip(shape)
+            // 解码失败也留一块同样大小的底：用户至少知道"这里有张图"，而不是正文莫名断开。
+            .background(theme.fieldBg),
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(theme.text.copy(alpha = 0.55f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onRemove,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                // 无障碍文案复用现成的（本仓库不许新增字符串 key）。
+                contentDescription = stringResource(R.string.stash_tag_delete),
+                tint = Color.White,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
+}
+
 /** 与 `MiuixExpandableSearch` 的 `ExpandableSearchFocusDelayMs` 同值。 */
 private const val HistoryComposerFocusDelayMs = 180L
+
+/** 正文块流的最小高度（沿用老输入框的 160dp：弹窗尺寸不该因为"正文变块"而跳）。 */
+private val HistoryComposerBodyMinHeightDp = 160.dp
+
+/** 正文块流的最大高度（沿用老输入框的 320dp：再多内容也先让"存下"键留在屏内）。 */
+private val HistoryComposerBodyMaxHeightDp = 320.dp
+
+/** 块间距（6–8dp 这条带里取中间：太小看不出是两块，太大就断成两个输入框了）。 */
+private val HistoryComposerBlockGap = 7.dp
+
+/** 空文字块的最小高度：保证"图下面那一块"也点得到光标。 */
+private val HistoryComposerEmptyBlockMinHeight = 40.dp
+
+/** 正文里图片块的高度。 */
+private val HistoryComposerBodyImageHeight = 120.dp
 
 /** 加号弹窗里图片缩略图的边长。 */
 private val HistoryComposerThumbnailSize = 64.dp
@@ -326,6 +679,10 @@ private val HistoryComposerThumbnailSize = 64.dp
  *
  * `internal`（而不是 private）：就地编辑条"补图"（§0.16.14）要复用**同一个**缩略图，
  * 免得两份 ✕ 的无障碍文案/尺寸各写一遍走偏。
+ *
+ * ⚠️ §0.16.16 起加号弹窗的正文里**不再**用它（正文的图是 [HistoryComposerBodyImage]，
+ * 整宽 120dp）；留在这里是给就地编辑条用 —— 本轮**不改**编辑条，它仍是
+ * "框外缩略图 + 追加末尾"（见简报）。
  */
 @Composable
 internal fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
@@ -367,11 +724,24 @@ internal fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
 }
 
 /** 缩略图解码：只求"看得清是哪张"，长边采样到 160px 以内。 */
-private fun decodeComposerThumbnail(path: String): android.graphics.Bitmap? = runCatching {
+private fun decodeComposerThumbnail(path: String): android.graphics.Bitmap? =
+    decodeComposerImage(path, targetPx = 160)
+
+/**
+ * 正文里图片块的解码：整宽 120dp 的画布上 160px 会糊，采样目标提到 480px。
+ *
+ * 仍然走 `inSampleSize`（2 的幂）—— 这是"看得清"和"不把内存喂爆"之间最省的折中；
+ * 结果由调用方 `remember(path)` 缓存，不会每帧重解码。
+ */
+private fun decodeComposerBodyImage(path: String): android.graphics.Bitmap? =
+    decodeComposerImage(path, targetPx = 480)
+
+/** 复用同一套采样逻辑：先只读尺寸、再按 2 的幂降采样解出来。失败一律给 null（调用方自己兜底）。 */
+private fun decodeComposerImage(path: String, targetPx: Int): android.graphics.Bitmap? = runCatching {
     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
     android.graphics.BitmapFactory.decodeFile(path, bounds)
     var sample = 1
-    while (bounds.outWidth / sample > 160 || bounds.outHeight / sample > 160) {
+    while (bounds.outWidth / sample > targetPx || bounds.outHeight / sample > targetPx) {
         sample *= 2
     }
     android.graphics.BitmapFactory.decodeFile(
@@ -531,6 +901,9 @@ private fun HistoryComposerBar(
  * `TextFieldLineLimits` 有，但 `BasicTextField(state = …)` 不存在），
  * 而 overlay 里既有的两处输入（`ClipboardFloatUi` / `PickResultInteractiveText`）也都是这个重载。
  * 升级 foundation 到有 state 重载后，这里应该换成 state 版（中文输入法的组合串更稳）。
+ *
+ * ⚠️ 这是**面板底部那条输入条**（现在只被 `HistoryComposerBar` 用），
+ * 与「记一条」弹窗的块编辑器（[HistoryComposerBody]）无关 —— 后者是 §0.16.16 的块流。
  */
 @Suppress("DEPRECATION")
 @Composable

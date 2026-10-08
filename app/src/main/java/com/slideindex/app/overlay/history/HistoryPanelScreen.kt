@@ -36,7 +36,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -181,13 +180,38 @@ internal fun HistoryPanelScreen(
      * `remember` 的草稿那时全丢（用户感受就是"选完图回来草稿没了"）。这里用
      * `by StashComposerDraft.xxx` 直接代理到单例的 `MutableState` —— 下面所有读写点与以前
      * **一字不差**，只是不再随组合生灭。
+     *
+     * ⚠️ 唯一的例外是正文 [composerBlocks]（§0.16.16）：它是 `SnapshotStateList`、**不是** `MutableState`，
+     * 代理不了，只能直接引用（理由见那条自己的注释）。
      */
     var composerTags by StashComposerDraft.tags
     /** 加号弹窗里预设的提醒时间（null = 没设）；存下时写到新条目上（§0.16.9）。 */
     var composerReminderAt by StashComposerDraft.reminderAtMs
     /**
-     * 加号弹窗里已选的图片（trampoline 解码后落在 cache 的临时文件路径，§0.16.12）。
-     * 未存下之前只存在草稿里；存下时解码成 `StashRichPart.Image`，一次写成**一条多图条目**。
+     * 「记一条」弹窗的正文草稿（§0.16.16 起是**有序块序列**：文字块与图片块交错）。
+     *
+     * ⚠️ 它与下面 [composerImagePaths] / [composerText] 两条的关系，就是
+     * `StashComposerDraft` KDoc 里写的"**保留镜像**"：
+     * - 改正文**只经 `StashComposerDraft.updateBlocks`**（弹窗把 `onBlocksChange` 直接交给它）；
+     * - [composerText] / [composerImagePaths] 是它的**只读投影**，由 `updateBlocks` 同步，
+     *   本文件**不要**再写它们（写回去会被下一次同步覆盖，看起来就是"图忽然回来了"）。
+     *
+     * 之所以不把本文件所有读点都改成按块读：那会把"空内容判断 / 存下 / 关窗清理"三处
+     * 一起推倒重写，而本次要的是"图片进正文"；镜像只多一层同步、语义与老 `text` 完全一致（非空文字块 `\n` 连接）。
+     *
+     * ⚠️ **直接引用，不要用 `by`**：`SnapshotStateList` 实现的是 `StateObject`、**不是** `State` ——
+     * `by` 需要 `getValue(Nothing?, KMutableProperty0<*>)`，写 `by` 直接编译不过
+     * （`val blocks: SnapshotStateList<…>` 也一样，别把它声明成 `MutableState<…>`）。
+     * 好在它本身就**是** snapshot-aware 的：组合里读它会被正常追踪、`add/remove/set` 也会触发重组，
+     * 所以这里一把 `val` 就够；**所有**改动都走 `StashComposerDraft.updateBlocks`（含下面的 `resetComposerBlocks`）。
+     */
+    val composerBlocks = StashComposerDraft.blocks
+    /**
+     * 加号弹窗里已选图片（trampoline 解码后落在 cache 的临时文件路径，§0.16.12）。
+     *
+     * ⚠️ §0.16.16 起它是 [composerBlocks] 里图片块的**只读投影** —— 写它没有意义，
+     * 图片现在只活在正文里（插入/删除都在块序列上做）。留这个代理是因为"关窗清临时图"
+     * 那一处读它最顺，也方便以后按"有没有图"做判断。
      */
     var composerImagePaths by StashComposerDraft.imagePaths
     /**
@@ -196,15 +220,17 @@ internal fun HistoryPanelScreen(
      */
     var reminderPicker by remember { mutableStateOf<HistoryReminderPickerTarget?>(null) }
     var composerText by StashComposerDraft.text
-    /**
-     * 正文光标在**加号弹窗**输入框里的位置（§0.16.15 加图插到光标处）。
-     *
-     * 刻意**不进** [StashComposerDraft]：草稿那份（正文 / 标签 / 图）必须活得比组合长，
-     * 因为选图会把窗摘掉；而光标位置是"这一屏上正在打字"的状态，窗都没了、光标也就没有意义了
-     * （重开时落在 0 = 插到最前面，是能接受的行为）。放进进程级单例反而会多一份"什么时候该清"的负担。
-     */
-    var composerCursor by remember { mutableIntStateOf(0) }
     var composerBarHeight by remember { mutableStateOf(0.dp) }
+    /**
+     * 把正文草稿清回"一个空文字块"（§0.16.16）。
+     *
+     * 为什么必须走 `StashComposerDraft.updateBlocks` 而不是 `composerBlocks = emptyList()`：
+     * ① 空块不变式（"至少一个文字块"）只在那里维护 —— 直接清空会让弹窗没有任何可放光标的地方；
+     * ② `text` / `imagePaths` 两条镜像的同步也挂在那儿，绕过它就会留下"块空了、正文串还在"的假状态。
+     */
+    val resetComposerBlocks: () -> Unit = {
+        StashComposerDraft.updateBlocks { listOf(StashComposerDraft.newEmptyTextBlock()) }
+    }
     /**
      * 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照
      * （正文 / 标签 / 完成态 / 提醒时间的**原值**）。
@@ -661,12 +687,11 @@ internal fun HistoryPanelScreen(
     }
     val onComposerDone: (Boolean) -> Unit = { success ->
         if (success) {
-            composerText = ""
+            // §0.16.16：清空的判据从"正文串"换成"块序列"—— 回到"一个空文字块"，
+            // 镜像（composerText / composerImagePaths）由 `updateBlocks` 一起归零。
+            resetComposerBlocks()
             composerTags = emptySet()
             composerReminderAt = null
-            // 光标一起归零：输入框还开着（发送键不让它关），下次记的那条必须从"文 → 图"重新开始，
-            // 不能沿用上一条留下的位置。
-            composerCursor = 0
             // 设计稿 `addFromComposer()` 里 `filter = null; query = ''`：
             // 不清筛选的话新条目可能正好落在筛选之外，用户会以为没存上。
             //
@@ -686,69 +711,78 @@ internal fun HistoryPanelScreen(
         )
     }
     /**
-     * 存下"一条带图的新闪念"（§0.16.12 多图条目 + §0.16.15 插到光标处）。
+     * 存下"一条新闪念"，**按正文里的块顺序**落成有序块（§0.16.12 多图条目 + §0.16.16 块编辑器）。
      *
-     * **块顺序**（这才是用户要的"按顺序"）：[StashRepository.addRich] 的 `parts` 就是**有序块**，
-     * 落盘的 `contentBlocks` 与它一一对应，卡片展开时也按这个顺序画。所以这里按光标把正文切成
-     * 两半、图片夹在中间：
-     * - 光标在开头 → `图 → 文`；
-     * - 光标在结尾 → `文 → 图`（旧行为，也是 `cursor` 缺省时的行为）；
-     * - 光标在中间 → `文前段 → 图 → 文后段`。
+     * **块顺序**（这才是用户要的"按顺序"）：[StashCoordinator.addRich] 的 `parts` 就是**有序块**，
+     * 落盘的 `contentBlocks` 与它一一对应，卡片展开时也按这个顺序画 —— 正文里是什么顺序，
+     * 存下来就是什么顺序（老实现要靠光标把正文切成两半再把图夹进去，现在切块在插入那一刻就做完了）。
      *
-     * ⚠️ **小版本的边界**（完整块编辑器是另一轮的事）：
-     * - 输入框里**看不到**任何图片占位 —— 用户只是看到"图存进去后排在了我光标那里"；
-     * - 多张图都插在**同一个**光标位置（按选图顺序），不会散布到多处；
-     * - 这里只处理**新建**条目；给已有条目补图（编辑条的 `appendImages`）仍然是追加末尾。
+     * 与老实现的三个差别：
+     * - 正文不再有"整段字符串"可言：非空文字块各自成一个 `StashRichPart.Text`（**trim 后**判空）；
+     * - 空文字块**跳过**（它是"图片上下还能点到光标"的落点，不是内容）；
+     * - 解码失败的图**跳过**并计数（`decodeStashImageFile` 对损坏/已删的临时文件返回 null）。
+     *
+     * ⚠️ 这里**不**再自己清块：清块交给 [onComposerDone]（它同时负责标签/提醒/筛选）。
      */
-    val submitComposerRich: (String, List<String>, Int) -> Unit = { value, images, cursor ->
-        scope.launch {
-            // 解码离开主线程：一张长边 2048 的图解码不便宜。
-            val parts = withContext(Dispatchers.IO) {
-                // 先夹好块顺序再把图解码进去：解码是重活，切分只是一次 substring。
-                val cut = cursor.coerceIn(0, value.length)
-                val head = value.substring(0, cut)
-                val tail = value.substring(cut)
-                buildList<StashRichPart> {
-                    // ⚠️ 空串/纯空白的段不要加：`addRich` 自己会把空文本块丢掉并 trim，
-                    // 但在这里先判一次能让"光标正好落在开头/结尾"少一个无用块，
-                    // 也让下面的 `parts.isEmpty()` 判断更准。
-                    if (head.isNotBlank()) add(StashRichPart.Text(head))
-                    images.forEach { path ->
-                        decodeStashImageFile(path)?.let { add(StashRichPart.Image(it)) }
+    suspend fun submitComposerBlocks() {
+        val snapshot = composerBlocks.toList()
+        // 解码离开主线程：一张长边 2048 的图解码不便宜。
+        // `failedImages` 是普通计数器：它在**同一个** withContext 块里写、块外才读，
+        // 不存在跨线程可见性问题（别为它引入 Atomic）。
+        var failedImages = 0
+        val parts = withContext(Dispatchers.IO) {
+            buildList<StashRichPart> {
+                // ⚠️ 按**块顺序**走：文字与图片的交错顺序就是用户看到的正文顺序。
+                snapshot.forEach { block ->
+                    when (block) {
+                        is DraftBlock.Text -> {
+                            // ⚠️ 空串/纯空白的段不要加：`addRich` 自己也会丢空文本块并 trim，
+                            // 但在这里先判一次能让下面的 `parts.isEmpty()` 判断更准。
+                            val text = block.value.trim()
+                            if (text.isNotEmpty()) add(StashRichPart.Text(text))
+                        }
+
+                        is DraftBlock.Image -> {
+                            val bitmap = decodeStashImageFile(block.path)
+                            if (bitmap == null) failedImages++ else add(StashRichPart.Image(bitmap))
+                        }
                     }
-                    if (tail.isNotBlank()) add(StashRichPart.Text(tail))
                 }
             }
-            if (parts.isEmpty()) {
-                showPanelMessage(R.string.stash_save_failed)
-                return@launch
-            }
-            StashCoordinator.addRich(
-                parts = parts,
-                onSaved = { newEntryId -> onComposerSaved(newEntryId, value) },
-                onDone = { success ->
-                    onComposerDone(success)
-                    if (success) {
-                        composerImagePaths = emptyList()
-                        composerCursor = 0
-                        // 图已经拷进仓库了，cache 里这份临时文件可以删。
-                        images.forEach { path -> runCatching { File(path).delete() } }
-                    }
-                },
-            )
         }
+        if (parts.isEmpty()) {
+            // "全是空块"和"图全解不出来"都落在这里：对用户来说都是"没有可存的内容"，
+            // 与老实现的 `stash_composer_empty` 提示一致（本仓库不许新增字符串 key）。
+            if (failedImages > 0) showPanelMessage(R.string.stash_save_failed)
+            else showPanelMessage(R.string.stash_composer_empty)
+            return
+        }
+        val summary = snapshot.filterIsInstance<DraftBlock.Text>()
+            .map { it.value.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+        StashCoordinator.addRich(
+            parts = parts,
+            onSaved = { newEntryId -> onComposerSaved(newEntryId, summary) },
+            onDone = { success ->
+                onComposerDone(success)
+                if (success) {
+                    // 图已经拷进仓库了，cache 里这份临时文件可以删（块的清空在 onComposerDone 里）。
+                    snapshot.filterIsInstance<DraftBlock.Image>()
+                        .forEach { image -> runCatching { File(image.path).delete() } }
+                }
+            },
+        )
     }
     val submitComposer: () -> Unit = {
-        val value = composerText.trim()
-        val images = composerImagePaths
+        // §0.16.16：判空按**块序列**来 —— 有图块就算有内容（老实现是 `composerImagePaths.isEmpty()`）。
+        val hasImage = composerBlocks.any { it is DraftBlock.Image }
+        val plainText = composerText.trim()
         when {
-            value.isEmpty() && images.isEmpty() -> {
-                showPanelMessage(R.string.stash_composer_empty)
-            }
-            images.isEmpty() -> submitComposerText(value)
-            // 传的是**未夹取**的光标位置：`value` 已经 trim 过，夹取由 `submitComposerRich` 里
-            // 那一次 `coerceIn` 统一负责（两处都夹会让人以为这里有什么特殊语义）。
-            else -> submitComposerRich(value, images, composerCursor)
+            plainText.isEmpty() && !hasImage -> showPanelMessage(R.string.stash_composer_empty)
+            // 没有图块：走老的单文本落库路径（`addText`），正文语义与以前完全一致。
+            !hasImage -> submitComposerText(plainText)
+            else -> scope.launch { submitComposerBlocks() }
         }
     }
     // 重启/更新后 AlarmManager 里的提醒会丢：进面板时补排一次（`StashReminderBootReceiver` 也会在开机时补）。
@@ -1103,9 +1137,16 @@ internal fun HistoryPanelScreen(
                         if (!it) {
                             composerTags = emptySet()
                             composerReminderAt = null
-                            // 关掉弹窗时把没存下的临时图一起删掉（cache 里不留垃圾）。
+                            // 关掉弹窗时把**没存下**的正文草稿一起丢掉（老实现只丢图、留正文，
+                            // §0.16.16 起正文里就有图块了，而图块的 cache 文件正要被删掉 ——
+                            // 只留文字会是"半份草稿"，见 `StashComposerDraft` 的 KDoc）：
+                            // 临时图先删文件（cache 里不留垃圾），再经 `updateBlocks` 把块序列
+                            // 与镜像（composerText / composerImagePaths）一起归零。
+                            //
+                            // ⚠️ 顺序不能反：`composerImagePaths` 是 `composerBlocks` 的投影，
+                            // 先清块就再也拿不到那批路径，文件会留在 cache 里。
                             composerImagePaths.forEach { path -> runCatching { File(path).delete() } }
-                            composerImagePaths = emptyList()
+                            resetComposerBlocks()
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomEnd),
@@ -1162,10 +1203,10 @@ internal fun HistoryPanelScreen(
             )
             HistoryComposerModal(
                 open = composerOpen && showPanelLayers,
-                text = composerText,
-                onTextChange = { composerText = it },
-                // §0.16.15：记下光标位置，存下时按它把图片块插进正文中间。
-                onSelectionChange = { composerCursor = it },
+                // §0.16.16：正文按**块序列**进出 —— 弹窗内部的插入/切块/退格删图都通过
+                // `onBlocksChange` 落回单例的 `updateBlocks`（它同时刷新 text / imagePaths 两条镜像）。
+                blocks = composerBlocks,
+                onBlocksChange = { transform -> StashComposerDraft.updateBlocks(transform) },
                 onSubmit = submitComposer,
                 onVoiceError = showPanelMessage,
                 availableTags = availableTags,
@@ -1180,21 +1221,22 @@ internal fun HistoryPanelScreen(
                         initialAtMs = composerReminderAt,
                     )
                 },
-                imagePaths = composerImagePaths,
-                onAddImage = {
+                onAddImage = { onPicked ->
                     // §0.16.12：overlay 里不能直接拉系统选图，走中转 Activity（回来的是本地文件路径）。
                     // §0.16.14：先把面板窗挂起（它是无障碍覆盖层，不挂起会盖在相册上面），
                     // 回调里**第一件事**就是恢复 —— 取消（picked 为空）也要恢复。
+                    //
+                    // §0.16.16：**不在这里插块** —— 路径原样交回弹窗，由它按"当前光标"切块插入
+                    // （光标/焦点只活在弹窗里，这里插只能追加到末尾，那就退回老行为了）。
                     StashPanelExternalUi.suspend?.invoke()
                     StashComposerImageTrampolineActivity.launch(appContext) { picked ->
                         StashPanelExternalUi.resume?.invoke()
-                        if (picked.isNotEmpty()) {
-                            composerImagePaths = (composerImagePaths + picked).distinct()
-                        }
+                        if (picked.isNotEmpty()) onPicked(picked.distinct())
                     }
                 },
                 onRemoveImage = { path ->
-                    composerImagePaths = composerImagePaths - path
+                    // 块的增删已经由弹窗做完了（这里是"删了之后要干什么"）：只负责把 cache 里
+                    // 那份临时文件删掉，别留垃圾。`composerImagePaths` 是块的投影，不用再手动减。
                     runCatching { File(path).delete() }
                 },
                 imeBottom = overlayImeBottom,
