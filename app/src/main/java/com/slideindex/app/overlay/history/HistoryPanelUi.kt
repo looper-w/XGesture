@@ -74,17 +74,27 @@ internal fun Modifier.historyPanelListBackdrop(backdrop: LayerBackdrop?): Modifi
 internal val HistoryListFooterPadding = 96.dp
 
 /**
- * （已废弃）面板宽度 = 可用宽度 × 78%。
+ * 面板宽度 = 可用宽度 × [PANEL_WIDTH_FRACTION]，**再用 [PANEL_WIDTH_MAX] 封顶**。
  *
- * ⚠️ **现在不需要它了**：面板窗本身就已经是屏宽的 78%
- * （`OverlayPanelLayoutParams.stashClipboardSidePanel`，§0.16.3 的改造），
- * 面板内容直接铺满窗口即可 —— 再乘一次会缩成 61% ✗。
- * 保留这个函数和比例常量只是为了让 `SIDE_PANEL_WIDTH_FRACTION` 有对照，**不要再拿去算宽度**。
+ * ⚠️ 别把它当"已废弃"（老注释就是这么写的，是 §0.16.3 那次"窗口改 78% 宽"实验的残留）：
+ * §0.16.3 已被用户整批回退 —— 现在**窗口是满屏的**（`OverlayPanelLayoutParams`），
+ * 面板内容由 `HistoryPanelScreen` 用 `BoxWithConstraints` 的 `maxWidth` 乘出这个宽度，
+ * 所以这里就是**生产路径**。
  */
-internal fun panelWidthOf(available: Dp): Dp = available * PANEL_WIDTH_FRACTION
+internal fun panelWidthOf(available: Dp): Dp =
+    minOf(available * PANEL_WIDTH_FRACTION, PANEL_WIDTH_MAX)
 
-/** 设计稿里侧栏占屏宽的比例。 */
+/** 设计稿里侧栏占屏宽的比例（这是**竖屏**下的规格）。 */
 internal const val PANEL_WIDTH_FRACTION = 0.78f
+
+/**
+ * 面板宽度上限（dp）—— 治"横屏也占 78%"。
+ *
+ * 竖屏 411dp × 78% = 320dp，够不着上限，**行为与设计稿一致、没有变化**；
+ * 横屏窗口宽 891dp，78% 会变成 695dp（几乎占满整屏，用户实测反馈"横屏不该也 78%"），
+ * 于是被收到 420dp ≈ **横屏的小半个屏幕**。平板/折叠屏展开态同理受益。
+ */
+internal val PANEL_WIDTH_MAX = 420.dp
 
 /**
  * 跟手拉出时"拉多远算拉满" = 面板宽度（px）。
@@ -119,7 +129,8 @@ internal fun historyPreviewWidthPx(): Int {
         if (size.width <= 0) size.height else minOf(size.width, size.height)
     }
     return with(density) {
-        (with(density) { windowWidth.toDp() } * PANEL_WIDTH_FRACTION - 24.dp)
+        // 与面板宽度同一个算式（含 420dp 上限），图片解码宽度才不会和真实面板宽度跑偏。
+        (panelWidthOf(with(density) { windowWidth.toDp() }) - 24.dp)
             .roundToPx()
             .coerceAtMost(960)
     }

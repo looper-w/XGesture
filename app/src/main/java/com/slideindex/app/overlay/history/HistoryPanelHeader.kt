@@ -59,7 +59,9 @@ import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
+import com.slideindex.app.R
 
 /**
  * 面板头部 —— **逐条对齐设计稿 `.stream .head`**：
@@ -152,7 +154,8 @@ internal fun HistoryPanelHeader(
                 // （"面板在左还是在右"是**手势动作的参数**，见 `ActionExecutor.side`，不靠面板里的按钮切。）
                 HistoryHeaderCircleButton(
                     icon = Icons.Default.Close,
-                    contentDescription = null,
+                    // 无障碍：这是"关闭面板"，TalkBack 要读得出来（原来传 null，等于没标签）。
+                    contentDescription = stringResource(R.string.panel_close),
                     onClick = onDismiss,
                 )
             }
@@ -178,7 +181,7 @@ internal fun HistoryPanelHeader(
             ) {
                 HistoryHeaderCircleButton(
                     icon = Icons.Default.Close,
-                    contentDescription = null,
+                    contentDescription = stringResource(R.string.panel_close),
                     onClick = onDismiss,
                     size = HistoryHeaderCollapsedCloseSize,
                 )
@@ -316,7 +319,8 @@ private fun HistorySearchField(
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = null,
+                    // 无障碍：这是"清空搜索"（复用空状态里那个动作的文案）。
+                    contentDescription = stringResource(R.string.stash_empty_search_action),
                     tint = theme.text,
                     modifier = Modifier.size(12.dp),
                 )

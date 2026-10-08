@@ -629,12 +629,11 @@ Compose 的 `Modifier.alpha` 和 `Modifier.graphicsLayer` 都是"层"（RenderNo
 > "真机验收"里日常使用盖得到的算过，只剩上面 5 项专项 + P7 那四块。
 
 ### 0.3.2 「过一遍」实测结果（2026-10-08：真机 + 静态审计）
-
 把 §0.3.1 里"仍待"的项尽量过了一遍：
 
 | 项 | 结果 |
 | :- | :- |
-| ① 四语言完整性 | ✅ **面板相关 364 个键四语言齐全**（本轮新增 15 个也齐）。全仓库只缺 2 个键、都在**剪贴板预览浮窗**（不在面板）：`clipboard_overlay_screenshot_editor`（zh/ja/ar 全缺）、`clipboard_overlay_remote_copy_package`（ja/ar 缺）→ 会回退英文，**建议补**。ja/ar 没有"整句漏翻"（唯一"与英文相同"的是许可证名 AGPLv3，本就不翻）。**译文质量仍要母语者过一遍** |
+| ① 四语言完整性 | ✅ **面板相关 364 个键四语言齐全**（本轮新增 15 个也齐）。全仓库只差 2 个键 —— **订正：那 2 个都是 `translatable="false"`，本就不该翻译**（`clipboard_overlay_screenshot_editor` 空串占位、`clipboard_overlay_remote_copy_package` 是 Google 的包名/Activity 名），我第一版审计没看 `translatable` 属性、误报成"缺口"。ja/ar 没有"整句漏翻"（唯一"与英文相同"的是许可证名 AGPLv3，本就不翻）。**译文质量仍要母语者过一遍** |
 | ② 英文/日文下时间轴分组名会不会被切 | ✅ **英文实测未被切**：真机把本 App 切成英文后，`Today` / `Yesterday` 都完整显示（"单行 + 允许向左溢出"那套有效）。日文更短；阿拉伯语是 RTL，未单独验 |
 | ③ 深色主题 | ✅ 面板底、小 chip、时间轴标签、FAB 在深色下都可读（真机截图）；"已完成"卡片在深色下的观感未单独看 |
 | ④ 提醒 | ✅ **"重启补排"实测通过**：`dumpsys alarm` 里有 4 条 `…action.STASH_REMIND`，`am force-stop` 后重开面板又被补排回来（用用户自己设的提醒验的，没动数据）。"到点真的响"仍需等到时间点 |
@@ -1100,3 +1099,45 @@ onBack()
 - 按这个改法补验（客观信号：`dumpsys window | grep mCurrentFocus`）：面板打开时焦点是覆盖窗
   `Window{…com.slideindex.app}`；左边缘**短滑**（`input swipe 8 1200 130 1200 120`）之后焦点回到
   `com.slideindex.app/.MainActivity` → **面板关掉了 ✅**（真手势链路上，键盘未弹的那一档也通了）。
+
+---
+
+### 0.16.8 已完成：横屏面板宽度上限（420dp）+ 无障碍补标签
+
+**问题（用户看横屏截图后反馈）**：横屏下面板也是窗口宽的 78% → 2340px 的屏幕上占 1825px，**几乎铺满**；
+用户要求"横屏就正常小半个屏幕"。
+
+**改法**：`panelWidthOf(available)` 从"只有比例"改成**比例 + 上限**：
+
+```kotlin
+internal fun panelWidthOf(available: Dp): Dp = minOf(available * 0.78f, PANEL_WIDTH_MAX)  // 420dp
+```
+
+- 竖屏 411dp × 78% = **320dp**，够不着上限 → **与设计稿完全一致，肖像行为零变化**；
+- 横屏 891dp × 78% = 695dp → 被收到 **420dp ≈ 47%**（"小半个屏幕"）；
+- 平板/折叠屏展开态同理受益（侧栏不该随屏宽线性变胖）。
+- `historyPreviewWidthPx()`（图片解码目标宽度）也改成走同一个算式，免得解码宽度和真实面板宽度跑偏。
+- 顺手删掉 `panelWidthOf` 上面那段**错误的老注释**（它写着"已废弃、不要再拿去算宽度"，是 §0.16.3
+  "窗口改 78% 宽"那次实验的残留 —— 而 §0.16.3 已被整批回退，现在窗口满屏、面板内容由这个函数算宽度，
+  它就是生产路径）。
+
+**无障碍补标签**（P7 里那一小块，静态审计的结论比预想的小）：
+- 卡片动作行 / ⋮ 菜单 / 页签 / 胶囊**本来就有标签**（`clipboard_history_float_copy`、`moreLabel`、
+  `stash_action_open_pick` …），我一开始只看 `contentDescription = null` 的计数，**高估了缺口**；
+- 真正没标签的是两处：**面板头部关闭 `✕`**（展开态与收起态各一个）→ 补 `panel_close`；
+  **搜索框「清空」`✕`** → 补 `stash_empty_search_action`；
+- 剩下传 `null` 的都是装饰性图标（搜索放大镜、时间轴节点、空状态箭头、内容块里的图片）。
+
+**同一轮订正的一处误报**：§0.3.2 里我写过"缺 2 个翻译键、建议补" —— 复查发现那两个键都是
+`translatable="false"`（一个是空串占位、一个是 Google 的包名/Activity 名），**本就不该翻译**，
+我第一版审计脚本没看 `translatable` 属性。已在 §0.3.2 里订正。
+
+**真机验证**：装机后横屏截图核对 —— 面板现在只占右侧约一半（"小半个屏幕"），头部/页签/胶囊行/
+时间轴/卡片/FAB 都在位；竖屏由算式保证不变（411dp × 78% = 320dp < 420dp 上限，未再截图）。
+`crashes` 最新仍是 `crash_20261007_170028.txt`。
+
+**⚠️ 这轮踩到的一个新坑（写进协作注意）**：**别用 `adb shell cmd locale set-app-locales` 切这个 App 的语言**。
+App 会把"当前语言"**持久化进它自己的设置**（`app_ui_language_tag`，落盘在
+`shared_prefs/app_locale_cache.xml` + DataStore）—— 我把 per-app locale 设成 `en-US` 之后，
+清掉系统 per-app locale（`--locales ""`）也回不来，App 反而把 `en` 又写回系统，**必须用户去
+「交互与外观 → 应用语言」手动改回**。要验英文/日文排版，请走 App 内那个设置、或让用户自己切。
