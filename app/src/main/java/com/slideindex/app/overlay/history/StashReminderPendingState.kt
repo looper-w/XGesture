@@ -50,12 +50,20 @@ internal object StashReminderPendingState {
     val hasPending: MutableState<Boolean> = mutableStateOf(false)
 
     /**
-     * 重新计算（面板打开 / 通知变动 / 数据变动时调用）。
+     * 重新计算（面板打开 / 通知变动 / 数据变动 / 把手服务启动与慢轮询时调用）。
      *
      * 同步、廉价（一次 `getActiveNotifications` + 一次偏好读 + 一遍提醒表），可以从组合里直接调：
      * 它**不**做任何 suspend 工作，也就不需要 `LaunchedEffect`。写 state 放在最后、且只在值变化时写。
+     *
+     * @return 本次是否**真的改变了** [hasPending]。
+     * 以前返回 `Unit`，现在返回 Boolean 是给把手服务那条"自愈轮询"用的（变化了就重置退避、
+     * 没变化就慢慢退避到 240s）；**忽略返回值的既有调用点全都不受影响**。
+     *
+     * ⚠️ 本方法每次都**从零重算**（通知栏 + 镜像 + 数据层），不读内存里 [markPending] 的残留 ——
+     * 所以进程重启之后再调用它，照样能得到正确结果。这正是"通知还挂在栏里、指示条却永远不亮"
+     * 那类问题的关键：内存标记只配当加速/兜底，**不能是唯一来源**。
      */
-    fun refresh(context: Context) {
+    fun refresh(context: Context): Boolean {
         val appContext = context.applicationContext
         val next = runCatching { compute(appContext) }.getOrElse { cause ->
             Log.w(TAG, "refresh 计算失败，按'没有待处理'处理", cause)
@@ -64,7 +72,9 @@ internal object StashReminderPendingState {
         if (hasPending.value != next) {
             Log.i(TAG, "hasPending -> $next")
             hasPending.value = next
+            return true
         }
+        return false
     }
 
     /**

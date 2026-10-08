@@ -3,6 +3,7 @@
 package com.slideindex.app.overlay.history
 
 import android.graphics.BlurMaskFilter
+import android.util.Log
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -55,6 +57,7 @@ import com.slideindex.app.ui.theme.OverlayAwareModuleTheme
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -102,9 +105,40 @@ fun HistoryFloatContent(
         derivedStateOf {
             // 1) 有未处理的提醒；2) 窗口可见（服务在隐藏时会直接 return，这是兜底）；
             // 3) 没在拖动/按住（跟手时优先给手感和跟手，不叠动画）。
-            // 面板打开时由服务层把把手窗隐藏（handleVisible=false），所以"面板打开不跑"
-            // 也走的是第 2 条闸门，这里不额外读面板状态。
+            // ⚠️ 给后来的排查者（"用户实测看不到流光"那次复盘）：**常态下这三条都成立**
+            // —— 服务里的 `handleVisible` 初值是 true、全工程没有任何地方把它写成 false
+            // （把手窗和面板是两个窗口，面板打开并不会藏把手），`active` 只在拖动/双击那 0.5s 为 true。
+            // 所以"看不到光"如果发生，最大嫌疑是 `hasPending` 压根没被点起来
+            // （它只在「提醒通知发出」/「面板可见时刷新」这两条路径上被写），而不是这里被挡住。
+            // 下面的 GLOW_DEBUG 打点就是为了下次能一眼分清是"没触发"还是"触发了但看不见"。
             StashReminderPendingState.hasPending.value && handleVisible && !active
+        }
+    }
+    // ── 临时的可观测性打点（只为定位"到底触发没触发"，不改任何 UI）──
+    // 为什么用 `snapshotFlow` 而不是 `LaunchedEffect(glowActive)`：三个输入都要能单独看出来。
+    // `distinctUntilChanged` 让它**只在三元组真的翻转时**打一次（这就是"节流"：
+    // 平常一帧都不打，不会刷爆 logcat；进组合时先打一条当前值）。用户复现一次，
+    // `adb logcat -s HandleGlow` 即可判定：
+    // - 全程只有 pending=false → 提醒/通知那条链没点亮 `hasPending`（不是绘制问题）；
+    // - 出现 hasPending=true handleVisible=true active=false（glowActive=true）却依然看不见
+    //   → 那就是纯绘制/对比度问题，往参数上调（见文件末尾那组 HANDLE_GLOW_*）。
+    if (GLOW_DEBUG) {
+        LaunchedEffect(Unit) {
+            snapshotFlow {
+                Triple(
+                    StashReminderPendingState.hasPending.value,
+                    handleVisible,
+                    active,
+                )
+            }
+                .distinctUntilChanged()
+                .collect { (pending, visible, dragging) ->
+                    Log.d(
+                        GLOW_DEBUG_TAG,
+                        "inputs changed: hasPending=$pending handleVisible=$visible active=$dragging " +
+                            "=> glowActive=${pending && visible && !dragging}",
+                    )
+                }
         }
     }
     // 流光的唯一动画时钟：**只在 `glowActive` 时进组合**。
@@ -344,7 +378,6 @@ private fun HistoryFloatHandle(
                 val bandColors = List(HANDLE_GLOW_BAND_COUNT) { i ->
                     glowBand(scheme.primary, i)
                 }
-                val barSpringPx = HANDLE_HIT_DP.dp.toPx() * HANDLE_GLOW_BLOOM_LIMIT_RATIO
                 onDrawWithContent {
                     // 条矩形每帧重算：`barWidth` 是按住时的"变宽"动画（9→11dp），
                     // 所以它也算逐帧状态。几何放这里算的代价可以忽略（几个 dp→px 换算），
@@ -356,64 +389,38 @@ private fun HistoryFloatHandle(
                     val barPath = Path().apply {
                         addRoundRect(RoundRect(barRect, CornerRadius(cornerPx, cornerPx)))
                     }
-                    // ① 条本体（原来的 Surface 背景 + 内层洗色 + 1dp 边框，颜色/圆角/尺寸全不变）。
+                    // ① 条本体（原来的 Surface 背景 + 内层洗色，颜色/圆角/尺寸全不变）。
+                    //    边框挪到**最后**画（见 ⑤），否则会被光盖住、条失去清晰轮廓。
                     drawPath(barPath, barBaseColor)
                     drawPath(barPath, washColor)
-                    drawPath(
-                        path = barPath,
-                        color = barBorderColor,
-                        style = Stroke(width = borderWidthPx),
-                    )
                     // ② 光。`glowPhase == null` 就是"当前不该有光"（没提醒 / 在拖动 / 不可见）：
                     // 这时不但不建动画时钟，连一次 draw call 都不多发。
                     // ⚠️ `glowPhase.value` 在这里读 = 在**绘制阶段**读动画状态：
                     // 每帧只让这一层 draw 失效（invalidate），不触发重组，也不重绘别处。
-                    val t = glowPhase?.value ?: return@onDrawWithContent
+                    val t = glowPhase?.value ?: run {
+                        // 没光的时候仍要把边框补上（上面把边框挪到最后了）。
+                        drawPath(barPath, barBorderColor, style = Stroke(width = borderWidthPx))
+                        return@onDrawWithContent
+                    }
                     val beat = glowBeat(t)
                     // 主带位置（px）：中心从"条左缘往左 1.5 条宽"走到"条右缘往右 1.5 条宽"，
                     // 起止都在条外 → 一个周期里能看清"进来 → 经过 → 离开"，才有扫过的速度感。
                     val travel = barWidthPx * (1f + 2f * HANDLE_GLOW_TRAVEL_SCALE)
                     val bandX = barRect.right + barWidthPx * HANDLE_GLOW_TRAVEL_SCALE -
                         travel * t
-                    // ③ 外层辉光（bloom）：先于主带画，且**只朝条的左侧溢出**（理由见文件末尾
-                    //    `HANDLE_GLOW_BLOOM_LIMIT_RATIO` 的注释：右侧 3dp 外就是屏幕边缘/系统
-                    //    手势区，光不能往那边跑）。条内的部分会被条本体盖住 ——
-                    //    所以观感是"光在条里流、同时从条的左缘漏出去"。
-                    //    矩形按"中心对称扩张"算，再夹到安全边界内，这样光是渐隐的而不是被硬切。
-                    // ⚠️ `bloomPaint` 现在是**平台**画笔（`android.graphics.Paint`），
-                    // 它的 `color` 就是 ARGB `Int`，所以要 `toArgb()`。
-                    // （别改回 Compose `Paint`：那支笔没有 `maskFilter`，模糊会失效。）
-                    bloomPaint.color = coreColor.copy(alpha = HANDLE_GLOW_BLOOM_ALPHA * beat).toArgb()
-                    val halfCore = barWidthPx * 0.35f
-                    val halfHalo = barWidthPx * 1.6f
-                    drawIntoCanvas { canvas ->
-                        // ⚠️ 走平台画布：`nativeCanvas` 是 `androidx.compose.ui.graphics.Canvas` 上的
-                        // 扩展属性（`AndroidCanvas_androidKt.getNativeCanvas`，已 import），
-                        // 只有它的 `drawRoundRect(l, t, r, b, rx, ry, Paint)` 收平台画笔；
-                        // Compose 的 `Canvas.drawRoundRect` 只收 Compose `Paint`（会类型不符）。
-                        val native = canvas.nativeCanvas
-                        native.drawRoundRect(
-                            (bandX - halfCore).coerceAtLeast(barSpringPx), barRect.top,
-                            (bandX + halfCore).coerceAtMost(barRect.right), barRect.bottom,
-                            cornerPx, cornerPx, bloomPaint,
-                        )
-                        native.drawRoundRect(
-                            (bandX - halfHalo).coerceAtLeast(barSpringPx), barRect.top,
-                            (bandX + halfHalo).coerceAtMost(barRect.right), barRect.bottom,
-                            cornerPx, cornerPx, bloomPaint,
-                        )
-                    }
-                    // ④ 条内的"过曝主带 + 递减拖尾"：整体 clip 在条形状里，光不会糊到条外。
+                    // ③ 条内"过曝主带 + 递减拖尾"（clip 在条形状里，不会糊到条外）。
                     //    扫动靠每帧重算几何（`bandX`），不是 `translationX` ——
-                    //    因为拖尾的间距/透明度都要随位置变，必须逐帧重画渐变。
+                    //    因为拖尾的间距/透明度/色相都要随位置变，必须逐帧重画渐变。
+                    //    ⚠️ 必须**先画这一层**：它是"过曝的芯"，被下面那层柔光压过之后就发灰了。
                     clipPath(barPath) {
                         for (i in 0 until HANDLE_GLOW_BAND_COUNT) {
                             val f = i.toFloat()
                             // 拖尾在主带的**右边** = 光整体从右往左扫（"从屏幕外扫进来"）。
                             val center = bandX + f * barWidthPx * HANDLE_GLOW_SPACING_SCALE
                             // 间距与 alpha 都递减（`pow`），产生"扫过去"的速度感；
-                            // 亮度统一乘 `beat` 做呼吸。
-                            val bandAlpha = HANDLE_GLOW_CORE_ALPHA * HANDLE_GLOW_TRAIL_DECAY.pow(f) * beat
+                            // 亮度统一乘 `beat` 做呼吸；`coerceIn` 只是防御（alpha 必须落 0…1）。
+                            val bandAlpha = (HANDLE_GLOW_CORE_ALPHA * HANDLE_GLOW_TRAIL_DECAY.pow(f) * beat)
+                                .coerceIn(0f, 1f)
                             // 主带更宽、拖尾更窄：宽的亮核 + 细的余晖，层次才拉得开。
                             val half = barWidthPx * if (i == 0) {
                                 HANDLE_GLOW_CORE_HALF_SCALE
@@ -433,6 +440,41 @@ private fun HistoryFloatHandle(
                             )
                         }
                     }
+                    // ④ 外层辉光（bloom）：**画在条本体之上**，而且不只是沿条宽、还往**上下左右**外扩
+                    //    —— 这是"光漏出 9dp 的条"的关键，也是上一版"看不见"的主因：
+                    //    上一版 bloom 只比条宽一点、纵向完全不外扩，于是它基本整块躺在条里，
+                    //    再被 0.72 alpha 的条本体盖住 → 条外什么都没剩下。
+                    //    现在三层由大到小叠（外层淡、内层亮），配合 9dp 模糊形成柔和光环。
+                    //    ⚠️ 右边界仍然夹在条的右缘：条距屏幕右缘只有 3dp，光只能往左（和上下）走。
+                    val springX = HANDLE_HIT_DP.dp.toPx() * HANDLE_GLOW_BLOOM_LIMIT_RATIO
+                    val bloomTop = (barRect.top - barWidthPx * HANDLE_GLOW_BLOOM_SPILL_SCALE)
+                        .coerceAtLeast(0f)
+                    val bloomBottom = (barRect.bottom + barWidthPx * HANDLE_GLOW_BLOOM_SPILL_SCALE)
+                        .coerceAtMost(size.height)
+                    val bloomAlphaBase = HANDLE_GLOW_BLOOM_ALPHA * beat
+                    drawIntoCanvas { canvas ->
+                        // ⚠️ 走平台画布：`nativeCanvas` 是 `androidx.compose.ui.graphics.Canvas` 上的
+                        // 扩展属性（`AndroidCanvas_androidKt.getNativeCanvas`，已 import），
+                        // 只有它的 `drawRoundRect(l, t, r, b, rx, ry, Paint)` 收平台画笔；
+                        // Compose 的 `Canvas.drawRoundRect` 只收 Compose `Paint`（会类型不符）。
+                        // ⚠️ `bloomPaint` 是**平台**画笔，`color` 是 ARGB Int，所以要 `toArgb()`；
+                        // 别改回 Compose `Paint` —— 那支笔没有 `maskFilter`，模糊会失效。
+                        val native = canvas.nativeCanvas
+                        for (j in HANDLE_GLOW_BLOOM_LAYER_SCALES.indices.reversed()) {
+                            bloomPaint.color = coreColor.copy(
+                                alpha = (bloomAlphaBase * HANDLE_GLOW_BLOOM_LAYER_ALPHAS[j])
+                                    .coerceIn(0f, 1f),
+                            ).toArgb()
+                            val half = barWidthPx * HANDLE_GLOW_BLOOM_LAYER_SCALES[j]
+                            native.drawRoundRect(
+                                (bandX - half).coerceAtLeast(springX), bloomTop,
+                                (bandX + half).coerceAtMost(barRect.right), bloomBottom,
+                                cornerPx, cornerPx, bloomPaint,
+                            )
+                        }
+                    }
+                    // ⑤ 最后补 1dp 边框：让"发光"的条仍然有清楚轮廓，也不会被光糊掉边界。
+                    drawPath(barPath, barBorderColor, style = Stroke(width = borderWidthPx))
                 }
             },
         contentAlignment = Alignment.CenterEnd,
@@ -534,29 +576,64 @@ private const val HANDLE_GLOW_PERIOD_MS = 2600
  */
 private const val HANDLE_GLOW_TRAVEL_SCALE = 1.5f
 
-/** 主带半宽 = 条宽的这个比例。>0.5 意味着主带**比条宽还宽** → 光把整条"灌满"，观感即"过曝"。 */
-private const val HANDLE_GLOW_CORE_HALF_SCALE = 0.55f
+/**
+ * 主带半宽 = 条宽的这个比例。
+ *
+ * §体验修正：原来 0.55 —— 主带比条宽一点点，而渐变是"两端透明"的，
+ * 于是条内只有中间一小段真的亮（条宽 9dp、主带可见部分 ≈ 4.5dp），
+ * 这就是"看不见"的直接原因之一。
+ * 现在 1.3（主带 2.6×条宽，只有最外缘才透明）→ **整条都被灌亮**，观感即"过曝通光"。
+ */
+private const val HANDLE_GLOW_CORE_HALF_SCALE = 1.3f
 
 /** 拖尾半宽 = 条宽的这个比例（比主带窄 → 宽亮核 + 细余晖，层次拉得开）。 */
-private const val HANDLE_GLOW_TRAIL_HALF_SCALE = 0.28f
+private const val HANDLE_GLOW_TRAIL_HALF_SCALE = 0.45f
 
 /** 拖尾条数（含主带）。1 主带 + 2 余晖 = 3，再多在 9dp 上就糊成一片了。 */
 private const val HANDLE_GLOW_BAND_COUNT = 3
 
 /** 拖尾之间的间距 = 条宽的这个比例。 */
-private const val HANDLE_GLOW_SPACING_SCALE = 0.62f
+private const val HANDLE_GLOW_SPACING_SCALE = 0.70f
 
 /** 拖尾 alpha 的递减系数：第 i 条 = 主带 × 0.55^i。 */
 private const val HANDLE_GLOW_TRAIL_DECAY = 0.55f
 
-/** 主带峰值不透明度（还会再乘呼吸包络 `beat`）。常驻悬浮元素，0.9 已经够"过曝"。 */
-private const val HANDLE_GLOW_CORE_ALPHA = 0.9f
+/** 主带峰值不透明度（还会再乘呼吸包络 `beat`）。拉高到 1.0：用户反馈"看不见"，宁可过曝。 */
+private const val HANDLE_GLOW_CORE_ALPHA = 1.0f
 
-/** 外层辉光的不透明度峰值（同样乘 `beat`）。 */
-private const val HANDLE_GLOW_BLOOM_ALPHA = 0.55f
+/**
+ * 外层辉光的不透明度峰值（同样乘 `beat`），再按 [HANDLE_GLOW_BLOOM_LAYER_ALPHAS] 逐层递减。
+ *
+ * §体验修正：0.55 + 5dp 模糊 + 只往左溢 0–5dp，结果是"光基本还在条里、条外几乎看不见"。
+ * 现在提到 0.85 并配 9dp 模糊 + 大幅左溢 + 纵向外扩（见 [HANDLE_GLOW_BLOOM_LAYER_SCALES]
+ * 与 [HANDLE_GLOW_BLOOM_SPILL_SCALE]），让条左侧有一圈**一眼能看见**的光环。
+ */
+private const val HANDLE_GLOW_BLOOM_ALPHA = 0.85f
 
-/** 辉光的模糊半径（px 由 dp 换算）：越大越柔，但太大会糊成一团、也更容易顶到屏幕边缘。 */
-private const val HANDLE_GLOW_BLOOM_RADIUS_DP = 5f
+/** 辉光的模糊半径（越大越柔、越"光晕"）。9dp 在 48dp 命中区里仍然收得住，不会糊成一团。 */
+private const val HANDLE_GLOW_BLOOM_RADIUS_DP = 9f
+
+/**
+ * 辉光的层宽（以条宽为单位，从内到外）。三层叠出"细芯 → 亮晕 → 大范围柔光"。
+ *
+ * 关键：**最外层要比条宽大得多**（2.6×9dp ≈ 23dp），这样无论主带在条内哪个位置，
+ * 光晕都必然从条的左缘漏出去一大截 —— 这是"存在感"的唯一来源，
+ * 因为条的右侧只剩 3dp（见 [HANDLE_EDGE_GAP_DP]），光只能往左走。
+ */
+private val HANDLE_GLOW_BLOOM_LAYER_SCALES = floatArrayOf(0.9f, 1.7f, 2.6f)
+
+/** 三层辉光的 alpha 系数（乘 [HANDLE_GLOW_BLOOM_ALPHA]）。外层更淡 = 边缘渐隐，不会像硬边方块。 */
+private val HANDLE_GLOW_BLOOM_LAYER_ALPHAS = floatArrayOf(1.0f, 0.55f, 0.30f)
+
+/**
+ * 辉光往条**上下**外扩多少（以条宽为单位）。
+ *
+ * §体验修正的关键之一：上一版 bloom 的纵向范围就是条高（28dp），只沿条宽方向扩张，
+ * 于是整块光晕基本躺在条里、再被条本体盖掉 —— 条外什么都看不见。
+ * 现在光晕比条高出一大截（约 28dp + 2×15dp），横向又只往左，于是形成一个
+ * 明显偏向左侧的大光斑，"光从条里漏出来"这件事才看得见。
+ */
+private const val HANDLE_GLOW_BLOOM_SPILL_SCALE = 1.7f
 
 /**
  * 辉光允许"往条的左侧"溢出多远（以命中区宽度为单位的**左边界**）。
@@ -566,10 +643,10 @@ private const val HANDLE_GLOW_BLOOM_RADIUS_DP = 5f
  * 条距屏幕右缘只有 [HANDLE_EDGE_GAP_DP]（= 3dp）。
  * 也就是说条的**右侧**只剩 3dp 就到屏幕边缘（再往外就是系统侧滑/返回的手势区），
  * 光绝对不能往右边溢。所以 bloom 的右边界被夹在条的右缘，只让光从条**左侧**漏出去。
- * 0.08 这个比例 ≈ 左边界不越过 x = 3.8dp（离左窗缘还有 3.8dp 余量），
- * 既保证光不会出窗、也留出足够的溢出空间。
+ * 0.04 这个比例 ≈ 左边界不越过 x = 1.9dp（离左窗缘还有约 1.9dp 余量）——
+ * 比之前更贴边，纯粹是为了在"光只能往左走"的约束下再多挤出一点溢出宽度。
  */
-private const val HANDLE_GLOW_BLOOM_LIMIT_RATIO = 0.08f
+private const val HANDLE_GLOW_BLOOM_LIMIT_RATIO = 0.04f
 
 /** 条圆角（与原来 `RoundedCornerShape(5.dp)` 一致；绘制层是按形状手画的，所以要有这个常量）。 */
 private const val HANDLE_BAR_CORNER_DP = 5
@@ -581,18 +658,20 @@ private const val HANDLE_BAR_HEIGHT_DP = 28
 private const val HANDLE_BAR_BORDER_DP = 1f
 
 /**
- * 主带（近白亮核）的亮度目标：accent 提亮到 0.9 左右。
+ * 主带（近白亮核）的亮度目标：accent 提亮到 0.95 左右。
  *
- * 为什么不是纯白：9dp 的窄条上纯白会把主题色彻底盖掉，看起来像"贴了一条白胶带"；
- * 留 ~0.8 的饱和度让色相还在（青/蓝/紫），只是"被点亮到快爆"。
- * 这个值**不随色相漂移** —— 拖尾越远越暗，但主带始终是最亮的那个。
+ * §体验修正：原来 value 0.90 + 峰值 alpha 0.9 + 渐变两端透明（条内实际只有中间一段亮），
+ * 叠在 alpha 0.72 的条本体上就被压成了"一条淡色带"。现在 near-white 0.95、
+ * 峰值 alpha 1.0，并让主带**比条更宽**（[HANDLE_GLOW_CORE_HALF_SCALE]），
+ * 让整条都被"灌亮"，而不是只有中间一个尖峰。
+ * 仍留 ~0.75 的饱和度：纯白会把主题色彻底盖掉，看起来像"贴了一条白胶带"。
  */
-private const val HANDLE_GLOW_CORE_SATURATION = 0.80f
-private const val HANDLE_GLOW_CORE_VALUE = 0.90f
+private const val HANDLE_GLOW_CORE_SATURATION = 0.75f
+private const val HANDLE_GLOW_CORE_VALUE = 0.95f
 
 /** 拖尾的亮度/饱和度：比主带低一档，于是"主带在过曝、余晖只是有色"。 */
 private const val HANDLE_GLOW_TRAIL_SATURATION = 0.92f
-private const val HANDLE_GLOW_TRAIL_VALUE = 0.74f
+private const val HANDLE_GLOW_TRAIL_VALUE = 0.80f
 
 /** 每条拖尾相对前一条的色相漂移（1.0 = 一整圈）。0.10 × 2 条 ≈ 青 → 蓝 → 紫。 */
 private const val GLOW_HUE_STEP = 0.10f
@@ -606,8 +685,15 @@ private const val GLOW_BEAT_PERIOD = 1200f
 /** 一拍里"亮着"的比例：0.58 × 1200 ≈ 0.7s 亮 / 0.5s 暗。 */
 private const val GLOW_BEAT_DUTY = 0.58f
 
-/** 暗段最低亮度（不要在 9dp 上真的灭到看不见，否则像"闪一下"而不是呼吸）。 */
-private const val GLOW_BEAT_MIN = 0.30f
+/**
+ * 暗段最低亮度。
+ *
+ * §体验修正：原来 0.30 —— 一拍 1200ms 里亮段只占 58%，再乘一个会掉到 0.30 的包络，
+ * 实际观感是"大半时间都暗着"，用户说的"不像在发光"很可能就来自这里。
+ * 现在抬到 0.62：暗谷仍然比峰谷有变化（呼吸感还在），但**任何时刻都不会低于六成亮**，
+ * 符合用户"一直炫光流彩"的原话。
+ */
+private const val GLOW_BEAT_MIN = 0.62f
 
 /** 亮起用的幂次（>1 = 起得慢一点 = 更像"吸气"）。 */
 private const val GLOW_BEAT_ATTACK_POW = 1.6f
@@ -729,3 +815,16 @@ private fun Color.lit(
 private const val HANDLE_PULSE_DURATION_MS = 900
 private const val HANDLE_PULSE_SCALE_Y = 0.18f
 private const val HANDLE_PULSE_SHIFT_DP = 3f
+
+// ───────────────── 流光可观测性（临时排查用，定位完可整段删） ─────────────────
+
+/**
+ * 是否为流光打 debug 日志。
+ *
+ * ⚠️ 这是**临时**排查开关（起因：用户实测"看不到流光"，但无法判断是"没触发"还是"看不见"）。
+ * 默认 true；定位完把这里改 false（或把上面那段 `if (GLOW_DEBUG) { … }` 连同这两个常量一起删）
+ * 即可彻底零开销 —— 注意 `false` 时 `if` 里的 `LaunchedEffect` 连组合都不进，不留协程。
+ * 日志 tag 固定用 [GLOW_DEBUG_TAG]，用户复现一次后 `adb logcat -s HandleGlow` 即可。
+ */
+private const val GLOW_DEBUG = true
+private const val GLOW_DEBUG_TAG = "HandleGlow"

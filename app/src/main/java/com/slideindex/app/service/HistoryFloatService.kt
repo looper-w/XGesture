@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -33,6 +34,7 @@ import com.slideindex.app.overlay.history.HistoryFloatContent
 import com.slideindex.app.overlay.history.HistoryNoteSlotWindow
 import com.slideindex.app.overlay.history.HistorySavePeekWindow
 import com.slideindex.app.overlay.history.HistorySaveSignal
+import com.slideindex.app.overlay.history.StashReminderPendingState
 import com.slideindex.app.settings.HistoryFloatHandlePosition
 import com.slideindex.app.settings.HistoryFloatHandleWidth
 import com.slideindex.app.stash.StashAccess
@@ -40,6 +42,7 @@ import com.slideindex.app.stash.StashCoordinator
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -65,6 +68,12 @@ class HistoryFloatService : Service() {
     private var peekWindow: HistorySavePeekWindow? = null
     /** 长按把手的就地输入槽（懒创建）。 */
     private var slotWindow: HistoryNoteSlotWindow? = null
+    /**
+     * 「提醒流光」自愈轮询的退避状态（见 [refreshHandlePendingGlow]）。
+     * `0L` = 还没算过 → 下一次 tick 立刻算（这就是"启动即恢复"）。单位 ms。
+     */
+    private var pendingGlowBackoffMs = 0L
+    private var pendingGlowRefreshedAtMs = 0L
     /** [HistorySaveSignal] 的普通回调（Service 里没有组合上下文）。 */
     private val saveListener: (String) -> Unit = { text ->
         // 把手自己都被藏起来时（全屏/横屏/息屏）不要凭空冒出一个预览。
@@ -90,6 +99,9 @@ class HistoryFloatService : Service() {
         override fun run() {
             updateFullscreenVisibility()
             refreshHandleAlert()
+            // 顺带把"提醒流光"的开关也算一遍（§0.16.x：进程重启后把手不亮）。
+            // 复用这个已在跑的 500ms tick，不额外起协程；真正的 refresh 由内部节流到 30s 一次。
+            refreshHandlePendingGlow()
             mainHandler.postDelayed(this, FULLSCREEN_CHECK_INTERVAL_MS)
         }
     }
@@ -305,6 +317,52 @@ class HistoryFloatService : Service() {
         }
     }
 
+    /**
+     * 让"提醒流光"的开关在**进程刚起来**时也能亮起来（§0.16.x 实测"通知还在、条不亮"）。
+     *
+     * 为什么必须有这一步：[StashReminderPendingState.hasPending] 是**纯内存**的
+     * （初值 false），而它的 `refresh(context)` 原先只在三处被调：提醒通知发出/稍后（receiver）、
+     * 通知里的按钮 trampoline、以及**面板可见时**（`HistoryPanelScreen` 的 LaunchedEffect + 2s 轮询）。
+     * 于是**杀掉进程 / 重装 App / 系统重启之后**：通知明明还挂在通知栏里、数据层也还有"已过点未完成"
+     * 的提醒，但这个 Boolean 没人去算，把手就永远不亮 —— 直到用户去打开一次面板。
+     * 用户复现的正是这条路径（装完新包就把面板关着看条）。
+     *
+     * 为什么 30s 轮询 + 退避重试：
+     * - 这不是 UI 驱动，而是"自愈"：通知被 ROM 静默清掉、或数据层晚于本服务挂上（冷启动时序）
+     *   都能靠下一拍纠正，用户最多等 30s，可接受；
+     * - `refresh` 本身很轻（一次 `getActiveNotifications` + 一次偏好读 + 一遍提醒表），30s 一次无所谓；
+     * - **退避**是为了"状态不翻转时不要每 30s 白跑一趟"：连续没有变化就翻倍到 240s 封顶；
+     *   一旦结果翻转（点亮/熄灭）立刻回到 30s，保证关键变化跟得紧。
+     * - 这条自愈轮询挂在**已有的** 500ms [fullscreenCheckRunnable] 上，不额外起协程/计时器；
+     *   首次调用（`pendingGlowBackoffMs == 0L`）会立刻算一次 —— 这就是"进程/服务起来就恢复"。
+     *
+     * ⚠️ 只在 `viewAdded`（把手窗真的上屏了）之后才算：窗口没上屏时算出来也没人看，
+     * 还会把退避计时器提前推进，等真能看见时反而更慢。全屏/横屏/息屏被藏起来的情况
+     * 也应当跳过（那些状态下 `applyFloatVisibility` 只是把窗口透明，`viewAdded` 仍为 true）。
+     */
+    private fun refreshHandlePendingGlow() {
+        // 把手看不见的时候不算：没上屏，或正被全屏/横屏/息屏藏着
+        // （那三种状态下 `applyFloatVisibility` 只是把窗口 alpha 归零，`viewAdded` 仍是 true）。
+        // 这时算出来没人看，还会把退避计时器提前推进，等真能看见时反而更慢。
+        if (!viewAdded || hiddenForFullscreen || hiddenForLandscape || hiddenForScreenOff) return
+        val now = SystemClock.elapsedRealtime()
+        // 首次（0L）立刻算一次：这就是"进程/服务启动后自动恢复"。
+        if (pendingGlowBackoffMs != 0L && now - pendingGlowRefreshedAtMs < pendingGlowBackoffMs) return
+        // 放到 Default 线程算：`refresh` 里有 `getActiveNotifications` 和偏好读取，
+        // 虽然很轻，但这里是 500ms 的服务 tick（主线程），不该把 IO/系统调用压在主线程上。
+        // 它内部只写一个 Compose state（`hasPending`），从后台线程写是安全的。
+        pendingGlowRefreshedAtMs = now
+        deps.applicationScope.launch(Dispatchers.Default) {
+            val changed = StashReminderPendingState.refresh(applicationContext)
+            pendingGlowBackoffMs = if (changed) {
+                PENDING_GLOW_MIN_INTERVAL_MS
+            } else {
+                (maxOf(pendingGlowBackoffMs, PENDING_GLOW_MIN_INTERVAL_MS) * 2)
+                    .coerceAtMost(PENDING_GLOW_MAX_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun updateFullscreenVisibility() {
         if (!viewAdded) {
             return
@@ -383,5 +441,9 @@ class HistoryFloatService : Service() {
                 LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 LayoutParams.FLAG_HARDWARE_ACCELERATED
         private const val FULLSCREEN_CHECK_INTERVAL_MS = 500L
+
+        /** 「提醒流光」自愈轮询的间隔：有变化时 30s 一次，长期无变化就退避到 240s。 */
+        private const val PENDING_GLOW_MIN_INTERVAL_MS = 30_000L
+        private const val PENDING_GLOW_MAX_INTERVAL_MS = 240_000L
     }
 }

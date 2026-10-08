@@ -5,31 +5,12 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
 
 /**
- * 「记一条」草稿里的一个**块**（§0.16.16 块编辑器）。
- *
- * 为什么需要它：本仓库解析到的 foundation（1.13.0-alpha03）里
- * `BasicTextField(state = TextFieldState)` **没有** `inlineContent` 参数，
- * `TextFieldState` 上也**没有** `appendInlineContent`（那个只存在于 `AnnotatedString.Builder`，
- * 且只被 `BasicText` 消费）。也就是说"文字流里嵌一张图"这条路在本版本里走不通 ——
- * 想让图片**真的出现在正文里**、和文字按顺序排，只能把正文拆成**有序的块**：
- * 每个块要么是一段文字，要么是一张图。
- *
- * ⚠️ 块顺序 = 落盘 `contentBlocks` 的顺序（卡片展开时也按这个顺序画），
- * 所以 `blocks` 是**唯一真相**，见 [StashComposerDraft] 的说明。
- */
-internal sealed interface DraftBlock {
-    /** 稳定 id：Compose 的 `key`、每块的 `FocusRequester` 表、焦点衔接都要用它。 */
-    val id: String
-
-    /** 一段文字（可以是空串 —— 空块正是"图片下面还能点到光标"的落点）。 */
-    data class Text(override val id: String, val value: String) : DraftBlock
-
-    /** 一张图：trampoline 解码后落在 cache 里的临时文件绝对路径。 */
-    data class Image(override val id: String, val path: String) : DraftBlock
-}
-
-/**
  * 「记一条」的草稿（§0.16.14，§0.16.16 起正文改成块序列）。
+ *
+ * ⚠️ 块类型 [DraftBlock] 本身**不在这里**（§0.16.17 挪到了同包的 `DraftBlock.kt`）：
+ * 它现在有**两个**使用方 —— 本对象与就地编辑条的 [EditSessionDraft]；
+ * 收尾规则与两条镜像的重算也一并挪过去了（[syncDraftMirrors] / [normalizeDraftBlocks]），
+ * 免得两个草稿各写一份、慢慢走偏。本文件只剩"弹窗这一份草稿"自己的东西。
  *
  * 为什么是**进程级单例**而不是 `remember { mutableStateOf(...) }`：
  * 面板是一个 overlay 窗，切前台 App / 拉起系统相册时系统会把整个窗摘掉
@@ -101,51 +82,35 @@ internal object StashComposerDraft {
     val reminderAtMs = mutableStateOf<Long?>(null)
 
     /**
-     * 已选图片的**只读投影**（所有图片块的 cache 临时文件路径，按正文顺序），由 [updateBlocks] 同步。
+     * 已选图片的**只读投影**（所有图片块的路径，按正文顺序），由 [updateBlocks] 同步。
      *
-     * ⚠️ 同上：改图请改 [blocks]。
+     * ⚠️ 弹窗这边的块**只装 cache 临时文件绝对路径**（新选的图还没落盘），
+     * 所以这个投影就是"待保存的临时图路径"，可以直接拿去解码/删除。
+     * （编辑条的 [EditSessionDraft.imagePaths] 语义不同：那里混着暂存夹文件名。）
+     *
+     * ⚠️ 不要在 UI 里写它：写 [blocks]（经 [updateBlocks]）才是改正文的唯一方式。
      */
     val imagePaths = mutableStateOf<List<String>>(emptyList())
 
-    /** 单调递增的块 id 来源。进程级计数器，重启后从头来过也无所谓（id 只在本进程内有意义）。 */
-    private var nextId = 1
-
-    /** 取一个新的块 id（`c1` / `c2` …，人肉读日志时比 UUID 好认）。 */
-    fun newBlockId(): String = "c${nextId++}"
-
     /**
-     * 一个新的**空**文字块。
+     * 一个新的**空**文字块（清空草稿时用；id 走 [newDraftBlockId] 全局单调，不会和现有块撞）。
      *
-     * ⚠️ 它**不**经 [updateBlocks]：调用方拿到的是"还没插进正文的块"（光标处切块、
-     * 删图之后补位都要它），插进去那一步才走 [updateBlocks]。id 走 [newBlockId] 全局单调，
-     * 所以不会和现有块撞（Compose 的 `key` / 焦点表都按 id 认块）。
+     * ⚠️ 它**不**经 [updateBlocks]：拿到的是"还没插进去的块"，插进去那一步才走 [updateBlocks]。
      */
-    fun newEmptyTextBlock(): DraftBlock.Text = DraftBlock.Text(id = newBlockId(), value = "")
+    fun newEmptyTextBlock(): DraftBlock.Text = newEmptyDraftTextBlock()
 
     /**
      * 改块序列的**唯一入口**：写完顺序收尾（补齐空块、刷新镜像）。
      *
      * 为什么要一个入口：镜像（[text] / [imagePaths]）必须和块**永远一致** ——
      * 散着改的话，只要漏掉一处同步，"空内容判断"和"存下时的顺序"就会各说各话。
+     *
+     * 收尾与镜像重算在 [syncDraftMirrors]（与 [EditSessionDraft] 共用同一份实现，
+     * 免得两个草稿的"什么算正文"慢慢走偏）。
      */
     fun updateBlocks(transform: (List<DraftBlock>) -> List<DraftBlock>) {
-        val next = normalizeComposerBlocks(transform(blocks.toList()))
+        val next = syncDraftMirrors(transform(blocks.toList()), text, imagePaths)
         blocks.clear()
         blocks.addAll(next)
-        text.value = next.filterIsInstance<DraftBlock.Text>()
-            .map { it.value }
-            .filter { it.isNotBlank() }
-            .joinToString("\n")
-        imagePaths.value = next.filterIsInstance<DraftBlock.Image>().map { it.path }
     }
 }
-
-/**
- * 收尾：一张 `DraftBlock` 都没有时补一个空文字块。
- *
- * 为什么**只**保证"至少一个文字块"、不去合并相邻空块：用户手上有两个挨着的空块是
- * 完全合法的中途状态（删掉中间一张图就会留下它），这时硬合并会把光标/焦点从用户
- * 刚站住的那个块上挪走。真正的合并交给"存下"那一步（空文字块本来就会被跳过）。
- */
-private fun normalizeComposerBlocks(blocks: List<DraftBlock>): List<DraftBlock> =
-    blocks.ifEmpty { listOf(StashComposerDraft.newEmptyTextBlock()) }

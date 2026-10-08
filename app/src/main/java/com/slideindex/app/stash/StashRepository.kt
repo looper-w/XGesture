@@ -292,6 +292,194 @@ class StashRepository @Inject constructor(
         }
     }
 
+    /**
+     * 暂存夹里某张图片的**绝对路径**（§0.16.17）。
+     *
+     * 用途只有"显示"：条目里的图片块存的是**文件名**（`ClipboardContentBlock.fileName`），
+     * 而 `BitmapFactory` / Compose 需要一个真路径。就地编辑条的块编辑器靠它把
+     * "已有图片"显示出来。
+     *
+     * 为什么在这里给一个方法、而不是让 UI 自己拼 `imageDir`：图片目录是仓储的实现细节
+     * （`STASH_DIR_NAME/IMAGE_DIR_NAME`），UI 拼一次就等于把它写死在两个地方。
+     *
+     * ⚠️ **不**检查文件是否存在：调用方（Compose 侧）自己会按"解码失败"兜底，
+     * 而这里只是"文件名 → 路径"的字符串拼接（IO 也不该在组合里做）。
+     */
+    fun imageFilePath(fileName: String?): String? {
+        val name = fileName?.takeIf { it.isNotBlank() } ?: return null
+        return File(imageDir, name).absolutePath
+    }
+
+    /**
+     * **整体替换**某条目的块序列（§0.16.17）：就地编辑条保存时按块顺序写回。
+     *
+     * 语义（与 [addRich] / [appendImages] 同一套"要么全成、要么不改"）：
+     * - 锁内**重新读盘 → 定位那一条 → 用传入的块顺序整体替换 → 整表写回**（不与别的写路径互相覆盖）；
+     * - 文本块 `trim()` 后为空一律**丢弃**；图片块**按顺序**落盘成新文件，
+     *   文件名用 `"${entryId}_edit_${序号}.png"` 且**绝不覆盖**已有文件（[nextEditImageFileName]）；
+     * - 任何一张图存不下来、或整表写不进去 → 把本次已经写下的图片文件删掉、索引保持原样、返回 false；
+     * - `imageFileName` 指向**第一个图片块**（没有图片块则保留原值），`type` 升到
+     *   [StashEntryType.RICH]（卡片里的富图缩略图是 RICH 门控的，不升就等于"存了但看不见"）；
+     * - `createdAtEpochMs` / `pinDisplay*` / `starred` / `htmlText` / `text` 之外的元数据一概不动
+     *   （完成态、标签、提醒在 `StashMetaRepository`，本方法不碰）。
+     *
+     * ⚠️ 与 [updateText] 的分工：`updateText` 只改**第一个**文字块（老编辑条那条路），
+     * 本方法是"整份正文 + 图片"都按块顺序替换。新代码（编辑条）只走这一条。
+     */
+    suspend fun replaceBlocks(entryId: String, parts: List<StashRichPart>): Boolean {
+        if (entryId.isBlank()) return false
+        return withContext(Dispatchers.IO) {
+            withCrossProcessWrite {
+                val current = readFromDisk()
+                val index = current.indexOfFirst { it.id == entryId }
+                if (index < 0) return@withCrossProcessWrite false
+                val entry = current[index]
+                val keptText = parts.filterIsInstance<StashRichPart.Text>()
+                    .map { it.text.trim() }
+                    .filter { it.isNotEmpty() }
+                    .joinToString("\n\n")
+                    .ifBlank { null }
+                replaceBlocksInternal(
+                    current = current,
+                    index = index,
+                    entry = entry,
+                    parts = parts,
+                    keptText = keptText,
+                )
+            }
+        }
+    }
+
+    /**
+     * 与 [replaceBlocks] 同一件事，但图片块**只带文件名、不重新落盘**（§0.16.17 的撤销用）。
+     *
+     * 为什么需要它：撤销"改了一次正文"要能把块序列**原样**放回去。走 [replaceBlocks] 的话
+     * 图片会被重新编码成一批新文件（慢、还平白多出一堆孤儿文件），而撤销要还原的本来就是
+     * "原来那几张文件"。这里直接按文件名重建 `contentBlocks`，不碰任何图片文件。
+     *
+     * ⚠️ `block.fileName` 指向的文件**必须已经存在**（就是撤回来的那一批）；不存在就跳过该块，
+     * 不报错、也不调用 `saveImage`（不覆盖、不新建）。
+     */
+    suspend fun replaceBlockFileNames(
+        entryId: String,
+        blocks: List<ClipboardContentBlock>,
+    ): Boolean {
+        if (entryId.isBlank()) return false
+        return withContext(Dispatchers.IO) {
+            withCrossProcessWrite {
+                val current = readFromDisk()
+                val index = current.indexOfFirst { it.id == entryId }
+                if (index < 0) return@withCrossProcessWrite false
+                val entry = current[index]
+                val rebuilt = blocks.mapNotNull { block ->
+                    when (block.kind) {
+                        ClipboardBlockKind.TEXT -> block.text.trim().takeIf { it.isNotEmpty() }
+                            ?.let { ClipboardContentBlock.text(it) }
+
+                        ClipboardBlockKind.IMAGE -> block.fileName.takeIf { it.isNotBlank() }
+                            ?.takeIf { File(imageDir, it).exists() }
+                            ?.let { ClipboardContentBlock.image(it) }
+                    }
+                }
+                if (rebuilt.isEmpty()) return@withCrossProcessWrite false
+                val firstImage = rebuilt.firstOrNull { it.kind == ClipboardBlockKind.IMAGE }?.fileName
+                    ?.takeIf { it.isNotBlank() } ?: entry.imageFileName
+                val next = current.toMutableList().also {
+                    it[index] = entry.copy(
+                        type = StashEntryType.RICH,
+                        text = rebuilt.filter { b -> b.kind == ClipboardBlockKind.TEXT }
+                            .joinToString("\n\n") { b -> b.text }
+                            .ifBlank { null },
+                        contentBlocks = rebuilt,
+                        imageFileName = firstImage,
+                    )
+                }
+                try {
+                    writeToDisk(next)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "replaceBlockFileNames: index write failed", t)
+                    return@withCrossProcessWrite false
+                }
+                _entries.value = next
+                true
+            }
+        }
+    }
+
+    /** [replaceBlocks] 的锁内实现（拆出来只为让主方法读起来是"语义"而不是"十行样板"）。 */
+    private suspend fun replaceBlocksInternal(
+        current: List<StashEntry>,
+        index: Int,
+        entry: StashEntry,
+        parts: List<StashRichPart>,
+        keptText: String?,
+    ): Boolean {
+        val savedFiles = mutableListOf<String>()
+        val contentBlocks = mutableListOf<ClipboardContentBlock>()
+        var imageIndex = 0
+        for (part in parts) {
+            when (part) {
+                is StashRichPart.Text -> {
+                    val trimmed = part.text.trim()
+                    if (trimmed.isEmpty()) continue
+                    contentBlocks += ClipboardContentBlock.text(trimmed)
+                }
+
+                is StashRichPart.Image -> {
+                    val fileName = nextEditImageFileName(entry.id, imageIndex++)
+                    val saved = saveImage(fileName, part.bitmap)
+                    if (saved == null) {
+                        // 半路失败：把这一批已经落盘的文件收回，索引保持原样（要么全成、要么不改）。
+                        savedFiles.forEach { File(imageDir, it).delete() }
+                        Log.w(TAG, "replaceBlocks: saveImage failed, rolled back ${savedFiles.size} file(s)")
+                        return false
+                    }
+                    savedFiles += saved
+                    contentBlocks += ClipboardContentBlock.image(saved)
+                }
+            }
+        }
+        if (contentBlocks.isEmpty()) {
+            savedFiles.forEach { File(imageDir, it).delete() }
+            return false
+        }
+        val firstImage = contentBlocks.firstOrNull { it.kind == ClipboardBlockKind.IMAGE }?.fileName
+            ?.takeIf { it.isNotBlank() } ?: entry.imageFileName
+        val next = current.toMutableList().also {
+            it[index] = entry.copy(
+                // 不升 type 就是"存了但看不见"（与 appendImages 同一条理由）。
+                type = StashEntryType.RICH,
+                text = keptText,
+                contentBlocks = contentBlocks,
+                imageFileName = firstImage,
+            )
+        }
+        try {
+            writeToDisk(next)
+        } catch (t: Throwable) {
+            savedFiles.forEach { File(imageDir, it).delete() }
+            Log.w(TAG, "replaceBlocks: index write failed, rolled back", t)
+            return false
+        }
+        _entries.value = next
+        return true
+    }
+
+    /**
+     * 整体替换时新图的文件名：`"${entryId}_edit_${序号}.png"`，**绝不覆盖已有文件**。
+     *
+     * 与 [nextAppendImageFileName] 同一套做法（含"跳过已占用名字"的兜底），
+     * 只是前缀换成 `edit`：一眼能看出这批图是"编辑时替换进来的"。
+     */
+    private fun nextEditImageFileName(entryId: String, startIndex: Int): String {
+        var index = startIndex.coerceAtLeast(0)
+        while (true) {
+            val candidate = "${entryId}_edit_$index.png"
+            if (!File(imageDir, candidate).exists()) return candidate
+            index++
+        }
+    }
+
     suspend fun delete(id: String) {
         withContext(Dispatchers.IO) {
             withCrossProcessWrite {
@@ -555,7 +743,13 @@ class StashRepository @Inject constructor(
     }
 
     /**
-     * 改一条记录的正文。
+     * 改一条记录的正文（**只改第一个文字块**）。
+     *
+     * ⚠️ §0.16.17 起**不再被就地编辑条使用**：编辑条改成块编辑器之后，正文/图片一律走
+     * [replaceBlocks]（按块顺序整体替换）。这个方法保留有两个原因：
+     * ① 它是"只想改第一个文字块、不想动别的块"的那种窄改（卡片上还有些只改正文的入口）；
+     * ② 别的地方还有调用点，删掉会把改动面推出去。
+     * 新代码要改正文请用 [replaceBlocks] —— 它才表达得出"文字与图片交错的顺序"。
      *
      * 之前仓储**完全没有**改正文的接口（只有 [toggleStar] 这一个窄改），所以设计稿里
      * 「点卡片 → 就地编辑」是新增能力，不是改造。

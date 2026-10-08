@@ -113,6 +113,34 @@ data class HistorySearchBootstrap(
     val query: String,
 )
 
+/**
+ * 把编辑条的一份块序列转成"**只带文件名**"的落盘块序列（§0.16.17 撤销用）。
+ *
+ * 为什么需要这个转换：撤销要走 `StashRepository.replaceBlockFileNames`（按文件名重建、
+ * **不**重新落盘、不覆盖文件），它只认 `ClipboardContentBlock` 的文件名。
+ * 而草稿里的图片块有两种路径（见 [DraftBlock.Image] 的 KDoc）：
+ * - **暂存夹文件名**（条目里原本就有的图）→ 能按名字还原，收进结果；
+ * - **cache 绝对路径**（用户本次新选、还没落盘过的图）→ 没有文件名可还原，跳过
+ *   （撤销后正文里不再有它；它的临时文件由调用方保存成功时删掉/由 `pruneOrphanImages` 收敛）。
+ *
+ * @param existingImageFileNames 条目**保存前**就有的图片文件名集合：用来判断一个路径
+ *   到底是不是"已有文件"（比 `File(path).isAbsolute` 更准 —— 暂存夹里的名字永远不是绝对路径，
+ *   但这里再按"确实在这条条目里"确认一次，避免撤销时凭空塞进一张不属于它的图）。
+ */
+private fun blockFileNamesOf(
+    blocks: List<DraftBlock>,
+    existingImageFileNames: Set<String>,
+): List<com.slideindex.app.clipboard.ClipboardContentBlock> =
+    blocks.mapNotNull { block ->
+        when (block) {
+            is DraftBlock.Text -> block.value.trim().takeIf { it.isNotEmpty() }
+                ?.let { com.slideindex.app.clipboard.ClipboardContentBlock.text(it) }
+
+            is DraftBlock.Image -> block.path.takeIf { it in existingImageFileNames }
+                ?.let { com.slideindex.app.clipboard.ClipboardContentBlock.image(it) }
+        }
+    }
+
 @Composable
 internal fun HistoryPanelScreen(
     gravityEnd: Boolean,
@@ -238,26 +266,23 @@ internal fun HistoryPanelScreen(
      * ⚠️ 它**允许**继续是组合内的 state：它整份都能从数据层重建（`entry` + `stashMeta`），
      * 窗被摘掉之后重开编辑条就是重新快照一次而已。真正必须活得比组合长的是
      * "用户改过的那部分" —— 正文 / 标签 / 已选图，那些在 [EditSessionDraft] 里（§0.16.14），
-     * 而且是**实时**写进去的（编辑条的 `onTextChange` / `onTagsChange`）。
+     * 而且**实时**写进去（编辑条的 `onBlocksChange` / `onTagsChange` —— 正文/图片现在是块序列，
+     * 见 [EditSessionDraft.blocks]）。
      *
      * 喂回去的路（窗被系统摘掉 → 组合重建 → 用户再点这条编辑）：
-     * ① `openEdit` → [EditSessionDraft.begin]（同 id 保留草稿）→ `editTarget` 重新快照；
-     * ② 正文 / 标签走下面的 `barTarget`（用草稿覆盖 `target` 的 `text` / `tagNames`，
-     *    编辑条 `remember(target.entryId)` 时取到的就是草稿）；
-     * ③ 图片走 [editImagePaths]（本来就是 [EditSessionDraft.imagePaths] 的代理）。
+     * ① `openEdit` → [EditSessionDraft.begin]（同 id 保留草稿）+ [EditSessionDraft.seedFromEntry]
+     *    （这条还没有草稿时，把条目现有的块按原顺序铺进去，§0.16.17）；
+     * ② 正文 / 图片走 [editBlocks]；标签走 [EditSessionDraft.tags]。
      */
     var editTarget by remember { mutableStateOf<HistoryEditTarget?>(null) }
     var editBarHeight by remember { mutableStateOf(0.dp) }
     /**
-     * 就地编辑条里"补图"已选的图片（§0.16.14，与加号弹窗同一套 trampoline 路径）。
+     * 就地编辑条的**正文块序列**（§0.16.17，与加号弹窗同一套块编辑器）。
      *
-     * ⚠️ 它现在代理到**进程级单例** [EditSessionDraft]（和 [StashComposerDraft] 同一套做法）：
-     * 以前是 `remember(editTarget?.entryId)`，窗被系统摘掉（切前台 App / 拉起相册，§0.16.13）
-     * 之后组合重建，刚选好的图就没了 —— 用户感受是"选完图回来图全丢"。
-     * 换条目的清空改由 [EditSessionDraft.begin] 负责（它同时把上一条遗留的临时图删掉），
-     * 所以这里不再需要 `remember(entryId)`，下面所有读写点一字不差。
+     * ⚠️ 与 [composerBlocks] 一样：`SnapshotStateList` **不是** `State`，只能直接引用、不能 `by`。
+     * 草稿本体在进程级单例 [EditSessionDraft] 里（窗被系统摘掉也不丢），这里只是接上它。
      */
-    var editImagePaths by EditSessionDraft.imagePaths
+    val editBlocks = EditSessionDraft.blocks
     /** 标签管理浮窗（§0.16.4 待办 2）：与输入条/编辑条**同一套居中模态壳**。 */
     var tagManagerOpen by remember { mutableStateOf(false) }
     val composerFocusRequester = remember { FocusRequester() }
@@ -525,11 +550,16 @@ internal fun HistoryPanelScreen(
      *
      * §0.16.14：先 [EditSessionDraft.begin] —— 换条目时旧草稿作废（连带删掉它遗留的 cache 临时图），
      * 同一条重复打开**保持**已有草稿（这正是"窗被摘掉再回来，改了一半的正文/勾过的标签/刚选的图
-     * 还在"的关键）。快照本身仍然只取数据层原值，草稿的优先级由渲染处的 seed 决定。
+     * 还在"的关键）。
+     *
+     * §0.16.17：紧接着 [EditSessionDraft.seedFromEntry] 把条目**现有的块**按原顺序铺进编辑器
+     * —— 这就是"已有图片的闪念，再次编辑能看到图"的那一步。它内部只在"这条还没有任何内容块"
+     * 时才铺，所以同一条重复打开**不会**用条目原值盖掉用户改到一半的草稿。
      */
     val openEdit: (com.slideindex.app.stash.StashEntry) -> Unit = { entry ->
         composerOpen = false
         EditSessionDraft.begin(entry.id)
+        EditSessionDraft.seedFromEntry(entry)
         editTarget = HistoryEditTarget(
             entryId = entry.id,
             text = entry.text.orEmpty(),
@@ -1271,78 +1301,105 @@ internal fun HistoryPanelScreen(
                         imeBottom = overlayImeBottom,
                         blurActive = panelBlurActive,
                         /**
-                         * 正文改成**实时**进草稿（§0.16.14）：编辑条每敲一个字都回调，
-                         * 所以"打了一半就切走 App / 拉相册"也不丢 —— 窗被系统摘掉后组合重建，
-                         * 用户再点这条编辑时 `barTarget` 就会把这份正文喂回去。
+                         * §0.16.17：正文是**块序列**（唯一真相在 [EditSessionDraft.blocks]，这里直接引用）。
                          *
-                         * 空串回落 `null`：老语义是"留空 = 不改正文"（`onSave` 里仍按 `isBlank()`
-                         * 判断是否写库），草稿也照这个语义表达"没改过正文"，免得下次打开拿一份
-                         * 空草稿把编辑条清空。
+                         * 老实现是"正文串走 `onTextChange` 实时进草稿"—— 现在块编辑器把整份新块序列
+                         * 交回来（打字 / 插图 / 删图 / 语音都走它），落到草稿的那一步就是 `updateBlocks`
+                         * （它同时刷新 `text` / `imagePaths` 两条投影）。
                          */
-                        // 删空正文时**存空串**，不要回落 null：null 只表示"从没改过正文"，
-                        // 否则"我把正文删光了"下次打开会看到原正文复活（D 交接时点出的语义坑）。
-                        onTextChange = { value -> EditSessionDraft.text.value = value },
+                        blocks = editBlocks,
+                        onBlocksChange = { transform -> EditSessionDraft.updateBlocks(transform) },
                         onTagsChange = { value -> EditSessionDraft.tags.value = value },
-                        onSave = { text, tags ->
-                            val entry = stashEntries.firstOrNull { it.id == target.entryId }
-                            val beforeText = entry?.text.orEmpty()
+                        onSave = { tags, newImagePaths ->
+                            /**
+                             * §0.16.17：保存**按块顺序**整体写回。
+                             *
+                             * 为什么不再走"`updateText` + `appendImages`"那两刀：
+                             * ① `updateText` 只会改**第一个**文字块，用户在中间插的图、拆开的段落全对不上；
+                             * ② `appendImages` 只会把图**追加到末尾**，而现在图是插在正文中间的。
+                             * 所以这里把 `editBlocks` 拍成快照 → 解码新图 → `replaceBlocks` 一次写完。
+                             *
+                             * ⚠️ 快照必须**在这里**取（`scope.launch` 之外）：下面 `onDone` 里会
+                             * `EditSessionDraft.clear()`，取晚了就读到空的了。
+                             */
+                            val beforeBlocks = editBlocks.toList()
                             val beforeTags = stashMeta.tagsOf(target.entryId)
-                            // 待追加的图片在**动手之前**取快照：下面会把 editTarget 清掉，
-                            // 而草稿（[EditSessionDraft]）可能在保存成功那一刻被整体清掉
-                            // （取晚了就读到空的了）。
-                            val pendingImages = editImagePaths
-                            // ⚠️ 正文/标签**不在这里写草稿**：下面 `onTextChange` / `onTagsChange`
-                            // 已经逐字、逐次实时写过了（§0.16.14），到这里草稿就是最新的。
+                            /**
+                             * 这条条目**原本就有**的图片文件名（保存前的快照）。
+                             *
+                             * 用途只有一个：撤销时把块序列按**文件名**还原（`replaceBlockFileNames`
+                             * 只认文件名、不重新落盘）。用户本次新选的那几张图这时还没有文件名
+                             * （它们只是 cache 里的绝对路径），所以还原不了 —— 见下面的说明。
+                             */
+                            val editEntryExistingImageNames = stashEntries
+                                .firstOrNull { it.id == target.entryId }
+                                ?.allImageFileNames()
+                                .orEmpty()
+                                .toSet()
                             scope.launch {
-                                // 正文留空 = 不改正文（设计稿 `if (v) s.text = v`），只存标签。
-                                val ok = if (text.isBlank()) true else {
-                                    stashRepo?.updateText(target.entryId, text) ?: false
-                                }
-                                metaRepo?.setTags(target.entryId, tags)
-                                editTarget = null
-                                haptics.confirm()
-                                // 正文/标签这条路走完了，草稿的使命就结束了 —— 立刻清掉，
-                                // 否则下次打开这条编辑条会拿着一份"已经落盘的旧草稿"当初始值。
-                                // （下面还有待追加图片时不清：那份草稿要留到追加成功，见那里。）
-                                if (pendingImages.isEmpty()) EditSessionDraft.clear()
-                                // 补图这条路**不给撤销**：仓储的追加接口没有"删掉刚追加的那几张"，
-                                // 所以这里只提示、不摆一个"撤销"按钮出来骗人（§0.16.14）。
-                                if (ok && pendingImages.isEmpty()) {
-                                    showUndoMessage(R.string.stash_edit_saved) {
-                                        scope.launch {
-                                            if (beforeText.isNotBlank()) {
-                                                stashRepo?.updateText(target.entryId, beforeText)
+                                val parts = withContext(Dispatchers.IO) {
+                                    beforeBlocks.mapNotNull { block ->
+                                        when (block) {
+                                            is DraftBlock.Text -> block.value.trim()
+                                                .takeIf { it.isNotEmpty() }
+                                                ?.let { StashRichPart.Text(it) }
+
+                                            is DraftBlock.Image -> {
+                                                // 已有的图（暂存夹文件名）与本次新选的图（cache 绝对路径）
+                                                // 走**同一个** decode：对 BitmapFactory 来说都只是一个路径。
+                                                val path = stashRepo?.imageFilePath(block.path) ?: block.path
+                                                decodeStashImageFile(path)
+                                                    ?.let { StashRichPart.Image(it) }
                                             }
-                                            metaRepo?.setTags(target.entryId, beforeTags)
                                         }
                                     }
                                 }
-                                if (pendingImages.isNotEmpty()) {
-                                    // 解码离开主线程：一张长边 2048 的图解码不便宜。
-                                    val bitmaps = withContext(Dispatchers.IO) {
-                                        pendingImages.mapNotNull { decodeStashImageFile(it) }
-                                    }
-                                    if (bitmaps.isEmpty()) {
-                                        // 一张都没解出来：正文/标签已经存下了，但图没进去，不能谎称成功。
-                                        // 草稿**留着**（临时图也不删）：用户收起再点同一条编辑还能接着重试。
-                                        showPanelMessage(R.string.stash_save_failed)
+                                if (parts.isEmpty()) {
+                                    // 一张图都没解出来、文字也全空：不谎称成功，草稿留着可重试。
+                                    showPanelMessage(R.string.stash_save_failed)
+                                    return@launch
+                                }
+                                val beforeBlockFiles = blockFileNamesOf(
+                                    beforeBlocks,
+                                    existingImageFileNames = editEntryExistingImageNames,
+                                )
+                                StashCoordinator.replaceBlocks(target.entryId, parts) { ok ->
+                                    if (ok) {
+                                        // ⚠️ `metaRepo?.setTags` 是 **suspend fun**，而这个 `onDone`
+                                        // （`StashCoordinator.replaceBlocks` 的回调）是**普通** lambda：
+                                        // 直接调会报 "Suspension functions can only be called within
+                                        // coroutine body"。所以这里**必须**再包一层 `scope.launch`
+                                        // （下面 `showUndoMessage` 里那条 undo 也是同一个道理）。
+                                        //
+                                        // 只用 `scope.launch` 包住这一句、不把整段挪进去：标签写库是"随后就到"
+                                        // 的副作用，而 `editTarget = null`（收起编辑条）/ 触感 / 清草稿
+                                        // 必须**当场**发生，晚一帧会让用户看到编辑条闪一下、甚至被重组刷回去。
+                                        scope.launch { metaRepo?.setTags(target.entryId, tags) }
+                                        editTarget = null
+                                        haptics.confirm()
+                                        // 图已经拷进仓库了：cache 里那批新选的临时文件可以删，草稿整份清掉。
+                                        EditSessionDraft.clear()
+                                        newImagePaths.forEach { path -> runCatching { File(path).delete() } }
+                                        showUndoMessage(R.string.stash_edit_saved) {
+                                            scope.launch {
+                                                // 撤销：把**保存前**的块序列放回去。
+                                                //
+                                                // ⚠️ 走 `replaceBlockFileNames`（只按文件名重建、**不**重新落盘）
+                                                // 而不是 `replaceBlocks`：后者会把那几张图重新编码成一批新文件，
+                                                // 撤销一次就多一堆孤儿文件，而且原来的文件还留着。
+                                                // 代价是"保存前刚**新选**、还没落盘过"的图没有文件名可还原 ——
+                                                // 那种块在 `blockFileNamesOf` 里被跳过（撤销后那几张图不在正文里了，
+                                                // 但仍是正常的暂存夹文件，由启动时的 `pruneOrphanImages` 收敛）。
+                                                stashRepo?.replaceBlockFileNames(
+                                                    target.entryId,
+                                                    beforeBlockFiles,
+                                                )
+                                                metaRepo?.setTags(target.entryId, beforeTags)
+                                            }
+                                        }
                                     } else {
-                                        StashCoordinator.appendImages(target.entryId, bitmaps) { appended ->
-                                            if (appended) {
-                                                showPanelMessage(R.string.stash_edit_saved)
-                                                // 图已经拷进仓库了：cache 里这份临时文件可以删，整份草稿也清掉
-                                                // （`clear()` 自己会删 [EditSessionDraft.imagePaths] 里的图，
-                                                //  但这里的 `pendingImages` 是保存前的快照，两边都删一道更保险：
-                                                //  追加成功时两者本来是同一批路径）。
-                                                EditSessionDraft.clear()
-                                                pendingImages.forEach { path ->
-                                                    runCatching { File(path).delete() }
-                                                }
-                                            } else {
-                                                // 失败：草稿**留着**（临时图也不删），用户可以再点一次保存重试。
-                                                showPanelMessage(R.string.stash_save_failed)
-                                            }
-                                        }
+                                        // 失败：草稿**留着**（临时图也不删），用户可以再点一次保存重试。
+                                        showPanelMessage(R.string.stash_save_failed)
                                     }
                                 }
                             }
@@ -1377,21 +1434,28 @@ internal fun HistoryPanelScreen(
                                 ?.let { deleteEntry(it) }
                         },
                         onVoiceError = showPanelMessage,
-                        imagePaths = editImagePaths,
-                        onAddImage = {
+                        onAddImage = { onPicked ->
                             // §0.16.14：与加号弹窗同一条路 —— 先挂起面板窗，再走中转 Activity 选图；
                             // 回调里第一件事是恢复（取消也要恢复，否则面板一直不可见）。
+                            //
+                            // §0.16.17：**不在这里插块** —— 路径原样交回编辑条，由它按"当前光标"切块插入
+                            // （与弹窗完全同一套；在这里插只能追加到末尾，那就退回老行为了）。
                             StashPanelExternalUi.suspend?.invoke()
                             StashComposerImageTrampolineActivity.launch(appContext) { picked ->
                                 StashPanelExternalUi.resume?.invoke()
-                                if (picked.isNotEmpty()) {
-                                    editImagePaths = (editImagePaths + picked).distinct()
-                                }
+                                if (picked.isNotEmpty()) onPicked(picked.distinct())
                             }
                         },
-                        onRemoveImage = { path ->
-                            editImagePaths = editImagePaths - path
-                            runCatching { File(path).delete() }
+                        onRemoveNewImage = { path ->
+                            // 块的增删由编辑条做完（这里是"删了之后要干什么"）：只删 **cache 临时文件**
+                            // —— 判据是绝对路径，正文里**已有**的图存的是暂存夹文件名，
+                            // 拿它去 delete 会删掉用户的原图。
+                            if (File(path).isAbsolute) runCatching { File(path).delete() }
+                        },
+                        resolveImagePath = { name ->
+                            // 已有图片块存的是**文件名**，得拼成暂存夹里的绝对路径才解得出图
+                            // （这就是"再次编辑能看到已有图片"的关键一步）。
+                            stashRepo?.imageFilePath(name) ?: name
                         },
                         onHeightChanged = { editBarHeight = it },
                         modifier = Modifier.fillMaxWidth(),

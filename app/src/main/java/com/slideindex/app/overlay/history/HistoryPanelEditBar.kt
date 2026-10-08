@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,9 +39,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +59,20 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *   **面板底部的一条**：面板是 `LazyColumn` + 输入法抬升，跟着卡片定位在滚动/键盘下很容易跑偏。
  * - 设计稿把"追加"折叠进正文输入框（提示"光标已在末尾，可直接追加"），这里**单独给一个追加框
  *   —— 数据层本来就是分开的（`StashMetaRepository.appendText`），追加块也因此永远不覆盖原文。
+ *
+ * ---
+ * ## §0.16.17：正文改成与「记一条」弹窗**同一套块编辑器**
+ *
+ * 老实现是"一个纯文字 `BasicTextField` + 框外一排**本次新选**的缩略图"：条目里**已有**的
+ * 图片块一个都看不见（用户原话："已经存过图的闪念再次编辑发现文本框中不显示图片了"），
+ * 而且那个输入框写死了 `ImeAction.Done`，回车被吃掉、**换不了行**。
+ *
+ * 现在正文是 [DraftBlock] 的有序块流（[DraftBlockEditorSurface]，与弹窗共用一份实现）：
+ * - **回车换行**：`onSubmitKey = null` 时那一层就是 `ImeAction.Default` 且不挂 `onDone`；
+ *   提交只走「保存」按钮（用户明确要求，弹窗那边才是"回车存下"）。
+ * - **已有图片显示出来**：块里存的是暂存夹**文件名**，靠 [resolveImagePath] 拼成路径，
+ *   见调用方（`HistoryPanelScreen`）传进来的实现。
+ * - **光标处插图 / 退格删图 / 空块**：全部复用弹窗那一套（§0.16.16）。
  */
 internal data class HistoryEditTarget(
     val entryId: String,
@@ -81,18 +92,28 @@ internal fun HistoryPanelEditBar(
     availableTags: List<StashTag>,
     imeBottom: Dp,
     blurActive: Boolean,
-    onSave: (text: String, tags: List<String>) -> Unit,
     /**
-     * 正文**每次变化**都回调（用户打字 / 语音识别结果都走它；给的是原始文本，不是 trim 过的）。
+     * 正文/图片块**每次变化**都回调（打字 / 语音 / 插图 / 删图；给的是新的块序列）。
      *
      * 为什么需要它（§0.16.14）：面板是 overlay 窗，切前台 App / 拉起系统相册时会被系统整个摘掉，
-     * 下次打开是**全新的组合** —— 这个文件里的 `remember` 正文会丢。调用方拿这个回调把正文
+     * 下次打开是**全新的组合** —— 这个文件里的 `remember` 块会丢。调用方拿这个回调把块
      * 实时写进**进程级草稿**（[EditSessionDraft]），窗回来时才接得上。
      *
-     * ⚠️ 只通知，**不参与取初值**：正文初值仍然是"打开时取 [HistoryEditTarget.text]"，
-     * 所以传进来的 `target` 里塞草稿（见 `HistoryPanelScreen` 的 `barTarget`）依旧有效。
+     * ⚠️ 只通知，**不参与取初值**：初值仍然是"打开时由调用方回填进 [EditSessionDraft]"，
+     * 所以传进来的 `blocks` 就是唯一真相（本组件不自己 `remember` 一份块序列 —— 那就成了两个真相）。
      */
-    onTextChange: (String) -> Unit = {},
+    blocks: List<DraftBlock>,
+    onBlocksChange: ((List<DraftBlock>) -> List<DraftBlock>) -> Unit,
+    /**
+     * §0.16.17：保存时给的是**标签 + 新选图片的 cache 路径**。
+     *
+     * 正文不再从参数里拿：它就在 [blocks] 里，由调用方从草稿读（这样"正文/图片按块顺序写回"
+     * 与"块编辑器显示的内容"必然是同一份）。
+     *
+     * `imagePaths` 只装**本次新选的**图（cache 临时文件，调用方保存时 decode + 落盘；
+     * 已有的图在 `blocks` 里、按文件名复用，不重新落盘）。
+     */
+    onSave: (tags: List<String>, imagePaths: List<String>) -> Unit,
     /** 标签**每次勾选/取消**都回调（整份新集合）。同上：只通知，不改初值语义。 */
     onTagsChange: (Set<String>) -> Unit = {},
     onAppend: (String) -> Unit,
@@ -100,26 +121,24 @@ internal fun HistoryPanelEditBar(
     onToggleReminder: () -> Unit,
     onDelete: () -> Unit,
     onVoiceError: (Int) -> Unit = {},
-    /**
-     * 已选图片的本地路径（trampoline 落下来的，见 §0.16.14）。
-     *
-     * ⚠️ 编辑条**只负责选/删**，图片落盘由调用方在保存时走 `StashCoordinator.appendImages`
-     * —— 所以 [onSave] 的 `(text, tags)` 语义一个字都不变。
-     */
-    imagePaths: List<String> = emptyList(),
     /** 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。 */
-    onAddImage: () -> Unit = {},
-    onRemoveImage: (String) -> Unit = {},
+    onAddImage: (onPicked: (List<String>) -> Unit) -> Unit = {},
+    /** 删掉一个**新选**的图片块（✕ 或退格）：调用方要把 cache 里那份临时文件也删掉。 */
+    onRemoveNewImage: (String) -> Unit = {},
+    /**
+     * 块里的路径 → 能解码的路径。
+     *
+     * ⚠️ 必须有：已有图片块存的是**文件名**（`ClipboardContentBlock.fileName`），
+     * 直接丢给 `BitmapFactory` 是解不出来的（当前目录里没有这个文件）。
+     * 调用方用 `StashAccess.repository?.imageFilePath(name)` 拼。
+     */
+    resolveImagePath: (String) -> String,
     onHeightChanged: (Dp) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MiuixTheme.colorScheme
     val density = LocalDensity.current
     val textFocusRequester = remember { FocusRequester() }
-    var text by remember(target.entryId) {
-        // 光标停在末尾：设计稿「光标已在末尾，可直接追加」。
-        mutableStateOf(TextFieldValue(target.text, TextRange(target.text.length)))
-    }
     var append by remember(target.entryId) { mutableStateOf("") }
     var tags by remember(target.entryId) { mutableStateOf(target.tagNames) }
 
@@ -161,20 +180,10 @@ internal fun HistoryPanelEditBar(
                 color = scheme.onSurfaceVariantSummary,
                 modifier = Modifier.weight(1f),
             )
-            // 语音：设计稿 `.editbar .meta .mic`，识别结果追加到正文（光标跟着到末尾）。
-            HistoryVoiceMicButton(
-                onResult = { recognized ->
-                    val current = text.text
-                    val merged = if (current.isBlank()) recognized else "$current $recognized"
-                    text = TextFieldValue(merged, TextRange(merged.length))
-                    // 语音识别也是"正文变了"：同样实时上报（不然说完话切走就丢）。
-                    onTextChange(merged)
-                },
-                onError = onVoiceError,
-                // 设计稿 `.editbar .meta .mic { width:30px; height:30px }`，图标 16px。
-                size = 34.dp,
-                iconSize = 16.dp,
-            )
+            // ⚠️ §0.16.17：语音按钮**不再**放在这行 —— 它跟着块编辑器走
+            // （见下面 `DraftBlockEditorSurface` 的 `showVoiceButton = true`）。
+            // 理由是"识别结果要插到光标处"：光标只在块编辑器内部，按钮放外面就只能"追加到末尾"
+            // （老行为），或者需要在两层之间来回传一个"这次该插哪"的请求。
             // 已设提醒时把时间摆出来（点击按钮可取消）。
             target.reminderAtMs?.let { at ->
                 Row(
@@ -195,53 +204,29 @@ internal fun HistoryPanelEditBar(
                 }
             }
         }
-        BasicTextField(
-            value = text,
-            onValueChange = {
-                text = it
-                // 逐字实时上报：调用方据此写进程级草稿（§0.16.14，窗被摘掉也不丢）。
-                onTextChange(it.text)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .heightIn(min = 160.dp, max = 320.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(scheme.surfaceContainer)
-                .border(width = 1.dp, color = scheme.dividerLine, shape = RoundedCornerShape(12.dp))
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-                .focusRequester(textFocusRequester),
-            textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 15.sp,
-                lineHeight = 21.6.sp,
-                color = scheme.onSurface,
-            ),
-            cursorBrush = SolidColor(scheme.primary),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+        // §0.16.17：正文交给**与弹窗共用**的块编辑器。
+        //
+        // ⚠️ 四处参数是"编辑条与弹窗的差异"，都写在这儿而不是藏进共用组件里：
+        // ① `onSubmitKey = null` ⇒ **回车换行**（回归修复，用户明确要求；提交只走「保存」）；
+        // ② `hint = null` ⇒ 编辑条不给占位提示（老实现也没有）；
+        // ③ `focusDelegation = false` ⇒ 主输入框的焦点在打开时就抢好了，插块之后**不要**再抢
+        //    （抢了会把 IME 收起来，用户得再点一次输入框）；弹窗那边则相反；
+        // ④ `onTextInsertedAtCursor` ⇒ 语音插进哪一块只有本层知道，插完把**算好的**新块序列
+        //    转给调用方（不重算：重算必然插错块）。
+        DraftBlockEditorSurface(
+            blocks = blocks,
+            onBlocksChange = onBlocksChange,
+            onAddImage = onAddImage,
+            onRemoveNewImage = onRemoveNewImage,
+            onVoiceError = onVoiceError,
+            onSubmitKey = null,
+            hint = null,
+            focusRequester = textFocusRequester,
+            focusDelegation = false,
+            resolveImagePath = resolveImagePath,
+            showVoiceButton = true,
+            onTextInsertedAtCursor = { updated -> onBlocksChange { updated } },
         )
-        // 给已有条目补图（§0.16.14）：与加号弹窗**同一套**「＋ 图片」胶囊 + 缩略图
-        // （缩略图直接复用 HistoryComposerThumbnail，连 ✕ 的无障碍文案都不用再写一遍）。
-        // 位置跟弹窗保持一致：正文下面、标签行上面。
-        FlowRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            HistoryChip(
-                label = stringResource(R.string.stash_composer_image_add),
-                dotColor = null,
-                selected = false,
-                onClick = onAddImage,
-            )
-            imagePaths.forEach { path ->
-                HistoryComposerThumbnail(
-                    path = path,
-                    onRemove = { onRemoveImage(path) },
-                )
-            }
-        }
         FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -308,7 +293,16 @@ internal fun HistoryPanelEditBar(
             HistoryEditActionButton(
                 label = stringResource(R.string.stash_edit_save),
                 icon = Icons.Default.Check,
-                onClick = { onSave(text.text.trim(), tags) },
+                // §0.16.17：正文/图片都在 [blocks] 里，由调用方从草稿读；这里只交标签与
+                // **本次新选**的图片路径（已有的图在 blocks 里、按文件名复用）。
+                onClick = {
+                    onSave(
+                        tags,
+                        blocks.filterIsInstance<DraftBlock.Image>()
+                            .map { it.path }
+                            .filter { it != resolveImagePath(it) },
+                    )
+                },
                 primary = true,
                 modifier = Modifier.weight(1f),
             )

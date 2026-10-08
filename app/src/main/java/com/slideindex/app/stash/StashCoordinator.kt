@@ -158,6 +158,48 @@ object StashCoordinator {
         }
     }
 
+    /**
+     * **整体替换**某条目的块序列（§0.16.17）：就地编辑条保存时按块顺序写回。
+     *
+     * 与 [appendImages] 同一套写法：先 copy 一份 bitmap（调用方手上的图可能马上被回收/复用），
+     * 再交给仓储（它负责"要么全成、要么不改"与文件名不覆盖）；仓储返回 false
+     * （条目没了 / 图片落盘失败 / 整表写不进去，文件已回滚）时不发保存脉冲。
+     *
+     * 为什么不让调用方直接用仓储：协调层才是"通知把手侧刚存下一条"的唯一入口
+     * （`HistorySaveSignal`，见 [notifySaved]）——编辑条保存也要让把手脉冲一下。
+     */
+    fun replaceBlocks(entryId: String, parts: List<StashRichPart>, onDone: (Boolean) -> Unit = {}) {
+        val repo = StashAccess.repository
+        if (repo == null) {
+            onDone(false)
+            return
+        }
+        val copied = parts.mapNotNull { part ->
+            when (part) {
+                is StashRichPart.Text -> part
+                is StashRichPart.Image -> {
+                    val copy = part.bitmap.copy(part.bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+                        ?: return@mapNotNull null
+                    StashRichPart.Image(copy)
+                }
+            }
+        }
+        if (copied.none { it is StashRichPart.Image } && copied.none {
+                it is StashRichPart.Text && it.text.isNotBlank()
+            }
+        ) {
+            onDone(false)
+            return
+        }
+        scope.launch {
+            val ok = repo.replaceBlocks(entryId, copied)
+            if (ok) {
+                notifySaved(copied.filterIsInstance<StashRichPart.Text>().joinToString("\n") { it.text })
+            }
+            onDone(ok)
+        }
+    }
+
     fun pinImageFromStash(context: Context, entry: StashEntry, bitmap: Bitmap) {
         ScreenPinManager.pinFromStashImage(
             context = context,
