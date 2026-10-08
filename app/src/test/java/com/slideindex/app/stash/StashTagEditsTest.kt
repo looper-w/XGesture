@@ -101,4 +101,64 @@ class StashTagEditsTest {
         assertNull(StashTagEdits.setColor(store(), "工作", 0xFF5B8DF6))
         assertNull(StashTagEdits.setColor(store(), "不存在", 0xFF8A93A8))
     }
+
+    /* ---------------- 排序（§0.16.5，UI 拖拽的落点） ---------------- */
+
+    private fun namesInOrder(store: StashMetaStore) =
+        store.tags.sortedBy { it.order }.map { it.name }
+
+    @Test
+    fun `move rewrites every order so the sequence stays 0 to n-1`() {
+        // 起始 order = [工作 0, 想法 1, 待办 2]
+        val toFront = StashTagEdits.move(store(), "待办", 0)!!
+        assertEquals(listOf("待办", "工作", "想法"), namesInOrder(toFront))
+        assertEquals(listOf(0, 1, 2), toFront.tags.sortedBy { it.order }.map { it.order })
+
+        val toBack = StashTagEdits.move(store(), "工作", 2)!!
+        assertEquals(listOf("想法", "待办", "工作"), namesInOrder(toBack))
+        assertEquals(listOf(0, 1, 2), toBack.tags.sortedBy { it.order }.map { it.order })
+    }
+
+    @Test
+    fun `move into the middle and out of range both land somewhere sane`() {
+        assertEquals(
+            listOf("工作", "待办", "想法"),
+            namesInOrder(StashTagEdits.move(store(), "待办", 1)!!),
+        )
+        // 越界夹到两端，越界后等于原位 = 没变化。
+        assertEquals(
+            listOf("待办", "工作", "想法"),
+            namesInOrder(StashTagEdits.move(store(), "待办", -5)!!),
+        )
+        assertEquals(
+            listOf("想法", "待办", "工作"),
+            namesInOrder(StashTagEdits.move(store(), "工作", 99)!!),
+        )
+        assertNull(StashTagEdits.move(store(), "工作", 0))
+    }
+
+    @Test
+    fun `move reports no change for unknown names and heals dirty orders`() {
+        assertNull(StashTagEdits.move(store(), "不存在", 0))
+        // 历史遗留：两枚标签都是 order 2（合并/手改过文件）。重排一次就修好成 0..n-1。
+        val dirty = StashMetaStore(
+            tags = listOf(
+                StashTag("工作", 0xFF5B8DF6, 2),
+                StashTag("想法", 0xFFF0A93B, 2),
+                StashTag("灵感", 0xFFC77DF0, 2),
+            ),
+        )
+        val fixed = StashTagEdits.move(dirty, "灵感", 0)!!
+        assertEquals(listOf("灵感", "工作", "想法"), namesInOrder(fixed))
+        assertEquals(listOf(0, 1, 2), fixed.tags.sortedBy { it.order }.map { it.order })
+    }
+
+    @Test
+    fun `move is allowed for the todo keyword`() {
+        // 只读只针对改名与删除；位置不影响 pendingTodoCount 的关键字语义。
+        assertEquals(
+            listOf("待办", "工作", "想法"),
+            namesInOrder(StashTagEdits.move(store(), StashTagEdits.PROTECTED_TAG_NAME, 0)!!),
+        )
+    }
 }

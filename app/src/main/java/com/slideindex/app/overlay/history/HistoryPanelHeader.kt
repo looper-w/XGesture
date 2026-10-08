@@ -1,7 +1,14 @@
 package com.slideindex.app.overlay.history
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -66,6 +73,12 @@ import androidx.compose.ui.text.input.KeyboardType
  *
  * 注意 demo **没有标题行、也没有图钉**（标题由页签表达）。这里只多保留了 App 自己的
  * "切换左右侧"按钮，样式照 `.x` 抄（见 `docs/capsule-refactor-plan.md` §0.16）。
+ *
+ * **滚动收起**（§0.16.5，[collapsed]）：列表往下滑时把**第一行**（搜索 + 条数 + 关闭）整行收起，
+ * 顶部留白 40→10dp，省下约 84dp（头部 178dp → 94dp，接近一半）。**页签与筛选行不动**：
+ * 它们一个是导航、一个是"我现在筛着什么"的状态指示，收起来用户就不知道列表为什么这么短了。
+ * 收起时**关闭键不丢** —— 它挪到页签行右端（同一个 `✕`，同一条右边缘），否则用户滑到半截
+ * 想关面板就只能靠点空白或返回键。
  */
 @Composable
 internal fun HistoryPanelHeader(
@@ -81,6 +94,8 @@ internal fun HistoryPanelHeader(
     /** 点搜索框时请宿主先"让窗口可聚焦 + 延时抢焦点"（overlay 窗默认 NOT_FOCUSABLE，见 Screen 里的 effect）。 */
     onSearchRequestFocus: () -> Unit,
     onDismiss: () -> Unit,
+    /** 列表滑离顶部 → 收起第一行。宿主负责判断"该不该收"（搜索中/输入中不许收，见 Screen）。 */
+    collapsed: Boolean = false,
     /**
      * 页签下方那一排胶囊（闪念 = 标签筛选，剪贴板 = 固定筛选）。
      *
@@ -91,45 +106,84 @@ internal fun HistoryPanelHeader(
     modifier: Modifier = Modifier,
 ) {
     val theme = historyTheme()
-    Column(modifier = modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 40.dp)) {
-        // ---- 第一行：搜索 + 条数 + （切边） + 关闭 ----
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+    // 高度类动画一律走"改尺寸"（padding / AnimatedVisibility 的 shrink），**不用 graphicsLayer 平移**：
+    // 平移图层会让面板那层自绘磨砂的快照不刷新，顶上会出现那层"雾"（见计划里"拖动时的雾"）。
+    val topPadding by animateDpAsState(
+        targetValue = if (collapsed) HistoryHeaderCollapsedTopPadding else HistoryHeaderTopPadding,
+        animationSpec = tween(HistoryDurations.d3, easing = HistoryEasing.out),
+        label = "headerTopPadding",
+    )
+    val tabsTopPadding by animateDpAsState(
+        targetValue = if (collapsed) 8.dp else 14.dp,
+        animationSpec = tween(HistoryDurations.d3, easing = HistoryEasing.out),
+        label = "headerTabsTopPadding",
+    )
+    Column(modifier = modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = topPadding)) {
+        // ---- 第一行：搜索 + 条数 + 关闭（滑走时整行收起）----
+        AnimatedVisibility(
+            visible = !collapsed,
+            enter = fadeIn(tween(HistoryDurations.d2)) +
+                expandVertically(tween(HistoryDurations.d3, easing = HistoryEasing.out)),
+            exit = fadeOut(tween(HistoryDurations.d1)) +
+                shrinkVertically(tween(HistoryDurations.d3, easing = HistoryEasing.out)),
         ) {
-            HistorySearchField(
-                query = searchQuery,
-                onQueryChange = onSearchQueryChange,
-                hint = searchHint,
-                focusRequester = searchFocusRequester,
-                onFocusChanged = onSearchFocusChanged,
-                onRequestFocus = onSearchRequestFocus,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = countLabel,
-                style = TextStyle(fontSize = HistoryFontSizes.tiny),
-                color = theme.text,
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-            )
-            // 设计稿头部就是 [搜索][条数][✕] 三样，**没有图钉**。
-            // （"面板在左还是在右"是**手势动作的参数**，见 `ActionExecutor.side`，不靠面板里的按钮切。）
-            HistoryHeaderCircleButton(
-                icon = Icons.Default.Close,
-                contentDescription = null,
-                onClick = onDismiss,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                HistorySearchField(
+                    query = searchQuery,
+                    onQueryChange = onSearchQueryChange,
+                    hint = searchHint,
+                    focusRequester = searchFocusRequester,
+                    onFocusChanged = onSearchFocusChanged,
+                    onRequestFocus = onSearchRequestFocus,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = countLabel,
+                    style = TextStyle(fontSize = HistoryFontSizes.tiny),
+                    color = theme.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                )
+                // 设计稿头部就是 [搜索][条数][✕] 三样，**没有图钉**。
+                // （"面板在左还是在右"是**手势动作的参数**，见 `ActionExecutor.side`，不靠面板里的按钮切。）
+                HistoryHeaderCircleButton(
+                    icon = Icons.Default.Close,
+                    contentDescription = null,
+                    onClick = onDismiss,
+                )
+            }
         }
 
-        // ---- 页签：34dp 分段控件 + 滑动指示片 ----
-        HistoryPanelTabs(
-            labels = tabLabels,
-            selectedIndex = selectedTabIndex,
-            onTabSelected = onTabSelected,
-            modifier = Modifier.padding(top = 14.dp),
-        )
+        // ---- 页签：34dp 分段控件 + 滑动指示片（收起时右端补上关闭键）----
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = tabsTopPadding),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HistoryPanelTabs(
+                labels = tabLabels,
+                selectedIndex = selectedTabIndex,
+                onTabSelected = onTabSelected,
+                modifier = Modifier.weight(1f),
+            )
+            AnimatedVisibility(
+                visible = collapsed,
+                enter = fadeIn(tween(HistoryDurations.d2)) +
+                    expandHorizontally(tween(HistoryDurations.d3, easing = HistoryEasing.out)),
+                exit = fadeOut(tween(HistoryDurations.d1)) +
+                    shrinkHorizontally(tween(HistoryDurations.d3, easing = HistoryEasing.out)),
+            ) {
+                HistoryHeaderCircleButton(
+                    icon = Icons.Default.Close,
+                    contentDescription = null,
+                    onClick = onDismiss,
+                    size = HistoryHeaderCollapsedCloseSize,
+                )
+            }
+        }
 
         // ---- 筛选行（闪念 = 标签，剪贴板 = 固定分类）----
         if (chipRow != null) {
@@ -139,6 +193,15 @@ internal fun HistoryPanelHeader(
         }
     }
 }
+
+/** 展开时的顶部留白（设计稿 `.head { padding: 40px 16px 0 }`）。 */
+private val HistoryHeaderTopPadding = 40.dp
+
+/** 收起时的顶部留白：只留"不贴边"的呼吸位。 */
+private val HistoryHeaderCollapsedTopPadding = 10.dp
+
+/** 收起时页签行右端那枚关闭键的尺寸（与 34dp 的页签行等高，不把行撑高）。 */
+private val HistoryHeaderCollapsedCloseSize = 34.dp
 
 /** `.srch`：h40、pill、`--btn-bd` 描边 + `--btn-bg` 底；聚焦时换成 accent 60% 描边 + 6% 底。 */
 @Composable
@@ -262,17 +325,18 @@ private fun HistorySearchField(
     }
 }
 
-/** `.stream .x`：40×40 圆、透明底、sub 色。标签管理浮窗的关闭键也复用它。 */
+/** `.stream .x`：40×40 圆、透明底、sub 色。标签管理浮窗的关闭键也复用它（[size] 可按需收小）。 */
 @Composable
 internal fun HistoryHeaderCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
+    size: androidx.compose.ui.unit.Dp = 40.dp,
 ) {
     val theme = historyTheme()
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(size)
             .clip(CircleShape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

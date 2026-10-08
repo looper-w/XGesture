@@ -94,6 +94,7 @@ import com.slideindex.app.ui.miuix.MiuixTabRowWithContour
 import com.slideindex.app.ui.miuix.consumeExpandableSearchBack
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Text
@@ -151,6 +152,14 @@ internal fun HistoryPanelScreen(
     val expandedEntryIds by viewModel.expandedEntryIds.collectAsStateWithLifecycle()
     val selectedImageIndices by viewModel.selectedImageIndices.collectAsStateWithLifecycle()
     var searchFocused by remember { mutableStateOf(false) }
+    /**
+     * 当前页的列表是否已经滑离顶部 —— 决定头部第一行收不收起来（§0.16.5）。
+     *
+     * 由**两个页签各自的列表**上报（只有"自己这一页是当前页"时才报，否则两页会互相打架），
+     * 因为 `LazyListState` 现在还留在各自的 tab body 里（它是 load-more 判断、新条目回顶等
+     * 逻辑的锚点，搬出来动的地方比这个功能本身还多）。
+     */
+    var listScrolled by remember { mutableStateOf(false) }
     /** 深链带 query 进来时把光标请进搜索框（现在搜索框是常驻的，不再有"展开"这回事）。 */
     val searchFocusRequester = remember { FocusRequester() }
     val searchFocusScope = rememberCoroutineScope()
@@ -735,6 +744,9 @@ internal fun HistoryPanelScreen(
                     // 只负责把窗口切成可聚焦；抢焦点由搜索框自己在 `LaunchedEffect(editorEnabled)` 里做。
                     onSearchRequestFocus = { onSearchFocusChanged(true) },
                     onDismiss = onDismiss,
+                    // 收起条件：滑离顶部 **且** 没在搜索（有查询词时那颗词得一直看得见，
+                    // 输入框聚焦时更不能收 —— 收起会把输入框从组合里摘掉，输入法会当场掉）。
+                    collapsed = listScrolled && activeSearchQuery.isBlank() && !searchFocused,
                     chipRow = {
                         // 两个页签同一位置的一行胶囊：闪念 = 标签（末尾 ＋ 进管理），剪贴板 = 固定筛选。
                         when (selectedTab) {
@@ -796,6 +808,7 @@ internal fun HistoryPanelScreen(
                                 onClearSearch = { viewModel.setStashSearchQuery("") },
                                 onClearTagFilter = { viewModel.setSelectedTag(null) },
                                 onShowMessage = showPanelMessage,
+                                onListScrolledChange = { listScrolled = it },
                             )
                             HistoryPanelTab.Clipboard -> HistoryClipboardTabBody(
                                 totalCount = clipboardViewCount,
@@ -814,6 +827,7 @@ internal fun HistoryPanelScreen(
                                 onEnsureLoaded = viewModel::ensureClipboardPagesLoaded,
                                 onLoadMore = viewModel::loadMoreClipboard,
                                 onShowMessage = showPanelMessage,
+                                onListScrolledChange = { listScrolled = it },
                             )
                         }
                     }
@@ -990,10 +1004,23 @@ private fun HistoryStashTabBody(
     onClearSearch: () -> Unit,
     onClearTagFilter: () -> Unit,
     onShowMessage: (Int) -> Unit,
+    /** 列表滑离顶部 → 上报给宿主决定头部收不收（§0.16.5）。 */
+    onListScrolledChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val collapseThresholdPx = with(LocalDensity.current) { HistoryHeaderCollapseThreshold.roundToPx() }
+    // 只有"这一页是当前页"时才上报：两个页签各有一条列表，同时上报会让头部抖。
+    LaunchedEffect(isActive, listState) {
+        if (!isActive) return@LaunchedEffect
+        snapshotFlow {
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > collapseThresholdPx
+        }
+            .distinctUntilChanged()
+            .collect(onListScrolledChange)
+    }
     val topEntryId = allEntries.firstOrNull()?.id
     var previousTopId by remember { mutableStateOf<String?>(null) }
     var previousIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -1192,10 +1219,22 @@ private fun HistoryClipboardTabBody(
     onEnsureLoaded: () -> Unit,
     onLoadMore: () -> Unit,
     onShowMessage: (Int) -> Unit,
+    /** 列表滑离顶部 → 上报给宿主决定头部收不收（§0.16.5）。 */
+    onListScrolledChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val collapseThresholdPx = with(LocalDensity.current) { HistoryHeaderCollapseThreshold.roundToPx() }
+    LaunchedEffect(isActive, listState) {
+        if (!isActive) return@LaunchedEffect
+        snapshotFlow {
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > collapseThresholdPx
+        }
+            .distinctUntilChanged()
+            .collect(onListScrolledChange)
+    }
     val scheme = MiuixTheme.colorScheme
     val previewWidthPx = historyPreviewWidthPx()
     val previewHeightPx = historyClipboardCardPreviewHeightPx()
@@ -1375,3 +1414,6 @@ private const val HistoryCardFlashVisibleMs = 1_500L
 
 /** 错开淡入窗口的尾量：最后一行延迟之外再留一点动画时间。 */
 private const val STAGGER_TAIL_MS = 400L
+
+/** 列表滑离顶部多少距离后收起头部第一行（太小会"一碰就收"，大了又像没收）。 */
+private val HistoryHeaderCollapseThreshold = 16.dp

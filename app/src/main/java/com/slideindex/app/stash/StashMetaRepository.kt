@@ -172,6 +172,17 @@ class StashMetaRepository @Inject constructor(
     suspend fun setTagColor(name: String, colorArgb: Long): Boolean =
         mutateIfChanged { StashTagEdits.setColor(it, name, colorArgb) }
 
+    /**
+     * 把标签挪到第 [targetIndex] 位（标签排序）。
+     *
+     * ⚠️ **UI 还没接**（§0.16.5）：长按拖拽那套手势单独一轮做，这里先把"重排 = 原子重写
+     * 0..n-1"的语义和边界用例（越界夹取、原位不算变化）钉死在单测里，UI 只负责算目标下标。
+     *
+     * @return 是否真的动了。
+     */
+    suspend fun moveTag(name: String, targetIndex: Int): Boolean =
+        mutateIfChanged { StashTagEdits.move(it, name, targetIndex) }
+
     /* ---------------- 完成态 ---------------- */
 
     fun isDone(entryId: String): Boolean = _store.value.isDone(entryId)

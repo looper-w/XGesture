@@ -81,4 +81,25 @@ object StashTagEdits {
             tags = store.tags.map { if (it.name == trimmed) it.copy(colorArgb = colorArgb) else it },
         )
     }
+
+    /**
+     * 把一枚标签挪到 [targetIndex]（**排序**用，下一步的长按拖拽就落在这里）。
+     *
+     * - 先按 `order` 排好再动，最后**原子地重写 0..n-1**：只改"被移动那一枚"的 order 会留下
+     *   重复或空洞的权重（比如两枚都是 2），之后 `sortedBy` 的先后就成了实现细节，
+     *   UI 上表现为"拖了但没动"或"顺序自己跳"。顺带也把历史遗留的脏 order 修好。
+     * - [targetIndex] 越界就夹到两端；夹完等于原位 = 没变化 → `null`。
+     * - 「待办」**可以**移动：只读只针对改名与删除，位置不影响关键字语义。
+     */
+    fun move(store: StashMetaStore, name: String, targetIndex: Int): StashMetaStore? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return null
+        val ordered = store.tags.sortedBy { it.order }
+        val from = ordered.indexOfFirst { it.name == trimmed }
+        if (from < 0) return null
+        val to = targetIndex.coerceIn(0, ordered.size - 1)
+        if (to == from) return null
+        val reordered = ordered.toMutableList().apply { add(to, removeAt(from)) }
+        return store.copy(tags = reordered.mapIndexed { index, tag -> tag.copy(order = index) })
+    }
 }
