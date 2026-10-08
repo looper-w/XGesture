@@ -8,6 +8,7 @@ import com.slideindex.app.gesture.TriggerHandle
 import com.slideindex.app.overlay.PanelSide
 import com.slideindex.app.otp.OtpKeywords
 import com.slideindex.app.shake.ShakeGestureType
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -99,6 +100,22 @@ class SettingsMutatorsTest {
     }
 
     @Test
+    fun addTriggerHandlePair_persistsFactorySlotsForNewGroup() = runBlocking {
+        // 新触钮的出厂动作必须真正落盘：只进内存的话重启后又会退回"借用 default 组"。
+        val handleCountBefore = awaitSettings().leftTriggerHandles.size
+
+        repository.addTriggerHandlePair()
+
+        val snapshot = awaitSettings { it.leftTriggerHandles.size == handleCountBefore + 1 }
+        val newId = snapshot.leftTriggerHandles.last().id
+        assertTrue(snapshot.gestureRules.any { it.handleId == newId && it.side == PanelSide.LEFT })
+        assertEquals(
+            GestureAction.Back,
+            snapshot.slotAction(PanelSide.LEFT, GestureTriggerType.SHORT_SWIPE_IN, newId),
+        )
+    }
+
+    @Test
     fun triggerVerticalRange_swapsInvertedBoundsAndMirrorsOppositeSide() = runBlocking {
         repository.setTriggerVerticalRange(
             side = PanelSide.LEFT,
@@ -167,7 +184,16 @@ class SettingsMutatorsTest {
         repository.setShakeGesturesEnabled(true)
         awaitSettings { it.shakeGestureSettings.enabled }
 
-        val snapshot = repository.readSnapshot()
+        // readSnapshot() 读的是后台 IO 收集器维护的缓存，可能比 flow 的第一个发射晚一拍；
+        // 这里等它**有界地**追上（真追不上才失败），避免机器忙时把时序抖动当成断言失败。
+        val snapshot = withTimeout(5_000) {
+            var current = repository.readSnapshot()
+            while (!current.serviceEnabled || !current.shakeGestureSettings.enabled) {
+                delay(10)
+                current = repository.readSnapshot()
+            }
+            current
+        }
         assertTrue(snapshot.serviceEnabled)
         assertTrue(snapshot.shakeGestureSettings.enabled)
     }

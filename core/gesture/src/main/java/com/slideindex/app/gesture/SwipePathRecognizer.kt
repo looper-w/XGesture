@@ -740,6 +740,13 @@ class SwipePathRecognizer(
         ) != null
     }
 
+    /**
+     * 当前首段方向对应的折返触发类型；首段方向还没确定时返回 null。
+     * 供震动等"必须与识别同口径"的判断使用：识别器只在对应槽位配了动作时才认折返
+     * （[directionTrigger] 里的 `options.isTriggerConfigured` 过滤），震动也应按同一个槽位判断。
+     */
+    fun activeReturnSwipeTrigger(): GestureTriggerType? = returnSwipeTriggerType()
+
     /** 当前首段家族对应的折返触发类型。 */
     private fun returnSwipeTriggerType(): GestureTriggerType? = when (firstSegmentDirection) {
         SwipeDirection.UP -> GestureTriggerType.SHORT_SWIPE_UP_AND_BACK

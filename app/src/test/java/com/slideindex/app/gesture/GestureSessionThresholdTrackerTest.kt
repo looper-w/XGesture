@@ -291,6 +291,29 @@ class GestureSessionThresholdTrackerTest {
     }
 
     @Test
+    fun trackDistanceHaptics_inwardReturnUnconfiguredAlongReturnConfigured_doesNotFireGhostHaptic() {
+        // 复现"幽灵震动"：向内折返设成「无」，但沿边折返还配着动作。
+        // 早前震动闸门是三个折返槽位「任一配置即开」，于是向内折返时也白响一声；
+        // 识别器那边会过滤掉未配置的折返（松手只执行基础内滑），震动必须同口径。
+        val alongOnlyTracker = GestureSessionThresholdTracker(
+            pathRecognizer = pathRecognizer,
+            callbacks = callbacks,
+            cancelLongPressCheck = { },
+            isTriggerConfigured = { trigger -> trigger == GestureTriggerType.SHORT_SWIPE_DOWN_AND_BACK },
+        )
+
+        // 向内滑过短距：第 1 声（正常）。
+        pathRecognizer.onTouchMove(80f, 0f)
+        alongOnlyTracker.trackDistanceHaptics(80f, 0f)
+        assertEquals(1, gestureStartCount)
+
+        // 折返回缩：向内折返未配置 → 不应再有第 2 声。
+        pathRecognizer.onTouchMove(40f, 0f)
+        alongOnlyTracker.trackDistanceHaptics(40f, 0f)
+        assertEquals(1, gestureStartCount)
+    }
+
+    @Test
     fun trackDistanceHaptics_firesHoverHapticAfterHoldWithoutIntermediateMoves() {
         pathRecognizer.applyHoverSettings(durationMs = 250L)
         pathRecognizer.onTouchDown(0f, 100f, leftStrip)

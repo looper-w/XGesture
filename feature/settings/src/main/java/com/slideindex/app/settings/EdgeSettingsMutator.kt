@@ -124,21 +124,27 @@ class EdgeSettingsMutator @Inject constructor(
         if (landscape) {
             editLandscapeProfile { it.withAddedBottomTriggerHandle() }
         } else {
-            editTriggerHandleProfile(landscape = false) { it.withAddedBottomTriggerHandle() }
+            editTriggerHandleProfile(landscape = false, writeGestureRules = true) {
+                it.withAddedBottomTriggerHandle()
+            }
         }
 
     suspend fun addTopTriggerHandle(landscape: Boolean = false) =
         if (landscape) {
             editLandscapeProfile { it.withAddedTopTriggerHandle() }
         } else {
-            editTriggerHandleProfile(landscape = false) { it.withAddedTopTriggerHandle() }
+            editTriggerHandleProfile(landscape = false, writeGestureRules = true) {
+                it.withAddedTopTriggerHandle()
+            }
         }
 
     suspend fun addTriggerHandlePair(landscape: Boolean = false) =
         if (landscape) {
             editLandscapeProfile { it.withAddedTriggerHandlePair() }
         } else {
-            editTriggerHandleProfile(landscape = false) { it.withAddedTriggerHandlePair() }
+            editTriggerHandleProfile(landscape = false, writeGestureRules = true) {
+                it.withAddedTriggerHandlePair()
+            }
         }
 
     suspend fun removeTriggerHandle(
@@ -696,8 +702,15 @@ class EdgeSettingsMutator @Inject constructor(
         SettingsTriggerStore.writeLandscapeSettings(prefs, snapshot.mergeLandscapeEdits(updated))
     }
 
+    /**
+     * 编辑触钮布局。[writeGestureRules] 用于"同时改了手势规则"的入口（新增触钮会顺便给新触钮
+     * 落一份出厂动作、补齐对侧时会镜像手势）：这些入口必须把 GESTURE_RULES 一并写回，
+     * 否则规则只进内存、落盘丢失（横屏走 [editLandscapeProfile]，规则由
+     * [SettingsTriggerStore.writeLandscapeSettings] 一并写入）。
+     */
     private suspend fun editTriggerHandleProfile(
         landscape: Boolean,
+        writeGestureRules: Boolean = false,
         block: (AppSettings) -> AppSettings,
     ): Result<Unit> = editor.edit { prefs ->
         val snapshot = SettingsSnapshotReader.read(prefs, context)
@@ -710,6 +723,9 @@ class EdgeSettingsMutator @Inject constructor(
             )
         } else {
             SettingsTriggerStore.writeTriggerHandles(prefs, updated)
+            if (writeGestureRules) {
+                prefs[SettingsPreferenceKeys.GESTURE_RULES] = GestureRuleCodec.encodeAll(updated.gestureRules)
+            }
             updated.leftTriggerHandles.firstOrNull()?.let {
                 prefs[SettingsPreferenceKeys.LEFT_TRIGGER_TOP] = it.topFraction
                 prefs[SettingsPreferenceKeys.LEFT_TRIGGER_HEIGHT] = it.heightFraction

@@ -370,9 +370,10 @@ fun AppSettings.effectiveRule(
             null
         }
     if (custom != null) return custom
-    if (handleId != TriggerHandle.DEFAULT_ID) {
-        return effectiveRule(side, trigger, TriggerHandle.DEFAULT_ID)
-    }
+    // 兜底只到"出厂默认"这一层，**不再回退到别的触钮组**：
+    // 以前非 default 的组会整段借用 `default` 组的动作，于是新组的槽位看起来"全是动作"，
+    // 而且改/删 `default` 组会连带改掉新组里没亲手设过的槽位，用户根本看不出动作属于谁。
+    // 保留出厂这一层是为了"没配过的槽位仍有一个可预期的动作"，它与任何组的数据无关。
     return SideGestureDefaults.rulesFor(side)
         .firstOrNull { it.trigger == trigger && it.action.isEffective() }
 }
@@ -635,6 +636,39 @@ fun AppSettings.withTriggerAlignOppositeSide(
     )
 }
 
+/**
+ * 给新建的触钮落一份**出厂默认**手势规则（写进它自己的 handleId）。
+ *
+ * 为什么必须落盘：`effectiveRule` 对非 [TriggerHandle.DEFAULT_ID] 的 handleId 会回退到
+ * `default` 那组的动作，于是新组的槽位会"跟着别人的组变"，删掉那组还会掉回出厂默认 ——
+ * 用户看不出这些槽位到底属于谁。新建时写入自己的规则后，新组从出生就是独立的一份，
+ * 改任何其他组都不再连带影响它。
+ */
+private fun AppSettings.withFactoryGestureSlots(
+    handleId: String,
+    sides: List<PanelSide>,
+): AppSettings {
+    val added = sides.flatMap { side ->
+        SideGestureDefaults.rulesFor(side).map { rule ->
+            rule.copy(id = GestureRule.slotId(side, rule.trigger, handleId), handleId = handleId)
+        }
+    }
+    if (added.isEmpty()) return this
+    val targetSides = sides.toSet()
+    return withGestureRules(
+        gestureRules.filterNot { it.handleId == handleId && it.side in targetSides } + added,
+    )
+}
+
+/** 仅当该侧还没有这个 handleId 的规则时，补一份出厂默认（补齐对侧时用）。 */
+private fun AppSettings.withFactoryGestureSlotsIfMissing(
+    handleId: String,
+    side: PanelSide,
+): AppSettings {
+    if (gestureRules.any { it.handleId == handleId && it.side == side }) return this
+    return withFactoryGestureSlots(handleId, listOf(side))
+}
+
 fun AppSettings.withAddedTriggerHandlePair(): AppSettings {
     // 若某组只剩一侧，优先补齐对侧并复制手势，避免「删一侧后再添加」变成又一对新触钮。
     val incomplete = triggerCollectionEntries().firstOrNull { entry ->
@@ -654,7 +688,8 @@ fun AppSettings.withAddedTriggerHandlePair(): AppSettings {
         if (source.alignOppositeGestures != false) {
             updated = updated.withGestureSlotsMirroredFromSide(sourceSide, incomplete.handleId)
         }
-        return updated
+        // 没镜像（对齐关闭）时，补回的那侧也要有自己的出厂动作，不能靠借用别组。
+        return updated.withFactoryGestureSlotsIfMissing(incomplete.handleId, missingSide)
     }
 
     val pairId = TriggerHandle.newId()
@@ -669,25 +704,23 @@ fun AppSettings.withAddedTriggerHandlePair(): AppSettings {
             leftTriggerHandles = leftTriggerHandles + leftNew,
             rightTriggerHandles = rightTriggerHandles + rightNew,
         ),
-    )
+    ).withFactoryGestureSlots(pairId, listOf(PanelSide.LEFT, PanelSide.RIGHT))
 }
 
 fun AppSettings.withAddedBottomTriggerHandle(): AppSettings {
     if (bottomTriggerHandles.size >= 10) return this
+    val added = suggestNextBottomTriggerHandle(bottomTriggerHandles)
     return copy(
-        edgeTrigger = edgeTrigger.copy(
-            bottomTriggerHandles = bottomTriggerHandles + suggestNextBottomTriggerHandle(bottomTriggerHandles),
-        ),
-    )
+        edgeTrigger = edgeTrigger.copy(bottomTriggerHandles = bottomTriggerHandles + added),
+    ).withFactoryGestureSlots(added.id, listOf(PanelSide.BOTTOM))
 }
 
 fun AppSettings.withAddedTopTriggerHandle(): AppSettings {
     if (topTriggerHandles.size >= 10) return this
+    val added = suggestNextTopTriggerHandle(topTriggerHandles)
     return copy(
-        edgeTrigger = edgeTrigger.copy(
-            topTriggerHandles = topTriggerHandles + suggestNextTopTriggerHandle(topTriggerHandles),
-        ),
-    )
+        edgeTrigger = edgeTrigger.copy(topTriggerHandles = topTriggerHandles + added),
+    ).withFactoryGestureSlots(added.id, listOf(PanelSide.TOP))
 }
 
 fun AppSettings.withRemovedTriggerHandle(side: PanelSide, handleId: String): AppSettings {
