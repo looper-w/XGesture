@@ -293,15 +293,30 @@ class OverlaySidePanelHost(
         return true
     }
 
-    /** 保持 NOT_FOCUSABLE，仅注册返回键回调，不抢底层 App 焦点/输入法。 */
-    private fun ensurePanelNonFocusable() {
-        panelHost.setInputActive(active = false)
+    /**
+     * 浏览态（没有输入框 / 浮窗）的窗口输入状态。
+     *
+     * ⚠️ **必须可聚焦**：`FLAG_NOT_FOCUSABLE` 的窗口**收不到系统返回派发** —— 面板开着时按返回 /
+     * 边缘手势返回，事件会落到下面那个 App 上（真机实测："返回把底下界面退了，面板还浮在上面"；
+     * 而 `handlePanelBack` 本身是好的，只是没人把事件交给它）。
+     *
+     * 可聚焦 + `FLAG_ALT_FOCUSABLE_IM` 才是想要的组合：**我们收得到返回，但不把输入法抢过来**
+     * —— 这个 flag 的语义正是"可聚焦，但不与输入法交互"（`OverlayFullScreenPanelHost.setAltFocusableIm`）。
+     * 要打字时再由 [activatePanelInputFocus] 清掉它、把输入法指向本窗（原有行为不变）。
+     */
+    private fun ensurePanelBrowsingInput() {
+        panelHost.setInputActive(active = true, requestRootFocus = false)
         panelHost.setAltFocusableIm(enabled = true)
         val view = panelHost.composeView ?: return
-        if (backHandler == null) {
+        val handler = backHandler
+        if (handler == null) {
             backHandler = OverlayViewBackHandler(view, ::handlePanelBack).also {
-                it.attach(requestViewFocus = false)
+                // 现在是真的要收返回键：视图焦点也一并给上（旧版 OnUnhandledKeyEventListener 那条路要用）。
+                it.attach(requestViewFocus = true)
             }
+        } else {
+            // 窗口刚变成可聚焦，注册得重来一次（`OnBackInvokedCallback` 要窗口有 dispatcher）。
+            handler.refresh()
         }
     }
 
@@ -351,7 +366,7 @@ class OverlaySidePanelHost(
 
     private fun notifyPanelShown(onShown: () -> Unit) {
         FloatBallOverlay.notifyPanelAttachedAboveChrome()
-        ensurePanelNonFocusable()
+        ensurePanelBrowsingInput()
         onShown()
         panelHost.composeView?.post {
             onShown()
@@ -408,7 +423,7 @@ class OverlaySidePanelHost(
             activatePanelInputFocus()
         } else {
             panelHost.composeView?.clearFocus()
-            ensurePanelNonFocusable()
+            ensurePanelBrowsingInput()
         }
     }
 
