@@ -3134,6 +3134,7 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_remind_in_hours">In %1$d h</string>
     <string name="stash_remind_clear">Clear reminder</string>
     <string name="stash_remind_snooze_10">Snooze 10 min</string>
+    <string name="stash_remind_overdue_label">Reminded</string>
     <string name="stash_remind_action_done">Done</string>
     <string name="stash_remind_custom">Custom time…</string>
     <string name="stash_remind_presets">Presets</string>

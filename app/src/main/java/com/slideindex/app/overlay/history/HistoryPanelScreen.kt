@@ -196,6 +196,14 @@ internal fun HistoryPanelScreen(
      */
     var reminderPicker by remember { mutableStateOf<HistoryReminderPickerTarget?>(null) }
     var composerText by StashComposerDraft.text
+    /**
+     * 正文光标在**加号弹窗**输入框里的位置（§0.16.15 加图插到光标处）。
+     *
+     * 刻意**不进** [StashComposerDraft]：草稿那份（正文 / 标签 / 图）必须活得比组合长，
+     * 因为选图会把窗摘掉；而光标位置是"这一屏上正在打字"的状态，窗都没了、光标也就没有意义了
+     * （重开时落在 0 = 插到最前面，是能接受的行为）。放进进程级单例反而会多一份"什么时候该清"的负担。
+     */
+    var composerCursor by remember { mutableIntStateOf(0) }
     var composerBarHeight by remember { mutableStateOf(0.dp) }
     /**
      * 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照
@@ -656,6 +664,9 @@ internal fun HistoryPanelScreen(
             composerText = ""
             composerTags = emptySet()
             composerReminderAt = null
+            // 光标一起归零：输入框还开着（发送键不让它关），下次记的那条必须从"文 → 图"重新开始，
+            // 不能沿用上一条留下的位置。
+            composerCursor = 0
             // 设计稿 `addFromComposer()` 里 `filter = null; query = ''`：
             // 不清筛选的话新条目可能正好落在筛选之外，用户会以为没存上。
             //
@@ -674,15 +685,38 @@ internal fun HistoryPanelScreen(
             onDone = onComposerDone,
         )
     }
-    val submitComposerRich: (String, List<String>) -> Unit = { value, images ->
+    /**
+     * 存下"一条带图的新闪念"（§0.16.12 多图条目 + §0.16.15 插到光标处）。
+     *
+     * **块顺序**（这才是用户要的"按顺序"）：[StashRepository.addRich] 的 `parts` 就是**有序块**，
+     * 落盘的 `contentBlocks` 与它一一对应，卡片展开时也按这个顺序画。所以这里按光标把正文切成
+     * 两半、图片夹在中间：
+     * - 光标在开头 → `图 → 文`；
+     * - 光标在结尾 → `文 → 图`（旧行为，也是 `cursor` 缺省时的行为）；
+     * - 光标在中间 → `文前段 → 图 → 文后段`。
+     *
+     * ⚠️ **小版本的边界**（完整块编辑器是另一轮的事）：
+     * - 输入框里**看不到**任何图片占位 —— 用户只是看到"图存进去后排在了我光标那里"；
+     * - 多张图都插在**同一个**光标位置（按选图顺序），不会散布到多处；
+     * - 这里只处理**新建**条目；给已有条目补图（编辑条的 `appendImages`）仍然是追加末尾。
+     */
+    val submitComposerRich: (String, List<String>, Int) -> Unit = { value, images, cursor ->
         scope.launch {
             // 解码离开主线程：一张长边 2048 的图解码不便宜。
             val parts = withContext(Dispatchers.IO) {
+                // 先夹好块顺序再把图解码进去：解码是重活，切分只是一次 substring。
+                val cut = cursor.coerceIn(0, value.length)
+                val head = value.substring(0, cut)
+                val tail = value.substring(cut)
                 buildList<StashRichPart> {
-                    if (value.isNotEmpty()) add(StashRichPart.Text(value))
+                    // ⚠️ 空串/纯空白的段不要加：`addRich` 自己会把空文本块丢掉并 trim，
+                    // 但在这里先判一次能让"光标正好落在开头/结尾"少一个无用块，
+                    // 也让下面的 `parts.isEmpty()` 判断更准。
+                    if (head.isNotBlank()) add(StashRichPart.Text(head))
                     images.forEach { path ->
                         decodeStashImageFile(path)?.let { add(StashRichPart.Image(it)) }
                     }
+                    if (tail.isNotBlank()) add(StashRichPart.Text(tail))
                 }
             }
             if (parts.isEmpty()) {
@@ -696,6 +730,7 @@ internal fun HistoryPanelScreen(
                     onComposerDone(success)
                     if (success) {
                         composerImagePaths = emptyList()
+                        composerCursor = 0
                         // 图已经拷进仓库了，cache 里这份临时文件可以删。
                         images.forEach { path -> runCatching { File(path).delete() } }
                     }
@@ -711,25 +746,86 @@ internal fun HistoryPanelScreen(
                 showPanelMessage(R.string.stash_composer_empty)
             }
             images.isEmpty() -> submitComposerText(value)
-            else -> submitComposerRich(value, images)
+            // 传的是**未夹取**的光标位置：`value` 已经 trim 过，夹取由 `submitComposerRich` 里
+            // 那一次 `coerceIn` 统一负责（两处都夹会让人以为这里有什么特殊语义）。
+            else -> submitComposerRich(value, images, composerCursor)
         }
     }
     // 重启/更新后 AlarmManager 里的提醒会丢：进面板时补排一次（`StashReminderBootReceiver` 也会在开机时补）。
     // 同一处还负责两件对账（§0.16.15）：把「稍后 10 分钟」写回显示、清掉已过期的提醒。
-    LaunchedEffect(stashEntries.isNotEmpty()) {
-        if (stashEntries.isEmpty()) return@LaunchedEffect
+    /**
+     * 提醒的"对账 + 补排"，两处 LaunchedEffect（数据变化 / 面板变可见）共用同一份实现。
+     *
+     * 顺序不能反（这是这个方法存在的第一理由）：先并回 snooze override，再清过期 ——
+     * 反了会把"有效提醒"连 override 一起清掉、救不回来（见 `clearExpiredReminders` 的注释）。
+     *
+     * ⚠️ 内部的 [stashEntries] / [stashMeta] 是**每次调用时现读**的（它们是 Compose 侧快照，
+     * 会随重组更新）：补排要用最新一批条目的正文。
+     */
+    suspend fun reconcileReminders() {
         // ⚠️ 顺序不能反：先并回 snooze override，再清过期 —— 反了会把"有效提醒"连 override 一起清掉、救不回来。
         val overrides = com.slideindex.app.stash.StashReminderMirror.snoozeOverrides(appContext)
         metaRepo?.mergeSnoozeOverrides(overrides)
         metaRepo?.clearExpiredReminders()
         // 用 `pendingReminders()` 读刚更新过的 store：`stashMeta` 是 Compose 侧快照，拿它会按旧时间再排一遍。
         val reminders = metaRepo?.pendingReminders() ?: stashMeta.reminders
-        if (reminders.isEmpty()) return@LaunchedEffect
+        if (reminders.isEmpty()) return
         val texts = stashEntries.associate { entry ->
             entry.id to (entry.text ?: entry.combinedText())
         }
         StashReminderScheduler.rescheduleAll(appContext, reminders) { entryId ->
             texts[entryId].orEmpty()
+        }
+    }
+
+    LaunchedEffect(stashEntries.isNotEmpty()) {
+        if (stashEntries.isEmpty()) return@LaunchedEffect
+        reconcileReminders()
+        StashReminderPendingState.refresh(appContext)
+    }
+
+    /**
+     * 面板**每次变成可见**都跑一次对账（§0.16.15 的第 3 件事）。
+     *
+     * 为什么必须单独挂一个 effect：上面那条挂在 `stashEntries.isNotEmpty()` 上，
+     * 而面板**一直开着**时这个 key 不会变 —— 用户在通知上点了「稍后」（数据层此刻写不进去、
+     * 只落在 `StashReminderMirror` 的 snooze override 里），回来一看时间还是旧的；
+     * 过期提醒也一直挂着不清理。可见性这个 key 才是"用户现在要看数据了"的正确信号。
+     *
+     * ⚠️ key 只用 `panelTargetVisible`（一个 Boolean）：它一变只跑一次，不会每帧重跑。
+     */
+    LaunchedEffect(panelTargetVisible) {
+        if (!panelTargetVisible) return@LaunchedEffect
+        reconcileReminders()
+        StashReminderPendingState.refresh(appContext)
+    }
+
+    /**
+     * 面板可见期间**慢轮询**指示条状态（§0.16.15）。
+     *
+     * 为什么还需要它：`hasPending` 的两条判据里，"通知栏里有没有我们那条通知"这件事
+     * **不会让 Compose 重组**（它既不来自数据层、也不是 state）—— 提醒在面板开着的时候到点、
+     * 通知弹出来，屏幕上唯一的信号就是这条轮询。2 秒是"用户几乎察觉不到延迟"和
+     * "别把面板拖慢"之间的折中；一次循环只是一次 `getActiveNotifications` + 一遍提醒表。
+     *
+     * ⚠️ 轮询体在**协程**里跑（不在组合里）：这里读 `stashMeta` 只取值、不会订阅，所以
+     * 不会把面板拖进重组；但**写** state 必须有节制 —— `refresh` 只在值真的变了时才写
+     * `hasPending`，`reminderClockMs` 也只在"还有未来提醒"时才推进（见下）。
+     *
+     * [reminderClockMs] 是同一拍里顺手推进的"卡片用时钟"：卡片那行 ⏰ 是不是该画成灰色
+     * 「已提醒」取决于"现在有没有过点"，而过点这件事**不会改任何数据**（`clearExpiredReminders`
+     * 要等下一次对账），所以必须有个东西让那一行重组。**只在"还有一条未来的提醒"时才推进**：
+     * 没有提醒、或提醒全都已经过点时一次都不写 —— 那两种情况下这一行不需要跟着时钟走。
+     */
+    var reminderClockMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(panelTargetVisible) {
+        if (!panelTargetVisible) return@LaunchedEffect
+        while (true) {
+            delay(ReminderPendingPollIntervalMs)
+            StashReminderPendingState.refresh(appContext)
+            if (stashMeta.reminders.values.any { it > reminderClockMs }) {
+                reminderClockMs = System.currentTimeMillis()
+            }
         }
     }
 
@@ -949,6 +1045,7 @@ internal fun HistoryPanelScreen(
                                 searchQuery = stashSearchQuery,
                                 selectedTag = selectedTag,
                                 meta = stashMeta,
+                                nowMs = reminderClockMs,
                                 tagColors = tagColors,
                                 haptics = haptics,
                                 isActive = selectedTab == HistoryPanelTab.Stash,
@@ -1067,6 +1164,8 @@ internal fun HistoryPanelScreen(
                 open = composerOpen && showPanelLayers,
                 text = composerText,
                 onTextChange = { composerText = it },
+                // §0.16.15：记下光标位置，存下时按它把图片块插进正文中间。
+                onSelectionChange = { composerCursor = it },
                 onSubmit = submitComposer,
                 onVoiceError = showPanelMessage,
                 availableTags = availableTags,
@@ -1280,6 +1379,49 @@ private data class HistoryReminderPickerTarget(
     val initialAtMs: Long?,
 )
 
+/**
+ * 卡片外那行提醒要怎么画（§0.16.15）：`null` = 这条没有可画的提醒。
+ *
+ * 用 data class 而不是 `Pair<Long, Boolean>`：那两个字段都是"时间/布尔"，`Pair` 的
+ * `.first` / `.second` 在调用点读起来是"猜"，而这个规则本身已经有 4 条分支了。
+ */
+private data class HistoryReminderRow(
+    /** 要显示的时间（过期时就是"响过的那个时间"）。 */
+    val atMs: Long,
+    /** 已经过期：灰掉 + 前缀「已提醒」。 */
+    val overdue: Boolean,
+)
+
+/**
+ * 把 `reminders` 与 `firedAt` 两个 key 合起来，算出**这一行该怎么画**。
+ *
+ * 为什么需要两个 key 才知道事实：
+ * - [reminderAtMs]（`StashMetaStore.reminders`）= **还没响**的提醒；
+ * - [firedAtMs]（`StashMetaStore.firedAt`）= **响过了**的提醒 —— 记录它的原因是数据层
+ *   `clearExpiredReminders` 会把过点的那条从 `reminders` 里删掉（不然闹钟一直挂着），
+ *   而**删掉不等于没发生过**：用户要看到「已提醒」。
+ *
+ * 取值规则：
+ * 1. 有 `reminders` 条目 → 画它的时间；`<= now` 而且已经响过（说明处在"到点"与"面板对账"
+ *    之间那段窗口里）也算过期，这样"刚响、面板还开着"时就已经是灰的了；
+ * 2. 只有 `firedAt` → 画"响过的时间"（用户看到的是"已提醒 昨天 21:30"）。
+ *
+ * 纯函数放在屏幕这一层（而不是塞进 `HistoryTimelineEntryRow`）：卡片那一层只该关心
+ * "画成什么颜色"，"什么算过期"是数据语义，留在数据边上更好查。
+ */
+private fun stashReminderRow(
+    reminderAtMs: Long?,
+    firedAtMs: Long?,
+    nowMs: Long,
+): HistoryReminderRow? {
+    if (reminderAtMs != null) {
+        val overdue = firedAtMs != null || reminderAtMs <= nowMs
+        return HistoryReminderRow(atMs = reminderAtMs, overdue = overdue)
+    }
+    firedAtMs?.let { return HistoryReminderRow(atMs = it, overdue = true) }
+    return null
+}
+
 @Composable
 private fun HistoryStashTabBody(
     allEntries: List<com.slideindex.app.stash.StashEntry>,
@@ -1287,6 +1429,11 @@ private fun HistoryStashTabBody(
     searchQuery: String,
     selectedTag: String?,
     meta: com.slideindex.app.stash.StashMetaStore,
+    /**
+     * 卡片那行 ⏰ 的"现在"（§0.16.15）。由宿主每 2 秒推进一次（只在"还有未来提醒"时），
+     * 这样提醒到点的那一刻，这一行**当场**从主题色变成灰色「已提醒」，而不是等到下次重组。
+     */
+    nowMs: Long,
     tagColors: Map<String, Long>,
     haptics: HistoryHaptics,
     isActive: Boolean,
@@ -1428,12 +1575,22 @@ private fun HistoryStashTabBody(
                             val entry = row.entry
                             val expanded = entry.id in expandedEntryIds
                             val selectedIndex = selectedImageIndices[entry.id] ?: 0
+                            // 提醒那一行（§0.16.15）：**过期的提醒也画**，只是灰掉 + 「已提醒」。
+                            // 值来自两个 key：`reminders`（还没响的）与 `firedAt`（响过了、数据层已把
+                            // `reminders` 里那条收尾删掉）。只读前者的话，提醒一响这行就整行消失，
+                            // 用户看到的就是"我设的提醒不见了"。
+                            val reminder = stashReminderRow(
+                                reminderAtMs = meta.reminderOf(entry.id),
+                                firedAtMs = meta.firedAtOf(entry.id),
+                                nowMs = nowMs,
+                            )
                             HistoryTimelineEntryRow(
                                 entry = entry,
                                 group = row.group,
                                 lineAlpha = row.lineAlpha,
                                 staggerDelayMs = staggerDelay,
-                                reminderAtMs = meta.reminderOf(entry.id),
+                                reminderAtMs = reminder?.atMs,
+                                reminderOverdue = reminder?.overdue == true,
                             ) {
                                 HistoryStashEntryCard(
                                     entry = entry,
@@ -1718,3 +1875,12 @@ private const val STAGGER_TAIL_MS = 400L
 
 /** 列表滑离顶部多少距离后收起头部第一行（太小会"一碰就收"，大了又像没收）。 */
 private val HistoryHeaderCollapseThreshold = 16.dp
+
+/**
+ * 面板可见期间重新计算「有没有已提醒未处理的条目」的间隔（§0.16.15，给指示条用）。
+ *
+ * 为什么是轮询而不是事件：那条判据里"通知栏里有我们那条通知"读的是系统 API，**不会**触发
+ * Compose 重组（它既不是数据层、也不是 state）。2 秒 = 用户几乎感觉不到的延迟，
+ * 而一次循环只是一次 `getActiveNotifications` + 一遍提醒表，代价可以忽略。
+ */
+private const val ReminderPendingPollIntervalMs = 2_000L

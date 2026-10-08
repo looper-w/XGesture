@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -240,12 +239,16 @@ internal fun HistoryReminderPickerModal(
                         selectedIndex = dayIndex,
                         onSelected = { dayIndex = it },
                         modifier = Modifier.weight(1.7f),
+                        // 日期**不循环**：60 天首尾相接会让人彻底失去"今天是哪一天"的方向感。
+                        loop = false,
                     )
                     HistoryWheel(
                         items = hourLabels,
                         selectedIndex = hour,
                         onSelected = { hour = it },
                         modifier = Modifier.weight(1f),
+                        // 时/分循环：23 下面接 00、59 下面接 00。
+                        loop = true,
                     )
                     Text(
                         text = ":",
@@ -257,6 +260,7 @@ internal fun HistoryReminderPickerModal(
                         selectedIndex = minuteIndex,
                         onSelected = { minuteIndex = it },
                         modifier = Modifier.weight(1f),
+                        loop = true,
                     )
                 }
                 Text(
@@ -276,6 +280,11 @@ internal fun HistoryReminderPickerModal(
  * ⚠️ 别用 `firstVisibleItemIndex + 半个偏移` 去推选中项：视口高 3 行 + 上下各留 1 行 padding 时，
  * 静止状态下 `firstVisibleItemIndex` 就是选中项（偏移为 0），那个公式反而会额外 +1。
  * 直接按"谁的中心离视口中心最近"算，最稳。
+ *
+ * [loop] = true（**只给"时"/"分"用**，日期轮不循环）时把列表铺 [HISTORY_WHEEL_COPIES] 份：
+ * 用户从 59 继续往下滑会滑进"下一份的 00"，滑到副本边界时静默 `scrollToItem` 到等价的中间项，
+ * 视觉上无感。**回写出去的值一律是真实索引**（见下面的 `abs % itemCount`），
+ * 否则 `hour` / `minuteIndex` 会跳到 20+ 这种越界值。
  */
 @Composable
 private fun HistoryWheel(
@@ -283,27 +292,84 @@ private fun HistoryWheel(
     selectedIndex: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** 是否把列表铺多份做无限循环（时/分 = true；日期 = false）。 */
+    loop: Boolean = false,
 ) {
     val theme = historyTheme()
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
-    val centerIndex by remember {
+    val itemCount = items.size
+    // 循环模式铺 5 份、从**正中间那份**开始：左右各有 2 份副本当缓冲，单向能连续滑 2×itemCount 项
+    // 才会碰到物理边界（碰到边界就静默跳到中间那份）。
+    val copies = if (loop && itemCount > 1) HISTORY_WHEEL_COPIES else 1
+    val totalCount = itemCount * copies
+    // 铺开后的**绝对索引** → 真实索引。所有回写都必须过这一步。
+    fun realOf(absoluteIndex: Int): Int =
+        if (itemCount <= 0) 0 else ((absoluteIndex % itemCount) + itemCount) % itemCount
+
+    // 初始位置落在中段副本内（循环时），真实值仍然是 0..itemCount-1。
+    val startAbs = remember(selectedIndex, itemCount, copies) {
+        if (copies > 1) {
+            itemCount * (copies / 2) + selectedIndex.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+        } else {
+            selectedIndex.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+        }
+    }
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = startAbs)
+    val centerIndex by remember(loop) {
         derivedStateOf {
             val info = state.layoutInfo
             val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
             info.visibleItemsInfo
                 .minByOrNull { abs((it.offset + it.size / 2) - center) }
                 ?.index
-                ?: selectedIndex
+                ?: startAbs
         }
     }
     // 外部改了选中值（切日期、夹取）→ 把轮子滚到位；相等时不动作，免得和下面的回写打架。
-    LaunchedEffect(selectedIndex, items.size) {
-        if (state.firstVisibleItemIndex != selectedIndex) state.scrollToItem(selectedIndex)
+    // ⚠️ 循环模式下必须滚到**中段副本里那个等价位**，否则贴边起步一滑就撞边界。
+    //
+    // ⚠️ **只在手停下时**才滚（`isScrollInProgress == false`）：滚动本身会一项一项地改变
+    // `centerIndex` → 回写 `selectedIndex` → 这个 effect 重启。如果重启时就 `scrollToItem`，
+    // 每一次"选到下一项"都会把 `snapFlingBehavior` 的惯性掐死（用户感觉是"一滑就停"）。
+    // 停下之后再滚就不会掐任何动画；而循环轮跨过副本接缝时（23 下面接 00）要滚的目标与
+    // 当前位置**视觉上完全等价**（同一批 label、同样的相对位置），所以那一下也看不出来。
+    LaunchedEffect(selectedIndex, itemCount, copies) {
+        val target = if (copies > 1) {
+            itemCount * (copies / 2) + selectedIndex.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+        } else {
+            selectedIndex.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+        }
+        if (!state.isScrollInProgress) {
+            if (state.firstVisibleItemIndex != target) state.scrollToItem(target)
+            return@LaunchedEffect
+        }
+        snapshotFlow { state.isScrollInProgress }
+            .collect { scrolling ->
+                if (scrolling) return@collect
+                if (state.firstVisibleItemIndex != target) state.scrollToItem(target)
+            }
     }
-    LaunchedEffect(items.size) {
+    // 静默跳回中段：只在"手已经停下"时跳，免得打断吸附/惯性动画（中断会看得出突兀）。
+    // 跳的等价项在视觉上完全相同（同一批 label、同样的相对位置），所以用户看不到接缝。
+    if (copies > 1) {
+        LaunchedEffect(state, totalCount) {
+            snapshotFlow { state.firstVisibleItemIndex to state.isScrollInProgress }
+                .collect { (first, scrolling) ->
+                    if (scrolling) return@collect
+                    val buffer = (itemCount / 2).coerceAtLeast(1)
+                    val middle = itemCount * (copies / 2)
+                    when {
+                        first < buffer -> state.scrollToItem(first + middle)
+                        first >= totalCount - itemCount - buffer ->
+                            state.scrollToItem((first - middle).coerceAtLeast(0))
+                    }
+                }
+        }
+    }
+    LaunchedEffect(items.size, loop) {
         snapshotFlow { centerIndex }
             .collect { index ->
-                if (index in items.indices && index != selectedIndex) onSelected(index)
+                val real = realOf(index)
+                if (index in 0 until totalCount && real != selectedIndex) onSelected(real)
             }
     }
     Box(
@@ -326,22 +392,24 @@ private fun HistoryWheel(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            itemsIndexed(items) { index, label ->
+            items(count = totalCount) { index ->
+                // 铺开的绝对索引取模还原成真实项：5 份里的每一份内容完全一样。
+                val realIndex = realOf(index)
                 Box(
                     modifier = Modifier.height(HistoryWheelItemHeight).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = label,
+                        text = items[realIndex],
                         style = TextStyle(
                             fontSize = HistoryFontSizes.sm,
-                            fontWeight = if (index == selectedIndex) {
+                            fontWeight = if (realIndex == selectedIndex) {
                                 FontWeight.SemiBold
                             } else {
                                 FontWeight.Normal
                             },
                         ),
-                        color = if (index == selectedIndex) theme.text else theme.sub,
+                        color = if (realIndex == selectedIndex) theme.text else theme.sub,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     )
@@ -449,3 +517,11 @@ private const val HistoryReminderMinuteStep = 1
 
 /** 滚轮单行高度。 */
 private val HistoryWheelItemHeight = 34.dp
+
+/**
+ * 循环滚轮把列表铺几份。
+ *
+ * 取 5（奇数）是为了**正中间那份**左右各有 2 份副本当缓冲：从中间起步单向能连滑
+ * `2 × itemCount` 项才碰到物理边界，而碰到边界就静默跳回中段 —— 正常手感下用户永远碰不到真边界。
+ */
+private const val HISTORY_WHEEL_COPIES = 5

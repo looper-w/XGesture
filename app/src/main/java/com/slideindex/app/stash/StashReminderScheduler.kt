@@ -24,6 +24,20 @@ import android.content.Intent
 internal object StashReminderScheduler {
     private const val REQUEST_CODE_BASE = 24_000
 
+    /** 「稍后 N 分钟」通知按钮的 `PendingIntent` request code 段位（与闹钟本体错开）。 */
+    internal const val SNOOZE_REQUEST_BASE = 26_000
+
+    /**
+     * 通知 id 的**唯一出处**（与 [requestCodeOf] 同一个理由，§0.16.x）。
+     *
+     * [StashReminderReceiver] 发通知用它，`StashReminderPendingState` 判断"这条提醒的通知
+     * 还在不在通知栏里"也用它 —— 这种"必须两处算出同一个数"的规则**只能有一份实现**，
+     * 各写一遍迟早会漂移，而漂移的症状是"指示条永远不亮/永远不灭"，很难查。
+     */
+    internal fun notifyIdOf(entryId: String): Int = NOTIFY_ID_BASE + entryId.hashCode()
+
+    private const val NOTIFY_ID_BASE = 24_100
+
     fun schedule(context: Context, entryId: String, atEpochMs: Long, text: String) {
         // 先写镜像再排闹钟：反过来的话，进程如果在中间死掉，就会出现"闹钟在、镜像没有"，
         // 重启后这条提醒永远补不回来。写镜像成功而排闹钟失败则只是多一份无用记录，无害。
@@ -137,6 +151,8 @@ internal object StashReminderScheduler {
      *
      * ⚠️ `StashReminderReceiver` 里「稍后 10 分钟」重排同一个闹钟时**必须用同一个值**，
      * 否则会新建一个 PendingIntent、旧的那个还挂着（到点响两次）。所以这里是唯一出处。
+     *
+     * 通知 id 在 [notifyIdOf]（另起一段 24_100+），与这里错开。
      */
     internal fun requestCodeOf(entryId: String): Int = REQUEST_CODE_BASE + entryId.hashCode()
 }

@@ -37,7 +37,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +56,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,6 +101,10 @@ internal fun HistoryComposerFabSlot(
  * ⚠️ overlay 窗读不到 `WindowInsets.ime`，用调用方传进来的 [imeBottom] 把整块**往上抬**
  * （居中浮窗被输入法盖住就白做了）。
  */
+// 与下面的 `HistoryComposerInput` 同一个理由：本仓库解析到的 foundation 只有
+// `BasicTextField(value, onValueChange)` 这批**已废弃**的重载（没有 state 版），
+// 而"插到光标处"必须拿到 `selection`，所以这里用 `TextFieldValue` 那个重载。
+@Suppress("DEPRECATION")
 @Composable
 internal fun HistoryComposerModal(
     open: Boolean,
@@ -117,6 +124,13 @@ internal fun HistoryComposerModal(
     /** 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。 */
     onAddImage: () -> Unit = {},
     onRemoveImage: (String) -> Unit = {},
+    /**
+     * 正文光标位置变了（§0.16.15 加图"插到光标处"要用它）。
+     *
+     * 带默认值 = **向后兼容**：这个组件在别处也有调用点（当时没有"插到光标处"这个需求），
+     * 不传就等于不需要光标。
+     */
+    onSelectionChange: (Int) -> Unit = {},
     imeBottom: Dp,
     focusRequester: FocusRequester,
     onBarHeightChanged: (Dp) -> Unit = {},
@@ -125,6 +139,36 @@ internal fun HistoryComposerModal(
     val theme = historyTheme()
     val density = LocalDensity.current
     val focusManager = LocalFocusManager.current
+    /**
+     * 输入框的**内部**值（而不是直接用入参 [text]）：光标位置只存在于 `TextFieldValue.selection`，
+     * 而"加图插到光标处"（§0.16.15）必须知道它。对外 API 仍是 `String` + `onTextChange`
+     * （既有调用点和草稿那套都按 String 走），这里换一层只是为了把 `selection` 留住。
+     */
+    var fieldValue by remember(open) { mutableStateOf(TextFieldValue(text)) }
+    /**
+     * 上一次"我们自己发出去"的文本。
+     *
+     * 用途是分辨 [text] 的两种变化：
+     * - **我们自己的输入回环**（用户打字 → `onTextChange` → 父级 → `text` 又回来）：
+     *   这时绝不能拿 `TextFieldValue(text)` 重建内部值 —— 那会把光标**重置到开头**
+     *   （中文输入法里等于每打一个字光标就跳一次）；
+     * - **父级主动清空**（保存成功时 `composerText = ""`）：这时必须重建，否则输入框里留着旧字。
+     *
+     * 判据就是"父级给的 text 和我们最后发出去的不一样"，只有那种情况才认作"外部改动"。
+     */
+    var lastEmitted by remember(open) { mutableStateOf(text) }
+    if (text != lastEmitted) {
+        // 外部改动：正文与光标一起重置（`TextFieldValue(text)` 的 selection 落在 0）。
+        // ⚠️ 在组合里直接赋值 state 是安全的（这是 Compose 官方的"从入参推导 state"写法）：
+        // 它只会在本次组合里立刻生效，不会无限触发重组。
+        fieldValue = TextFieldValue(text)
+        lastEmitted = text
+    }
+    // 初始位置（尤其"打开时草稿里已经有正文"那条路）也要报出去一次，否则父级手上是上一次的
+    // 光标位置，用户不打字、直接点选图 → 插到错的地方。
+    LaunchedEffect(fieldValue.text, fieldValue.selection) {
+        onSelectionChange(fieldValue.selection.start)
+    }
     // 与搜索框同一套节奏：先让展开动画起来再抢焦点，否则 overlay 窗里 IME 常常不弹。
     LaunchedEffect(open) {
         if (open) {
@@ -184,8 +228,17 @@ internal fun HistoryComposerModal(
                     )
                 }
                 BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
+                    // ⚠️ 这里用 `TextFieldValue` 的重载（与下面 `HistoryComposerInput` 文档里写的
+                    // "本仓库的 foundation 没有 state 版重载"不冲突：`value = TextFieldValue` 是
+                    // 另一个**已废弃**的重载，一直存在）。选它纯粹是为了拿到 `selection`。
+                    value = fieldValue,
+                    onValueChange = { updated ->
+                        // 先记"我们自己发的这份"，再往上传：父级拿到 text 之后会原样回传，
+                        // 上面的 `text != lastEmitted` 判据就是靠这一行避免"每打一个字光标跳回开头"。
+                        lastEmitted = updated.text
+                        fieldValue = updated
+                        onTextChange(updated.text)
+                    },
                     singleLine = false,
                     textStyle = androidx.compose.ui.text.TextStyle(
                         fontSize = 15.sp,

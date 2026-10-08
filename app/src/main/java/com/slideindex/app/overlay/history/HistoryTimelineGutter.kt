@@ -143,6 +143,9 @@ internal fun HistoryTimelineGroupHeader(
  * [card] 由调用方（`HistoryPanelScreen`）传入，这样这里不需要知道卡片的一大堆回调。
  * [staggerDelayMs] = 首屏错开淡入的延迟（0 = 不播）。
  * [reminderAtMs] = 已设的提醒时间（设计稿 `.item .remind`，跟时间同一行）。
+ * [reminderOverdue] = 这条提醒**已经响过**了（§0.16.15）：这时**不隐藏**那一行，
+ * 而是换成灰色 + 前缀「已提醒」—— 用户实测的抱怨正是"设了提醒的条目后来那行 ⏰ 不见了"，
+ * 而那其实只说明"它响过了、你还没处理"。默认 false 让既有调用点不用改。
  */
 @Composable
 internal fun HistoryTimelineEntryRow(
@@ -151,6 +154,7 @@ internal fun HistoryTimelineEntryRow(
     lineAlpha: Float,
     staggerDelayMs: Int = 0,
     reminderAtMs: Long? = null,
+    reminderOverdue: Boolean = false,
     card: @Composable () -> Unit,
 ) {
     val theme = historyTheme()
@@ -214,7 +218,19 @@ internal fun HistoryTimelineEntryRow(
                     color = theme.text.copy(alpha = 0.80f),
                 )
                 // 已设提醒：设计稿 `.item .remind`（时钟 + 主题色粗体）。
+                //
+                // §0.16.15：**过期也显示** —— 只是换成灰调 + 前缀「已提醒」。以前这里虽然没写
+                // "只画未来时间"的过滤，但过期提醒会被数据层收尾删掉（`clearExpiredReminders`），
+                // 于是这一行整行消失，看起来就像"提醒没了"。现在数据层会留下 `firedAt`，
+                // 传进来的是"曾经响过的时间"，这里负责把它画成"已提醒 昨天 21:30"那种过去式的样子。
                 reminderAtMs?.let { at ->
+                    val reminderColor = if (reminderOverdue) {
+                        // 灰掉用 `theme.sub`（和"今天/昨天"那行小字同一档），而不是再定义一种颜色：
+                        // 语义就是"这条不再醒目了"，和"次要信息"是同一个视觉档位。
+                        theme.sub
+                    } else {
+                        theme.accentSolid
+                    }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -222,9 +238,22 @@ internal fun HistoryTimelineEntryRow(
                         Icon(
                             imageVector = Icons.Outlined.Schedule,
                             contentDescription = null,
-                            tint = theme.accentSolid,
+                            tint = reminderColor,
                             modifier = Modifier.size(TimelineReminderIconSize),
                         )
+                        if (reminderOverdue) {
+                            // 「已提醒」在**时间前面**：中文/日文读起来是"已提醒 昨天 21:30"，
+                            // 阿拉伯语等 RTL 语言由布局自己镜像，前缀仍然贴着图标。
+                            Text(
+                                text = stringResource(R.string.stash_remind_overdue_label),
+                                style = androidx.compose.ui.text.TextStyle(
+                                    fontSize = HistoryFontSizes.tiny,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 0.3.sp,
+                                ),
+                                color = reminderColor,
+                            )
+                        }
                         Text(
                             text = formatReminderTime(at),
                             style = androidx.compose.ui.text.TextStyle(
@@ -232,7 +261,7 @@ internal fun HistoryTimelineEntryRow(
                                 fontWeight = FontWeight.SemiBold,
                                 letterSpacing = 0.3.sp,
                             ),
-                            color = theme.accentSolid,
+                            color = reminderColor,
                         )
                     }
                 }

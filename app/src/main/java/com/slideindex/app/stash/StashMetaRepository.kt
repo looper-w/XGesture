@@ -80,6 +80,19 @@ data class StashMetaStore(
      * 同样存进这个独立文件：`index.json` 会被老版本整体重写，提醒会丢。
      */
     val reminders: Map<String, Long> = emptyMap(),
+    /**
+     * entryId -> 这次提醒**已经响过**的时间戳（ms）。
+     *
+     * 为什么需要它（§0.16.15）：[reminders] 是"待触发"的表，提醒一到点（或面板打开时
+     * 被 [StashMetaRepository.clearExpiredReminders] 收尾）就从中消失了 —— 于是卡片上那行 ⏰
+     * 会**凭空消失**，用户看到的是"我设的提醒不见了"，而事实是"它已经响过，只是你没处理"。
+     * 这一笔把那个事实留下来：卡片据此画灰色的「已提醒」，`StashReminderPendingState`
+     * 也据此判断"有没有一条已提醒但没被处理掉的条目"。
+     *
+     * 清理时机：用户重新设提醒（[StashMetaRepository.setReminder] 传非 null）、
+     * 标完成 / 清提醒（传 null）、条目被删（[StashMetaRepository.forget] / `pruneOrphans`）。
+     */
+    val firedAt: Map<String, Long> = emptyMap(),
 ) {
     fun isDone(entryId: String): Boolean = doneAt.containsKey(entryId)
 
@@ -90,6 +103,8 @@ data class StashMetaStore(
     fun sourceOf(entryId: String): String? = sources[entryId]
 
     fun reminderOf(entryId: String): Long? = reminders[entryId]
+
+    fun firedAtOf(entryId: String): Long? = firedAt[entryId]
 }
 
 @Singleton
@@ -254,18 +269,43 @@ class StashMetaRepository @Inject constructor(
 
     fun reminderOf(entryId: String): Long? = _store.value.reminderOf(entryId)
 
+    /**
+     * 这条提醒**响过没有**（[StashMetaStore.firedAt]）；返回响过的时间戳，没响过是 null。
+     *
+     * 卡片上那行灰色「已提醒」画的就是它（见 `HistoryTimelineEntryRow` 的 `reminderOverdue`）。
+     */
+    fun firedAtOf(entryId: String): Long? = _store.value.firedAtOf(entryId)
+
+    // ⚠️ `isDone(entryId)` 已经在本文件"完成态"那一段定义过（唯一实现留在那边）：
+    // `StashReminderPendingState` 的兜底规则就是复用它，这里不要再写一遍 —— 同名同签名
+    // 会被编译器判成 "Conflicting overloads"（半成品里确实重复了一次，已删）。
+
     /** 当前所有待触发提醒（面板打开时用它把闹钟补排一次，见 `StashReminderScheduler`）。 */
     fun pendingReminders(): Map<String, Long> = _store.value.reminders
 
-    /** 设/清提醒。传 null 就是取消。 */
+    /**
+     * 设/清提醒。传 null 就是取消。
+     *
+     * ⚠️ 两个方向都要动 [StashMetaStore.firedAt]（§0.16.15）：
+     * - **设**（非 null）：这是一次**新**的提醒，"上次响过"的记录必须清掉，否则卡片会在
+     *   新提醒还没到点时就顶着「已提醒」；
+     * - **清**（null）：用户主动取消 / 标完成，那一笔也没有意义了，一并清掉。
+     *   注意 [clearExpiredReminders] 走的是另一条路（它要**留下** `firedAt`，见那边注释）。
+     */
     suspend fun setReminder(entryId: String, atEpochMs: Long?) = mutate { current ->
         val next = current.reminders.toMutableMap()
         if (atEpochMs == null) next.remove(entryId) else next[entryId] = atEpochMs
-        if (next == current.reminders) current else current.copy(reminders = next)
+        val nextFired = if (entryId in current.firedAt) current.firedAt - entryId else current.firedAt
+        if (next == current.reminders && nextFired == current.firedAt) {
+            current
+        } else {
+            current.copy(reminders = next, firedAt = nextFired)
+        }
     }
 
     /**
-     * 收尾**已经过点**的提醒：删掉它们（第 4 条：过期提醒清理），并同步清掉闹钟与提醒镜像。
+     * 收尾**已经过点**的提醒：删掉它们（第 4 条：过期提醒清理），并同步清掉闹钟与提醒镜像；
+     * 同时给它们记一条 [StashMetaStore.firedAt]（"响过了"），卡片据此画灰色「已提醒」（§0.16.15）。
      *
      * 「稍后」写回显示（为什么需要它）：用户点了通知上的「稍后 10 分钟」时进程可能没装数据层，
      * 只能把新时间记在 [StashReminderMirror] 的 snooze override 里；于是 meta 里这一条的时间
@@ -276,7 +316,10 @@ class StashMetaRepository @Inject constructor(
      * 1. `atMs > now`：不动（这条提醒还没到点）；
      * 2. `atMs <= now` 且 snooze override 在未来：把 meta 改成 override 的时间，**不删**
      *    （用户点过「稍后」、并且还没到那个新时间）；
-     * 3. `atMs <= now` 且没有 override、或 override 也过点了：删掉，并 `AlarmManager.cancel` + 镜像一并清。
+     * 3. `atMs <= now` 且没有 override、或 override 也过点了：从 [StashMetaStore.reminders] 删掉
+     *    （**不是**删这条条目的全部元数据），`AlarmManager.cancel` + 镜像一并清，
+     *    并写一条 [StashMetaStore.firedAt] —— "删提醒"和"记下它响过"是一件事的两半：
+     *    只删不记，卡片上那行 ⏰ 就会凭空消失（用户实测的抱怨）；只记不删，闹钟会一直挂着。
      *
      * 幂等、可反复调用。
      *
@@ -303,6 +346,7 @@ class StashMetaRepository @Inject constructor(
         mutate { current ->
             var changed = false
             val reminders = current.reminders.toMutableMap()
+            val fired = current.firedAt.toMutableMap()
             current.reminders.forEach { (entryId, atEpochMs) ->
                 if (atEpochMs > nowMs) return@forEach
                 val override = overrides[entryId]
@@ -314,11 +358,14 @@ class StashMetaRepository @Inject constructor(
                 } else {
                     // 没有 override，或者 override 自己也是过去时间（闹钟早已响过/被系统丢掉）→ 真过期。
                     reminders.remove(entryId)
+                    // ⚠️ 这里**必须**留下"响过了"的痕迹（而不是像 setReminder(null) 那样清掉）：
+                    // 卡片上那行 ⏰ 就是靠它从"未来时间"切换成灰色的「已提醒」。
+                    fired[entryId] = nowMs
                     expiredRemovals += entryId
                     changed = true
                 }
             }
-            if (!changed) current else current.copy(reminders = reminders)
+            if (!changed) current else current.copy(reminders = reminders, firedAt = fired)
         }
 
         // 闹钟：过期的取消；被"稍后"纠正的按新时间重排 ——
@@ -392,13 +439,14 @@ class StashMetaRepository @Inject constructor(
 
     /* ---------------- 清理 ---------------- */
 
-    /** 条目被删除时调用：把它的标签绑定 / 完成态 / 追加内容 / 来源 / 提醒一并清掉。 */
+    /** 条目被删除时调用：把它的标签绑定 / 完成态 / 追加内容 / 来源 / 提醒（含"已提醒"记录）一并清掉。 */
     suspend fun forget(entryId: String) = mutate { current ->
         if (entryId !in current.assignments &&
             entryId !in current.doneAt &&
             entryId !in current.appends &&
             entryId !in current.sources &&
-            entryId !in current.reminders
+            entryId !in current.reminders &&
+            entryId !in current.firedAt
         ) {
             current
         } else {
@@ -408,6 +456,7 @@ class StashMetaRepository @Inject constructor(
                 appends = current.appends - entryId,
                 sources = current.sources - entryId,
                 reminders = current.reminders - entryId,
+                firedAt = current.firedAt - entryId,
             )
         }
     }
@@ -425,11 +474,13 @@ class StashMetaRepository @Inject constructor(
         val appends = current.appends.filterKeys { it in keep }
         val sources = current.sources.filterKeys { it in keep }
         val reminders = current.reminders.filterKeys { it in keep }
+        val firedAt = current.firedAt.filterKeys { it in keep }
         if (assignments.size == current.assignments.size &&
             doneAt.size == current.doneAt.size &&
             appends.size == current.appends.size &&
             sources.size == current.sources.size &&
-            reminders.size == current.reminders.size
+            reminders.size == current.reminders.size &&
+            firedAt.size == current.firedAt.size
         ) {
             current
         } else {
@@ -439,6 +490,7 @@ class StashMetaRepository @Inject constructor(
                 appends = appends,
                 sources = sources,
                 reminders = reminders,
+                firedAt = firedAt,
             )
         }
     }

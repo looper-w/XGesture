@@ -18,6 +18,10 @@ import android.util.Log
  * 必须是那个新时间。于是先把新时间记在这里，等面板打开时再并回 meta
  * （[StashMetaRepository.mergeSnoozeOverrides]）。
  *
+ * 第三份职责是**通知自身的状态**（[putNotifiedAt] / [markDismissed]）：`StashReminderPendingState`
+ * 要知道"这条提醒的通知还挂着吗 / 用户是不是刚划掉了它"。它同样活在偏好里，理由一样 ——
+ * 通知的收发发生在没有数据层的进程里。
+ *
  * ⚠️ 这里**只是镜像**，不是真相：它随时可能因为进程被杀而丢掉最后一次写；丢了的最坏后果是
  * "重启后这一次提醒没补排"或者"面板里显示的时间旧了一点"，不会损坏 `stash_meta.json`。
  * 反过来，任何写 meta 成功的地方都应该顺手镜像一份（[StashReminderScheduler] 已经这么做了）。
@@ -31,6 +35,7 @@ internal object StashReminderMirror {
 
     private const val PREFS_NAME = "stash_remind_mirror"
     private const val PREFS_NAME_SNOOZE = "stash_remind_snooze_mirror"
+    private const val PREFS_NAME_NOTIFIED = "stash_remind_notified_mirror"
 
     private const val KEY_AT = "at"
     private const val KEY_TEXT = "text"
@@ -118,11 +123,76 @@ internal object StashReminderMirror {
         prefsSnooze(context).edit().remove(entryId).commit()
     }
 
+    /* ---------------- 通知的"发出 / 被划掉"（给 `StashReminderPendingState` 用） ---------------- */
+
+    /**
+     * 提醒通知**真的提交给系统了**（[android.app.NotificationManager.notify] 没抛异常）。
+     *
+     * 为什么要单独记一笔：`StashReminderPendingState` 判断"有未处理的提醒"时，数据层兜底是
+     * "提醒时间已过 且 条目未完成"，但**划掉通知**只清 pending、刻意不改数据层 —— 没有这个
+     * 时间戳的话，下一次 refresh 会立刻用兜底规则把刚灭掉的状态重新点亮。
+     *
+     * 存在**独立的偏好文件**里而不是复用 [PREFS_NAME]：那个文件是 `entryId -> JSON` 的扁平表，
+     * [all] 会把每个 key 都当一条提醒记录去解析，塞进非 JSON 的值只会让每次 [all] 多刷一行
+     * "解析失败"日志。宁可多一个文件，也不要在同一张表里混两种语义。
+     */
+    fun putNotifiedAt(context: Context, entryId: String, atEpochMs: Long) {
+        val ok = prefsNotified(context).edit().putLong(entryId, atEpochMs).commit()
+        if (!ok) Log.w(TAG, "putNotifiedAt 落盘失败 entryId=$entryId")
+    }
+
+    /**
+     * 该条提醒的通知**发出之后**是否被用户划掉过（`dismissedAt >= notifiedAt`）。
+     *
+     * 比较两个时间戳而不是存一个布尔量：布尔量在"这次划掉、之后又是一条新提醒"时只能靠
+     * 调用方记得来清，漏清一次就会让新提醒的通知永远点不亮指示条；时间戳则在
+     * 新通知重新 [putNotifiedAt] 的那一刻**自动作废**（旧时间 < 新的 notifiedAt）。
+     */
+    fun dismissedSinceNotified(context: Context, entryId: String): Boolean {
+        val dismissedAt = prefsNotified(context).getLong(dismissedKey(entryId), 0L)
+        if (dismissedAt <= 0L) return false
+        val notifiedAt = prefsNotified(context).getLong(entryId, 0L)
+        return dismissedAt >= notifiedAt
+    }
+
+    /** 用户划掉了这条提醒的通知（`setDeleteIntent`）。 */
+    fun markDismissed(context: Context, entryId: String, atEpochMs: Long) {
+        prefsNotified(context).edit().putLong(dismissedKey(entryId), atEpochMs).commit()
+    }
+
+    /**
+     * 曾经**真的发出去过**通知的那些 entryId（不管后来有没有被划掉 / 完成 / 正在不在栏里）。
+     *
+     * 用途只有一个：`StashReminderPendingState` 要拿"我关心的这批通知 id"去和
+     * `NotificationManager.getActiveNotifications()` 对（那个 API 拿不到通知的 extras，
+     * 没法反查 entryId）。数据层在的时候那份清单来自 `reminders`；**数据层还没挂上时**
+     * （进程刚被广播拉起来、Hilt 还在构造）就只剩这里这一份 —— 没有它，指示条在这种
+     * 时序下会永远点不亮。
+     *
+     * 为什么"过期不清理"是安全的：调用方**只会**拿这些 id 去问"它现在还在通知栏里吗"，
+     * 残留的 id 最多多比一次 `Set.contains`，不可能点亮相册里已经不在的通知。
+     */
+    fun notifiedEntryIds(context: Context): Set<String> =
+        prefsNotified(context).all.keys.filterNot { it.startsWith(DISMISSED_KEY_PREFIX) }.toSet()
+
+    /** 提醒被完成 / 取消 / 删除时调用：这一笔"通知状态"已经没有意义了。 */
+    fun clearNotified(context: Context, entryId: String) {
+        prefsNotified(context).edit().remove(entryId).remove(dismissedKey(entryId)).commit()
+    }
+
+    /** 划掉时间的 key 前缀。加前缀是为了和"通知发出的时间"同表共存又不撞名。 */
+    private const val DISMISSED_KEY_PREFIX = "dismissed:"
+
+    private fun dismissedKey(entryId: String): String = "$DISMISSED_KEY_PREFIX$entryId"
+
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private fun prefsSnooze(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME_SNOOZE, Context.MODE_PRIVATE)
+
+    private fun prefsNotified(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS_NAME_NOTIFIED, Context.MODE_PRIVATE)
 
     /* ---------------- JSON（只有一个 {at, text} 对象，手写够了） ---------------- */
 
