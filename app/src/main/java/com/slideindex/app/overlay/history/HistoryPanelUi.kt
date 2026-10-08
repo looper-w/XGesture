@@ -206,7 +206,9 @@ internal fun formatReminderTime(epochMs: Long): String {
     val time = SimpleDateFormat("HH:mm", locale).format(Date(epochMs))
     val dayLabel = when {
         sameDay(now, target) -> stringResource(R.string.stash_group_today)
-        sameDay(now, Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }) -> {
+        // ⚠️ 这里必须拿 **target** 和"明天"比：原来写成 `sameDay(now, 明天)` 是拿今天比明天，恒为 false，
+        // 于是"明天 09:00"一直退化成"10月9日 09:00"（§0.16.10 修）。
+        sameDay(target, Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }) -> {
             stringResource(R.string.stash_remind_tomorrow)
         }
         else -> {

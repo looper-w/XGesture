@@ -3152,6 +3152,10 @@
     <string name="stash_remind_in_minutes">%1$d 分钟后</string>
     <string name="stash_remind_in_hours">%1$d 小时后</string>
     <string name="stash_remind_clear">清除提醒</string>
+    <string name="stash_remind_custom">自定义时间…</string>
+    <string name="stash_remind_presets">档位</string>
+    <string name="stash_remind_confirm">确定</string>
+    <string name="stash_remind_custom_hint">滚动上下两列选日期与时间（分钟按 5 分钟一档）。</string>
     <string name="stash_remind_current">当前：%1$s</string>
     <string name="stash_remind_set">已设提醒</string>
     <string name="stash_remind_cleared">已取消提醒</string>

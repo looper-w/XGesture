@@ -3130,6 +3130,10 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_remind_in_minutes">In %1$d min</string>
     <string name="stash_remind_in_hours">In %1$d h</string>
     <string name="stash_remind_clear">Clear reminder</string>
+    <string name="stash_remind_custom">Custom time…</string>
+    <string name="stash_remind_presets">Presets</string>
+    <string name="stash_remind_confirm">OK</string>
+    <string name="stash_remind_custom_hint">Scroll the wheels to pick a date and time (minutes step by 5).</string>
     <string name="stash_remind_current">Now: %1$s</string>
     <string name="stash_remind_set">Reminder set</string>
     <string name="stash_remind_cleared">Reminder cleared</string>

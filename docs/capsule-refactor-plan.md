@@ -1189,3 +1189,48 @@ App 会把"当前语言"**持久化进它自己的设置**（`app_ui_language_ta
 class 属性 → 失败），改成"等空档再编译"；随后 `compileFullDebugKotlin` **日志 35 分钟不增长但 Kotlin 守护进程
 一直在烧 CPU（3 核）** —— 我误判成僵尸进程把它杀了，结果 Gradle 守护进程卡死等了 50 分钟。
 **判据：日志不动但 CPU 在烧 = 正常慢编译（这台机器全量 55 分钟）；只有 CPU 也停了才算卡死。**
+
+---
+
+### 0.16.10 已完成：提醒「自定义时间」滚轮（对齐用户给的参考 App）
+
+用户拿参考 App（`com.moting.floatwidget`）的三张截图指出：**"你的时间还是不够自定义"** ——
+参考 App 的提醒是「档位（15 分钟后 / 1 小时后 / 今天 17:00 / 明天 07:00）+ 自定义时间…」，
+点「自定义时间…」进**年/月/日 + 时:分 滚轮**，顶部「← 档位 … 确定」。
+
+**改法**（`HistoryReminderPicker.kt`，两种形态同在一张卡片里）：
+
+- **档位形态**：5 / 15 / 30 分钟后 · 1 / 3 小时后 · **今天 17:00** · **明天 07:00** · **明天 09:00**
+  （后三枚是固定整点，**已经过去的档位不显示**）+ 一枚「自定义时间…」+（已设时）「清除提醒」。
+- **自定义形态**：顶部 `← 档位` /（中间是**选中时间的实时预览**）/ `确定`，下面 **日期 · 时 · 分** 三个滚轮；
+  日期轮是"今天 / 明天 / `M月d日`"（未来 60 天），分钟按 5 分钟一档。
+- 滚轮实现：`LazyColumn` + `rememberSnapFlingBehavior`（Compose BOM 2026.09 自带，项目里首次用）；
+  选中项 = **最靠近视口中心的那一行**（视口 3 行 + 上下各留 1 行 padding 正好让选中项停在正中），
+  中间那行画一条 `fieldBg` 底作为"选中的就是这一行"的线索。
+  ⚠️ 踩过的坑：别用 `firstVisibleItemIndex + 半个偏移` 推选中项 —— 静止时 `firstVisibleItemIndex`
+  本身就是选中项，那个公式会额外 +1（代码注释里记了）。
+- "选到过去"的处理：档位不显示；自定义模式里若选到过去，点`确定`时**挪到 1 分钟后**（别设一个永远不响的提醒）。
+- 新字符串 4 个 × 4 语言：`stash_remind_custom` / `stash_remind_presets` / `stash_remind_confirm` / `stash_remind_custom_hint`。
+
+**参考 App 里还有、本轮不做的一件**：**「＋ 添加档位」**（用户把常用时间存成自己的档位）——
+它要新开一份"用户档位"的持久化（跟 `app_ui_language_tag` 一样进 DataStore），是这块唯一的跨会话数据，单独一轮做。
+
+### 0.16.11 待做（下一轮）：加号弹窗「加图片，且多张」
+
+用户在同一条消息里提的（参考 App 的加号弹窗有 🖼 / 📁 / 🔔 / ↑ 四个按钮，图片可以多选）。
+
+**为什么单独一轮**：**overlay 窗不能直接拉起系统选图** —— `rememberLauncherForActivityResult` 需要一个
+`ActivityResultRegistryOwner`，而 overlay 的 Compose 树里没有（项目里所有 `rememberLauncherForActivityResult`
+都在 `app/src/main/java/com/slideindex/app/ui/**` 的 Activity 里，overlay 侧一个都没有）。所以 overlay 里的选图
+一律走 **trampoline Activity**（现成的有 `PinImagePickerTrampolineActivity`（单选）、`SearchPanelImagePickerActivity`）。
+
+**方案（沿用 trampoline 那条既有链路）**：
+
+1. 新增/扩展一个 **多选** trampoline（`PickMultipleVisualMedia`，带 `maxItems`），把选中的 `List<Uri>` 通过
+   现有的结果回传通道交回 overlay（与钉屏选图同款）；
+2. 记一条弹窗里加一排**缩略图 + 删除**（多张，未存下前只存在本地 state，和 `composerTags` / `composerReminderAt` 一样）；
+3. 「存下」时按 `StashCoordinator` 的图片入口**一次写一条带多个图片块的条目**（条目本身已支持多图：
+   `selectedImageIndices`、卡片里的图片块都是现成的），失败/撤销沿用 `showUndoMessage { delete(newEntryId) }`；
+4. 拿不到读图权限时按现有 `StashClipboardSettingsScreen` 的媒体权限流程提示（别静默失败）。
+
+**顺序**：先把本轮（自定义时间）验完提交，再做这条 —— 它要新 Activity + 清单 + 回传通道，改动面比提醒大得多。

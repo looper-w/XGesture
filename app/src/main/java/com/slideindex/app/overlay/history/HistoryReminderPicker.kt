@@ -7,42 +7,63 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.slideindex.app.R
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import kotlin.math.abs
 import top.yukonga.miuix.kmp.basic.Text
 
 /**
- * 提醒时间选择浮窗（§0.16.9）。
+ * 提醒时间选择浮窗（§0.16.9 起；§0.16.10 补"自定义时间"）。
  *
- * 之前「提醒」只有开/关：设 = 硬编码的"明天 09:00"、再点 = 清掉，**用户改不了时间**（用户实测反馈）。
- * 现在编辑条的「提醒」和加号弹窗的 ⏰ 胶囊都打开这块浮窗。
+ * 两种形态，照用户给的参考 App（`com.moting.floatwidget`）：
+ * - **档位**：5/15/30 分钟后 · 1/3 小时后 · 今天 17:00 · 明天 07:00 · 明天 09:00（**已过去的档位不显示**）
+ *   + 一枚「自定义时间…」+（已设提醒时）「清除提醒」；
+ * - **自定义时间**：日期 / 时 / 分 三个滚轮（吸附到整项）+ 顶部「← 档位 · 预览 · 确定」。
  *
  * 壳子与其它浮窗**同一套**（96% 宽 / 最大 720dp / 圆角 28 / 投影 18 / 内边距 26·26·26·22），
- * 且卡片本体带 [historyConsumeTaps] —— 否则点在卡片空白处会穿到下面那层"点空白关闭"的遮罩上。
- *
- * ⚠️ **仍缺"任意日期/时间"**：这里给的是"从此刻起 N 分钟/N 小时 + 明天 09:00"这类锚点。
- * overlay 窗里塞 M3 的 DatePicker/TimePicker（约 400dp 高）在 320dp 宽的面板里会溢出，
- * 还要处理时区与"选到过去时间"的校验 —— 单独一轮再做（见计划遗留）。
+ * 卡片本体带 [historyConsumeTaps]（否则点在卡片空白处会穿到下面那层"点空白关闭"的遮罩上）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -56,17 +77,32 @@ internal fun HistoryReminderPickerModal(
     modifier: Modifier = Modifier,
 ) {
     val theme = historyTheme()
-    // "从现在起 N 分钟"这类选项必须在**打开那一刻**算好，否则浮窗开着不动，值会一直往后漂。
+    // "从现在起 N 分钟"这类档位必须在**打开那一刻**算好，否则浮窗开着不动、值会一直往后漂。
     val openedAtMs = remember(open) { System.currentTimeMillis() }
-    val options = remember(open) {
-        listOf(
-            HistoryReminderOption(minutes = 5, atMs = openedAtMs + 5 * 60_000L),
-            HistoryReminderOption(minutes = 15, atMs = openedAtMs + 15 * 60_000L),
-            HistoryReminderOption(minutes = 30, atMs = openedAtMs + 30 * 60_000L),
-            HistoryReminderOption(hours = 1, atMs = openedAtMs + 60 * 60_000L),
-            HistoryReminderOption(hours = 3, atMs = openedAtMs + 3 * 60 * 60_000L),
-            HistoryReminderOption(atMs = historyDefaultReminderAt(), isTomorrowMorning = true),
+    var customMode by remember(open) { mutableStateOf(false) }
+
+    // 自定义模式的三个滚轮：默认落在"当前已设的时间"或"明天 09:00"上，分钟吸附到 5 分钟档。
+    val initialCustom = remember(open) {
+        val base = Calendar.getInstance().apply {
+            timeInMillis = currentAtMs ?: historyDefaultReminderAt()
+        }
+        Triple(
+            historyDayOffsetOf(base),
+            base.get(Calendar.HOUR_OF_DAY),
+            base.get(Calendar.MINUTE) / HistoryReminderMinuteStep,
         )
+    }
+    var dayIndex by remember(open) { mutableIntStateOf(initialCustom.first) }
+    var hour by remember(open) { mutableIntStateOf(initialCustom.second) }
+    var minuteIndex by remember(open) { mutableIntStateOf(initialCustom.third) }
+
+    val dayLabels = historyReminderDayLabels(HistoryReminderDayCount)
+    val hourLabels = remember { (0..23).map { String.format("%02d", it) } }
+    val minuteLabels = remember {
+        (0 until 60 step HistoryReminderMinuteStep).map { String.format("%02d", it) }
+    }
+    val customAtMs = remember(dayIndex, hour, minuteIndex) {
+        reminderAtFor(dayIndex, hour, minuteIndex * HistoryReminderMinuteStep)
     }
 
     AnimatedVisibility(
@@ -85,68 +121,329 @@ internal fun HistoryReminderPickerModal(
                 .border(1.dp, theme.glassBorder, shape)
                 .padding(start = 26.dp, end = 26.dp, top = 26.dp, bottom = 22.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.stash_remind_toggle),
-                    style = TextStyle(fontSize = HistoryFontSizes.body),
-                    color = theme.text,
-                    modifier = Modifier.weight(1f),
-                )
-                HistoryHeaderCircleButton(
-                    icon = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.panel_close),
-                    onClick = onDismiss,
-                )
-            }
-            currentAtMs?.let { at ->
-                Text(
-                    text = stringResource(R.string.stash_remind_current, formatReminderTime(at)),
-                    style = TextStyle(fontSize = HistoryFontSizes.tiny),
-                    color = theme.sub,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                options.forEach { option ->
-                    HistoryChip(
-                        label = option.label(),
-                        dotColor = null,
-                        // 只把"同一档锚点"标成选中：分钟/小时这种相对值不参与回选（每次打开都新算）。
-                        selected = option.isTomorrowMorning && currentAtMs == option.atMs,
-                        onClick = { onPick(option.atMs) },
+            if (!customMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.stash_remind_toggle),
+                        style = TextStyle(fontSize = HistoryFontSizes.body),
+                        color = theme.text,
+                        modifier = Modifier.weight(1f),
+                    )
+                    HistoryHeaderCircleButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.panel_close),
+                        onClick = onDismiss,
                     )
                 }
-            }
-            if (currentAtMs != null) {
-                HistoryEditActionButton(
-                    label = stringResource(R.string.stash_remind_clear),
-                    icon = Icons.Default.Delete,
-                    onClick = { onPick(null) },
+                currentAtMs?.let { at ->
+                    Text(
+                        text = stringResource(R.string.stash_remind_current, formatReminderTime(at)),
+                        style = TextStyle(fontSize = HistoryFontSizes.tiny),
+                        color = theme.sub,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                FlowRow(
                     modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    historyReminderPresets(openedAtMs).forEach { preset ->
+                        HistoryChip(
+                            // 相对档位就说"几分钟后"（参考 App 就是这么写的，也更短）；
+                            // 整点档位才用绝对时间（今天 17:00 / 明天 07:00）。
+                            label = when {
+                                preset.minutes > 0 -> {
+                                    stringResource(R.string.stash_remind_in_minutes, preset.minutes)
+                                }
+                                preset.hours > 0 -> {
+                                    stringResource(R.string.stash_remind_in_hours, preset.hours)
+                                }
+                                else -> formatReminderTime(preset.atMs)
+                            },
+                            dotColor = null,
+                            selected = currentAtMs == preset.atMs,
+                            onClick = { onPick(preset.atMs) },
+                        )
+                    }
+                    // 「自定义时间…」：切到滚轮模式（参考 App 就是这条出口）。
+                    HistoryChip(
+                        label = stringResource(R.string.stash_remind_custom),
+                        dotColor = null,
+                        selected = false,
+                        onClick = { customMode = true },
+                    )
+                }
+                if (currentAtMs != null) {
+                    HistoryEditActionButton(
+                        label = stringResource(R.string.stash_remind_clear),
+                        icon = Icons.Default.Delete,
+                        onClick = { onPick(null) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    )
+                }
+            } else {
+                // ---- 自定义时间：顶部「← 档位 · 预览 · 确定」+ 三个滚轮 ----
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "← " + stringResource(R.string.stash_remind_presets),
+                        style = TextStyle(fontSize = HistoryFontSizes.meta),
+                        color = theme.accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(HistoryRadii.pill))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { customMode = false }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                    Text(
+                        text = formatReminderTime(customAtMs),
+                        style = TextStyle(
+                            fontSize = HistoryFontSizes.body,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = theme.text,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.stash_remind_confirm),
+                        style = TextStyle(
+                            fontSize = HistoryFontSizes.meta,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = theme.accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(HistoryRadii.pill))
+                            .background(theme.accentSoft)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { onPick(customAtMs) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HistoryWheel(
+                        items = dayLabels,
+                        selectedIndex = dayIndex,
+                        onSelected = { dayIndex = it },
+                        modifier = Modifier.weight(1.7f),
+                    )
+                    HistoryWheel(
+                        items = hourLabels,
+                        selectedIndex = hour,
+                        onSelected = { hour = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = ":",
+                        style = TextStyle(fontSize = HistoryFontSizes.titleS),
+                        color = theme.sub,
+                    )
+                    HistoryWheel(
+                        items = minuteLabels,
+                        selectedIndex = minuteIndex,
+                        onSelected = { minuteIndex = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.stash_remind_custom_hint),
+                    style = TextStyle(fontSize = HistoryFontSizes.tiny),
+                    color = theme.sub,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }
     }
 }
 
-/** 选择器里的一档：要么是"从打开那一刻起 N 分钟/小时"，要么是"明天 09:00"这个固定锚点。 */
-private data class HistoryReminderOption(
+/**
+ * 滚轮：`snapFlingBehavior` 吸附到整项，**选中项 = 最靠近视口中心的那一行**。
+ *
+ * ⚠️ 别用 `firstVisibleItemIndex + 半个偏移` 去推选中项：视口高 3 行 + 上下各留 1 行 padding 时，
+ * 静止状态下 `firstVisibleItemIndex` 就是选中项（偏移为 0），那个公式反而会额外 +1。
+ * 直接按"谁的中心离视口中心最近"算，最稳。
+ */
+@Composable
+private fun HistoryWheel(
+    items: List<String>,
+    selectedIndex: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val theme = historyTheme()
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
+    val centerIndex by remember {
+        derivedStateOf {
+            val info = state.layoutInfo
+            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+            info.visibleItemsInfo
+                .minByOrNull { abs((it.offset + it.size / 2) - center) }
+                ?.index
+                ?: selectedIndex
+        }
+    }
+    // 外部改了选中值（切日期、夹取）→ 把轮子滚到位；相等时不动作，免得和下面的回写打架。
+    LaunchedEffect(selectedIndex, items.size) {
+        if (state.firstVisibleItemIndex != selectedIndex) state.scrollToItem(selectedIndex)
+    }
+    LaunchedEffect(items.size) {
+        snapshotFlow { centerIndex }
+            .collect { index ->
+                if (index in items.indices && index != selectedIndex) onSelected(index)
+            }
+    }
+    Box(
+        modifier = modifier.height(HistoryWheelItemHeight * 3),
+        contentAlignment = Alignment.Center,
+    ) {
+        // 中间那行的底 —— "选中的就是这一行"的唯一视觉线索
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(HistoryWheelItemHeight)
+                .clip(RoundedCornerShape(HistoryRadii.sm))
+                .background(theme.fieldBg)
+                .border(1.dp, theme.fieldBorder, RoundedCornerShape(HistoryRadii.sm)),
+        )
+        LazyColumn(
+            state = state,
+            flingBehavior = rememberSnapFlingBehavior(state),
+            contentPadding = PaddingValues(vertical = HistoryWheelItemHeight),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            itemsIndexed(items) { index, label ->
+                Box(
+                    modifier = Modifier.height(HistoryWheelItemHeight).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        style = TextStyle(
+                            fontSize = HistoryFontSizes.sm,
+                            fontWeight = if (index == selectedIndex) {
+                                FontWeight.SemiBold
+                            } else {
+                                FontWeight.Normal
+                            },
+                        ),
+                        color = if (index == selectedIndex) theme.text else theme.sub,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 一档提醒：相对时间（几分钟/几小时后）或绝对整点。 */
+private data class HistoryReminderPreset(
     val atMs: Long,
     val minutes: Int = 0,
     val hours: Int = 0,
-    val isTomorrowMorning: Boolean = false,
-) {
-    @Composable
-    fun label(): String = when {
-        isTomorrowMorning -> stringResource(R.string.stash_remind_tomorrow)
-        minutes > 0 -> stringResource(R.string.stash_remind_in_minutes, minutes)
-        else -> stringResource(R.string.stash_remind_in_hours, hours)
+)
+
+/**
+ * 档位：相对时间 + 三枚固定整点，**已经过去的档位不显示**（否则点了等于设到过去）。
+ *
+ * 相对档位带 `minutes`/`hours`，好让 UI 说"N 分钟后"而不是把绝对时刻怼给用户。
+ */
+private fun historyReminderPresets(openedAtMs: Long): List<HistoryReminderPreset> {
+    val presets = mutableListOf(
+        HistoryReminderPreset(openedAtMs + 5 * 60_000L, minutes = 5),
+        HistoryReminderPreset(openedAtMs + 15 * 60_000L, minutes = 15),
+        HistoryReminderPreset(openedAtMs + 30 * 60_000L, minutes = 30),
+        HistoryReminderPreset(openedAtMs + 60 * 60_000L, hours = 1),
+        HistoryReminderPreset(openedAtMs + 3 * 60 * 60_000L, hours = 3),
+    )
+    listOf(
+        // 参考 App 的两枚整点档位
+        atClock(dayOffset = 0, hourOfDay = 17, minute = 0),
+        atClock(dayOffset = 1, hourOfDay = 7, minute = 0),
+        // 设计稿原来的默认：明天 09:00
+        atClock(dayOffset = 1, hourOfDay = 9, minute = 0),
+    ).forEach { at -> if (at > openedAtMs) presets += HistoryReminderPreset(at) }
+    return presets
+}
+
+private fun atClock(dayOffset: Int, hourOfDay: Int, minute: Int): Long =
+    Calendar.getInstance().apply {
+        add(Calendar.DAY_OF_YEAR, dayOffset)
+        set(Calendar.HOUR_OF_DAY, hourOfDay)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+/** 距今天几天（0 = 今天）；目标在过去或超出滚动范围时夹到合法区间。 */
+private fun historyDayOffsetOf(target: Calendar): Int {
+    val today = Calendar.getInstance()
+    var offset = 0
+    val probe = Calendar.getInstance().apply { timeInMillis = target.timeInMillis }
+    while (offset < HistoryReminderDayCount - 1 && probe.after(today)) {
+        val sameDay = probe.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+            probe.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
+        if (sameDay) break
+        probe.add(Calendar.DAY_OF_YEAR, -1)
+        offset += 1
+    }
+    return offset.coerceIn(0, HistoryReminderDayCount - 1)
+}
+
+/** 自定义模式选出的时间：清掉秒/毫秒；**已经过去就挪到 1 分钟后**（别设一个永远不响的提醒）。 */
+private fun reminderAtFor(dayOffset: Int, hourOfDay: Int, minute: Int): Long {
+    val at = atClock(dayOffset, hourOfDay, minute)
+    val earliest = System.currentTimeMillis() + 60_000L
+    return if (at < earliest) earliest else at
+}
+
+/** 日期滚轮的文案：今天 / 明天 / `M月d日`（非中文用 `MMM d`）。 */
+@Composable
+private fun historyReminderDayLabels(count: Int): List<String> {
+    val locale = LocalLocale.current.platformLocale
+    val today = stringResource(R.string.stash_group_today)
+    val tomorrow = stringResource(R.string.stash_remind_tomorrow)
+    val pattern = if (locale.language == "zh") "M月d日" else "MMM d"
+    return remember(count, locale, today, tomorrow) {
+        val format = SimpleDateFormat(pattern, locale)
+        val base = Calendar.getInstance()
+        (0 until count).map { offset ->
+            when (offset) {
+                0 -> today
+                1 -> tomorrow
+                else -> format.format(
+                    Date(
+                        Calendar.getInstance().apply {
+                            timeInMillis = base.timeInMillis
+                            add(Calendar.DAY_OF_YEAR, offset)
+                        }.timeInMillis,
+                    ),
+                )
+            }
+        }
     }
 }
+
+/** 日期滚轮可选天数（两个月足够"自定义"，再多滚起来反而难找）。 */
+private const val HistoryReminderDayCount = 60
+
+/** 分钟滚轮的步进。 */
+private const val HistoryReminderMinuteStep = 5
+
+/** 滚轮单行高度。 */
+private val HistoryWheelItemHeight = 34.dp
