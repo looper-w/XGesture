@@ -1,0 +1,67 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# push 门锁：没有人工授权，一律拒绝推送。
+#
+# 授权方式（只在这一次命令里生效）：
+#   PowerShell:  $env:XG_ALLOW_PUSH=1; git push origin main
+#   bash / sh :  XG_ALLOW_PUSH=1 git push origin main
+#
+# 为什么存在：曾经有 agent 把用户 27 个"还没打算公开"的提交随一次 push 全推上去了。
+# 规则见仓库根目录 `AGENTS.md`「Git 红线」与 `.cursorrules` 第 6 节。
+#
+# 注意：本脚本**只依赖 git 与 echo**（不调用 sed/awk 等外部命令），
+#       以免某些环境下 PATH 里没有这些工具而报错。
+# ─────────────────────────────────────────────────────────────────────────────
+
+remote="$1"
+url="$2"
+
+# 容错：某些环境（例如 PowerShell 管道喂 stdin）会给每行末尾带上 CR。
+CR=$(printf '\r')
+
+echo ""
+echo "── push 预检 ────────────────────────────────────────────────"
+while read -r local_ref local_sha remote_ref remote_sha; do
+    local_ref=${local_ref%$CR}
+    local_sha=${local_sha%$CR}
+    remote_ref=${remote_ref%$CR}
+    remote_sha=${remote_sha%$CR}
+    [ -z "$local_ref" ] && continue
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        echo "  删除远端引用：$remote_ref"
+        continue
+    fi
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        echo "  $local_ref -> $remote_ref（远端还没有这个分支，将推送全部提交）"
+        echo "  最近提交："
+        git log --pretty=tformat:'    %h %s' --no-decorate -n 50 "$local_sha"
+    else
+        echo "  $local_ref -> $remote_ref"
+        echo "  待推提交："
+        git log --pretty=tformat:'    %h %s' --no-decorate "$remote_sha..$local_sha"
+        echo "  改动文件："
+        git diff --stat "$remote_sha..$local_sha"
+    fi
+done
+echo "────────────────────────────────────────────────────────────"
+
+if [ "$DSH_SHELL" = "1" ] || [ -n "$DSH_SESSION_ID" ]; then
+    # 由 agent（DeepSeek Harness 等）注入的环境变量 → 判定为"AI 发起的推送"
+    if [ "$XG_ALLOW_PUSH" = "1" ]; then
+        echo "✅ 已授权（XG_ALLOW_PUSH=1），放行。"
+        exit 0
+    fi
+    echo ""
+    echo "⛔ 已被 pre-push 门锁拦下：这是 **AI 进程** 发起的推送，且没有人授权。"
+    echo "   确认上面这份清单没问题后，再由你授权推送："
+    echo "     PowerShell:  \$env:XG_ALLOW_PUSH=1; git push $remote <分支>"
+    echo "     bash / sh :  XG_ALLOW_PUSH=1 git push $remote <分支>"
+    echo ""
+    exit 1
+fi
+
+# 没有 agent 环境变量 → 是你自己（终端 / IDE）在推：只打印清单，不拦。
+echo ""
+echo "ℹ️ 手动推送：以上清单仅供参考，门锁不拦人工推送（只拦 AI 进程）。"
+echo ""
+exit 0

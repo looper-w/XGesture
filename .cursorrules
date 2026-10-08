@@ -51,3 +51,10 @@
 ## 5. Miuix 设置页 UI
 - 新增或修改设置子页前，先阅读 `app/src/main/java/com/slideindex/app/ui/miuix/README.md`。
 - 列表用 `MiuixListSettingsCard`；Tab 在白 Card 内用 `MiuixTabSettingsCard`；禁止手拼 `Card { Preference… }` 列表。
+
+## 6. Git 红线（完整版见根目录 `AGENTS.md`）
+- **提交只许包含用户点名的文件**：`git add <具体路径>`；禁止 `git add -A` / `git add .` / `git commit -a`。
+- **禁止自行 push**：默认只 commit。push 需用户当次明确指示；仓库装了 pre-push 门锁（`scripts/git-hooks/pre-push`），**只拦 AI 进程**（`DSH_SHELL` / `DSH_SESSION_ID`），AI 推送必须带 `XG_ALLOW_PUSH=1`，**AI 不得自行设置该变量**；用户自己在终端 / IDE 推送不受影响（只打印待推清单）。
+- **发现本地领先 `origin/main`、或工作区有用户自己的改动时，先停下报告清单**，由用户决定提交 / 推送范围；禁止替用户判断"反正迟早要推"。
+- **禁止整文件还原**（`git checkout -- <file>` / `git restore <file>`）：用户常在同一个文件里有未提交改动，会一并清掉。
+- **提交前把该文件行尾规范成 LF**：本仓库部分文件 HEAD 存 LF、工作区是 CRLF，直接提交会出现"整文件改写"的假 diff。
