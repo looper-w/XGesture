@@ -1268,3 +1268,27 @@ class 属性 → 失败），改成"等空档再编译"；随后 `compileFullDeb
 `Syntax error: Unclosed comment`（和之前 `image/*` 那次同一个病）。**注释里别写带 `/*` 的 glob**。
 
 **构建**：`assembleFullDebug` 一次过（上一次是上面那个注释坑），单测 **108 套 / 615 条 / 0 失败**。
+
+---
+
+### 0.16.13 事故：拉系统相册之后"收纳面板打不开了"（已恢复；根因**待修**）
+
+**现象**（用户报的）：点「＋ 图片」→ 系统相册 → 选完图回来之后，面板就不显示了；再点悬浮球 /
+从 adb 发 `OPEN_STASH_PANEL` 都打不开（`am start` 只说"已有 task 被提到前台"，面板窗始终不显示）。
+
+**诊断（客观信号，全都没问题）**：无障碍服务在 `enabled_accessibility_services` 里、开关为 1；
+`OverlayService`（前台）/`HistoryFloatService`/`SlideIndexAccessibilityService` 全在跑；`files/crashes` 无新文件；
+`dumpsys accessibility` 的 `Crashed services:{}`。
+**真正的问题在窗口层**：`dumpsys window windows` 里**悬浮球与左右边缘把手都 `isOnScreen=true`**，但
+**面板窗是 `mViewVisibility=0x8`（GONE）+ `mHasSurface=false`** —— 面板被"藏住且状态卡住"：
+宿主多半仍以为自己正在显示，于是后续的 toggle 全成了空操作（点了没反应）。
+
+**恢复办法（已验证）**：`adb shell am force-stop com.slideindex.app` + 重开 App（服务重绑）→ 面板正常 ✔。
+用户侧等价操作：设置里强制停止 XGesture，或重启手机。
+
+**待修（下一轮第一件）**：面板宿主必须在"面板窗被系统隐藏 / 被别的 task 顶掉"时**复位自己的 visible 状态**
+（或主动 hide 一次再允许打开）。否则**任何"面板开着时切到别的 App/Activity"都可能复现** ——
+我的选图功能必须 `startActivity`（系统相册），于是把它变成了必现路径。
+
+**顺带要确认的**：从选择器回来时草稿（`composerImagePaths` / `composerText` / 标签 / 提醒）还在不在。
+若一起丢了，就得把草稿从 Compose state 提到 ViewModel 或静态量。
