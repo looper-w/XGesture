@@ -565,6 +565,9 @@ internal object SettingsPreferenceKeys {
     val FLOAT_BALL_DOWN_SWIPE_SHORT_PERCENT = floatPreferencesKey("float_ball_down_swipe_short_percent")
     val FLOAT_BALL_SIDE_SWIPE_SHORT_PERCENT = floatPreferencesKey("float_ball_side_swipe_short_percent")
     val FLOAT_BALL_UP_SWIPE_SHORT_PERCENT = floatPreferencesKey("float_ball_up_swipe_short_percent")
+    /** 悬浮球手势打开的浮层（快速启动器 / 圆环启动器）是否对齐手指按下位置。 */
+    val FLOAT_BALL_OVERLAY_ANCHOR_AT_TOUCH_DOWN =
+        booleanPreferencesKey("float_ball_overlay_anchor_at_touch_down")
     val FLOAT_BALL_INSTANT_TRANSLATE = booleanPreferencesKey("float_ball_instant_translate")
     /** [FLOAT_BALL_INSTANT_TRANSLATE] 改为默认开启时的一次性迁移标记。 */
     val FLOAT_BALL_INSTANT_TRANSLATE_DEFAULT_ON_MIGRATED =

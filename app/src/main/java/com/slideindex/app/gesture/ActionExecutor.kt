@@ -134,14 +134,26 @@ class ActionExecutor(
         anchorRawX: Float? = null,
         anchorRawY: Float? = null,
         continueTouch: Boolean = false,
-        panelSide: PanelSide? = null
+        panelSide: PanelSide? = null,
+        // 悬浮球手势的「手指按下位置」；只有悬浮球手势派发会传，其它入口为 null。
+        gestureTouchDownRawX: Float? = null,
+        gestureTouchDownRawY: Float? = null
     ): Boolean {
         val resolvedSide = panelSide ?: side
+        val touchDownAnchor = FloatBallOverlayAnchorPolicy.anchorsAtTouchDown(
+            action = action,
+            enabled = settings.floatBallOverlayAnchorAtTouchDown
+        )
+        val overlayAnchorX =
+            FloatBallOverlayAnchorPolicy.resolve(touchDownAnchor, anchorRawX, gestureTouchDownRawX)
+        val overlayAnchorY =
+            FloatBallOverlayAnchorPolicy.resolve(touchDownAnchor, anchorRawY, gestureTouchDownRawY)
         return when (action) {
             GestureAction.OpenIndex,
-            is GestureAction.QuickLauncher,
             GestureAction.TaskSwitcher,
             -> overlayPanels.showEdgeHostedPanel(action, anchorRawY, resolvedSide)
+            is GestureAction.QuickLauncher ->
+                overlayPanels.showEdgeHostedPanel(action, overlayAnchorY, resolvedSide)
             GestureAction.ShellCommandPanel -> overlayPanels.openShellCommandPanelStandalone()
             is GestureAction.ExecuteShellCommand -> executeShellCommand(action)
             is GestureAction.OpenLink -> {
@@ -193,8 +205,8 @@ class ActionExecutor(
                     )
                 }
             GestureAction.RingLauncher ->
-                overlayPanels.showStandaloneOverlay(anchorRawY) { y ->
-                    val x = anchorRawX ?: (context.resources.displayMetrics.widthPixels / 2f)
+                overlayPanels.showStandaloneOverlay(overlayAnchorY) { y ->
+                    val x = overlayAnchorX ?: (context.resources.displayMetrics.widthPixels / 2f)
                     RingLauncherOverlayWindow.show(
                         context = context,
                         settings = settings,

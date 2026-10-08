@@ -316,6 +316,7 @@ data class AppSettings(
     val floatBallDownSwipeShortPercent get() = floatBall.floatBallDownSwipeShortPercent
     val floatBallSideSwipeShortPercent get() = floatBall.floatBallSideSwipeShortPercent
     val floatBallUpSwipeShortPercent get() = floatBall.floatBallUpSwipeShortPercent
+    val floatBallOverlayAnchorAtTouchDown get() = floatBall.floatBallOverlayAnchorAtTouchDown
     val floatBallInstantTranslate get() = floatBall.floatBallInstantTranslate
     val floatBallTranslateEngine get() = floatBall.floatBallTranslateEngine
     val floatBallTranslateTargetLang get() = floatBall.floatBallTranslateTargetLang

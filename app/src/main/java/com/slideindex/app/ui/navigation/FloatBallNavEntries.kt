@@ -376,6 +376,7 @@ fun NavEntryBuilder.floatBallNavEntries(ctx: MainNavContext) {
             onSideSwipeShortPercentChange = viewModel::setFloatBallSideSwipeShortPercent,
             onUpSwipeShortPercentChange = viewModel::setFloatBallUpSwipeShortPercent,
             onLongPressMsChange = viewModel::setFloatBallLongPressMs,
+            onOverlayAnchorAtTouchDownChange = viewModel::setFloatBallOverlayAnchorAtTouchDown,
         )
     }
 

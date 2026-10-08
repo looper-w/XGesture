@@ -1719,6 +1719,9 @@
     <string name="preview_unavailable_hint">المعاينة غير متاحة: تأكد من تفعيل خدمة إمكانية الوصول</string>
     <string name="float_ball_gesture_long_press_ms">مدة تشغيل الضغط المطول</string>
     <string name="float_ball_gesture_long_press_ms_value">%1$d مللي ثانية</string>
+    <string name="float_ball_gesture_overlay_anchor_section">موضع المشغّل</string>
+    <string name="float_ball_gesture_overlay_anchor_touch_down">محاذاة المشغّل مع موضع لمس الإصبع</string>
+    <string name="float_ball_gesture_overlay_anchor_touch_down_summary">تظهر لوحة المشغّل السريع أو حلقة التشغيل التي يفتحها إيماء الكرة العائمة في موضع لمس الإصبع للكرة أولاً. عند الإيقاف تظهر في موضع الإصبع لحظة تحقق الإيماءة (السحب: موضع الإفلات).</string>
     <string name="float_ball_gesture_swipe_up_short">السحب لأعلى (قصير)</string>
     <string name="float_ball_gesture_swipe_up_long">السحب لأعلى (طويل)</string>
     <string name="float_ball_gesture_swipe_up_return">السحب لأعلى ثم الرجوع</string>

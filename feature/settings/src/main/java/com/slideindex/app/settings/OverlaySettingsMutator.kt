@@ -1064,6 +1064,10 @@ class OverlaySettingsMutator @Inject constructor(
         it[SettingsPreferenceKeys.FLOAT_BALL_UP_SWIPE_SHORT_PERCENT] = value.coerceIn(50f, 500f)
     }
 
+    suspend fun setFloatBallOverlayAnchorAtTouchDown(enabled: Boolean) = editor.edit {
+        it[SettingsPreferenceKeys.FLOAT_BALL_OVERLAY_ANCHOR_AT_TOUCH_DOWN] = enabled
+    }
+
     suspend fun setFloatBallInstantTranslate(enabled: Boolean) = editor.edit {
         it[SettingsPreferenceKeys.FLOAT_BALL_INSTANT_TRANSLATE] = enabled
     }

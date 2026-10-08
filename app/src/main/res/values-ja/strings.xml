@@ -1726,6 +1726,9 @@
     <string name="preview_unavailable_hint">プレビューを利用できません：アクセシビリティサービスが有効か確認してください</string>
     <string name="float_ball_gesture_long_press_ms">長押し時間</string>
     <string name="float_ball_gesture_long_press_ms_value">%1$d ms</string>
+    <string name="float_ball_gesture_overlay_anchor_section">ランチャーの位置</string>
+    <string name="float_ball_gesture_overlay_anchor_touch_down">ランチャーを指を置いた位置に合わせる</string>
+    <string name="float_ball_gesture_overlay_anchor_touch_down_summary">フローティングボールのジェスチャーで開くクイックランチャー／リングランチャーを、指がボールに触れた位置に表示します。オフの場合はジェスチャーが成立した時点の指の位置（スワイプは離した位置）に表示します。</string>
     <string name="float_ball_gesture_swipe_up_short">上スワイプ（短）</string>
     <string name="float_ball_gesture_swipe_up_long">上スワイプ（長）</string>
     <string name="float_ball_gesture_swipe_up_return">上スワイプで戻る</string>

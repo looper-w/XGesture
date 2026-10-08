@@ -656,6 +656,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setFloatBallUpSwipeShortPercent(value: Float) =
         overlay.setFloatBallUpSwipeShortPercent(value)
 
+    suspend fun setFloatBallOverlayAnchorAtTouchDown(enabled: Boolean) =
+        overlay.setFloatBallOverlayAnchorAtTouchDown(enabled)
+
     suspend fun setFloatBallInstantTranslate(enabled: Boolean) =
         overlay.setFloatBallInstantTranslate(enabled)
 

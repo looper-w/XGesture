@@ -64,12 +64,15 @@ fun FloatBallGestureSettingsScreen(
 
     onUpSwipeShortPercentChange: (Float) -> Unit,
 
-    onLongPressMsChange: (Int) -> Unit
+    onLongPressMsChange: (Int) -> Unit,
+
+    onOverlayAnchorAtTouchDownChange: (Boolean) -> Unit
 
 ) {
 
     val distanceSectionTitle = stringResource(R.string.float_ball_gesture_distance_section)
     val longPressSectionTitle = stringResource(R.string.float_ball_gesture_long_press_section)
+    val overlayAnchorSectionTitle = stringResource(R.string.float_ball_gesture_overlay_anchor_section)
     // 分组小标题必须在 Lazy 作用域外解析（settingsLazySmallTitle 的 title 是普通 String）。
     val gestureGroupTitles = FloatBallGestureGroup.displayOrder.map { group ->
         group to floatBallGestureGroupTitle(group)
@@ -160,6 +163,42 @@ fun FloatBallGestureSettingsScreen(
                     )
                 }
             )
+        )
+
+        settingsLazySmallTitle(
+
+            key = "section-overlay-anchor",
+
+            title = overlayAnchorSectionTitle
+
+        )
+
+        groupedCardItems(
+
+            keyPrefix = "float-ball-gesture-overlay-anchor",
+
+            items = listOf(
+
+                settingsCardScopeItem("overlay-anchor-touch-down") {
+
+                    SettingSwitchRow(
+
+                        title = stringResource(R.string.float_ball_gesture_overlay_anchor_touch_down),
+
+                        subtitle = stringResource(R.string.float_ball_gesture_overlay_anchor_touch_down_summary),
+
+                        checked = settings.floatBallOverlayAnchorAtTouchDown,
+
+                        enabled = true,
+
+                        onCheckedChange = onOverlayAnchorAtTouchDownChange
+
+                    )
+
+                }
+
+            )
+
         )
 
         gestureGroupTitles.forEach { (group, groupTitle) ->

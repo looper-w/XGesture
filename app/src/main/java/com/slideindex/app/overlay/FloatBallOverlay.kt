@@ -1183,9 +1183,16 @@ object FloatBallOverlay {
                 onDrag = { fingerX, fingerY -> dragCallbacks.onDrag(fingerX, fingerY) },
                 onDragEnd = { dragCallbacks.onEnd() },
                 onDragCancel = { dragCallbacks.onCancel() },
-                onGesture = { gestureType, rawX, rawY ->
+                onGesture = { gestureType, rawX, rawY, touchDownX, touchDownY ->
                     hideGestureHintWindow()
-                    performFloatBallGesture(state.settingsState.value, gestureType, rawX, rawY)
+                    performFloatBallGesture(
+                        state.settingsState.value,
+                        gestureType,
+                        rawX,
+                        rawY,
+                        touchDownRawX = touchDownX,
+                        touchDownRawY = touchDownY
+                    )
                 },
                 onGestureHint = dragCallbacks::onGestureHint,
                 onPickPreviewStart = dragCallbacks::onPreviewStart,
@@ -1242,10 +1249,18 @@ object FloatBallOverlay {
                         }
                     }
                 },
-                onGesture = { gestureType, rawX, rawY ->
+                onGesture = { gestureType, rawX, rawY, touchDownX, touchDownY ->
                     lineDragEndedWithGesture = true
                     hideGestureHintWindow()
-                    performFloatBallGesture(state.settingsState.value, gestureType, rawX, rawY, fromLineStrip = true)
+                    performFloatBallGesture(
+                        state.settingsState.value,
+                        gestureType,
+                        rawX,
+                        rawY,
+                        fromLineStrip = true,
+                        touchDownRawX = touchDownX,
+                        touchDownRawY = touchDownY
+                    )
                 },
                 onGestureHint = dragCallbacks::onGestureHint,
                 onPickPreviewStart = dragCallbacks::onPreviewStart,
@@ -1983,7 +1998,9 @@ object FloatBallOverlay {
         gestureType: FloatBallGestureType,
         rawX: Float,
         rawY: Float,
-        fromLineStrip: Boolean = false
+        fromLineStrip: Boolean = false,
+        touchDownRawX: Float? = null,
+        touchDownRawY: Float? = null
     ) {
         val action = settings.floatBallGestureActions[gestureType] ?: GestureAction.None
         if (action is GestureAction.None) return
@@ -2044,7 +2061,9 @@ object FloatBallOverlay {
             settings = settings,
             anchorRawX = rawX,
             anchorRawY = rawY,
-            panelSide = panelSide
+            panelSide = panelSide,
+            gestureTouchDownRawX = touchDownRawX,
+            gestureTouchDownRawY = touchDownRawY
         )
     }
 

@@ -47,7 +47,7 @@ internal class FloatBallTouchHostLayout(
     private var onBallDrag: ((fingerX: Float, fingerY: Float) -> Unit)? = null
     private var onBallDragEnd: (() -> Unit)? = null
     private var onBallDragCancel: (() -> Unit)? = null
-    private var onBallGesture: ((FloatBallGestureType, rawX: Float, rawY: Float) -> Unit)? = null
+    private var onBallGesture: ((FloatBallGestureType, rawX: Float, rawY: Float, touchDownX: Float, touchDownY: Float) -> Unit)? = null
     private var onBallGestureHint: ((FloatBallGestureType?) -> Unit)? = null
     private var onBallPickPreviewStart: ((screenX: Float, screenY: Float) -> Unit)? = null
     private var onBallPickPreviewMove: ((touchDownX: Float, touchDownY: Float, fingerX: Float, fingerY: Float) -> Unit)? = null
@@ -99,7 +99,9 @@ internal class FloatBallTouchHostLayout(
             onDrag = { fingerX, fingerY -> onBallDrag?.invoke(fingerX, fingerY) },
             onDragEnd = { onBallDragEnd?.invoke() },
             onDragCancel = { onBallDragCancel?.invoke() },
-            onGesture = { type, x, y -> onBallGesture?.invoke(type, x, y) },
+            onGesture = { type, x, y, touchDownX, touchDownY ->
+                onBallGesture?.invoke(type, x, y, touchDownX, touchDownY)
+            },
             onGestureHint = { type -> onBallGestureHint?.invoke(type) },
             onPickPreviewStart = { x, y -> onBallPickPreviewStart?.invoke(x, y) },
             onPickPreviewProgress = { p -> onBallPickPreviewProgress?.invoke(p) },
@@ -117,7 +119,7 @@ internal class FloatBallTouchHostLayout(
         onDrag: (fingerX: Float, fingerY: Float) -> Unit,
         onDragEnd: () -> Unit,
         onDragCancel: () -> Unit,
-        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float) -> Unit,
+        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float, touchDownX: Float, touchDownY: Float) -> Unit,
         onGestureHint: (FloatBallGestureType?) -> Unit = {},
         onPickPreviewStart: (screenX: Float, screenY: Float) -> Unit = { _, _ -> },
         onPickPreviewProgress: (progress: Float) -> Unit = {},
@@ -169,7 +171,7 @@ internal class FloatBallTouchHostLayout(
         onDrag: (Float, Float) -> Unit,
         onDragEnd: () -> Unit,
         onDragCancel: () -> Unit,
-        onGesture: (FloatBallGestureType, Float, Float) -> Unit,
+        onGesture: (FloatBallGestureType, Float, Float, Float, Float) -> Unit,
         onGestureHint: (FloatBallGestureType?) -> Unit,
         onPickPreviewStart: (Float, Float) -> Unit,
         onPickPreviewProgress: (Float) -> Unit,

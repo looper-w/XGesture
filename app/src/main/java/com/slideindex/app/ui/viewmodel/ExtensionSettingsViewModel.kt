@@ -600,6 +600,10 @@ class ExtensionSettingsViewModel @Inject constructor(
         settingsRepository.setFloatBallUpSwipeShortPercent(value)
     }
 
+    fun setFloatBallOverlayAnchorAtTouchDown(enabled: Boolean) = launchSettingsWrite {
+        settingsRepository.setFloatBallOverlayAnchorAtTouchDown(enabled)
+    }
+
     fun setFloatBallPickOffsetDp(value: Float) = launchSettingsWrite {
         settingsRepository.setFloatBallPickOffsetDp(value)
     }

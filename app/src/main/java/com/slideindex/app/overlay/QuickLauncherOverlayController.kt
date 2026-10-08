@@ -7,6 +7,7 @@ import android.view.MotionEvent
 import com.slideindex.app.R
 import com.slideindex.app.data.AppInfo
 import com.slideindex.app.gesture.ActionExecutor
+import com.slideindex.app.gesture.FloatBallOverlayAnchorPolicy
 import com.slideindex.app.gesture.GestureSession
 import com.slideindex.app.gesture.GestureZoneLayout
 import com.slideindex.app.gesture.PanelGridSession
@@ -196,6 +197,8 @@ internal class QuickLauncherOverlayController(
     )
 
     internal var quickLauncherAnchorRawY: Float? = null
+    /** 锚点来自外部触发（悬浮球 / 圆环入口等），不是边滑手势现场算出来的。 */
+    internal var quickLauncherExternalAnchor: Boolean = false
     internal var quickLauncherFrozenAnchorLocalY: Float? = null
     internal var quickLauncherContinuousHapticIndex = -1
     internal var quickLauncherPressIndex = -1
@@ -387,6 +390,7 @@ internal class QuickLauncherOverlayController(
 
     fun setAnchorRawY(rawY: Float?) {
         quickLauncherAnchorRawY = rawY
+        quickLauncherExternalAnchor = rawY != null
     }
 
     fun onSessionStart() {
@@ -436,6 +440,7 @@ internal class QuickLauncherOverlayController(
 
     fun onSessionEnd() {
         quickLauncherAnchorRawY = null
+        quickLauncherExternalAnchor = false
         quickLauncherFrozenAnchorLocalY = null
         quickLauncherContinuousHapticIndex = -1
         quickLauncherPressIndex = -1
@@ -727,8 +732,20 @@ internal class QuickLauncherOverlayController(
         val rawY = quickLauncherAnchorRawY ?: host.pathRecognizer().gestureStartRawY()
         val loc = host.viewLocationOnScreen()
         val anchorY = rawY - loc[1]
+        // 开启「启动器对齐手指按下位置」后，外部触发的锚点不再夹进触钮区间：
+        // 悬浮球能停在触钮范围之外，夹进去会让面板离开手指按下的位置。
         val trigger = host.activeTriggerZoneRect()
-        return anchorY.coerceIn(trigger.top, trigger.bottom)
+        val anchorsAtTouchDown =
+            quickLauncherExternalAnchor && host.settings().floatBallOverlayAnchorAtTouchDown
+        return anchorY.coerceIn(
+            FloatBallOverlayAnchorPolicy.anchorRange(
+                anchorsAtTouchDown = anchorsAtTouchDown,
+                viewHeightPx = host.viewHeight().toFloat(),
+                marginPx = host.dp(16f),
+                triggerTopPx = trigger.top,
+                triggerBottomPx = trigger.bottom
+            )
+        )
     }
 
     private fun quickLauncherAnchorLocalY(): Float =

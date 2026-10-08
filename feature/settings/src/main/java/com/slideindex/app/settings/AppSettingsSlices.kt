@@ -310,6 +310,13 @@ data class FloatBallSettings(
     val floatBallSideSwipeShortPercent: Float = 320f,
     /** 上滑短滑阈值 = percent × 40dp / 100；超过即为长滑。 */
     val floatBallUpSwipeShortPercent: Float = 256f,
+    /**
+     * 悬浮球手势打开的浮层（快速启动器 / 圆环启动器）对齐手指**按下**位置。
+     *
+     * false = 沿用历史行为：对齐手势判定成立时（滑动为松手时）手指所在位置。
+     * 只影响悬浮球触发的这两个浮层，边滑手势与其它浮层不受影响。
+     */
+    val floatBallOverlayAnchorAtTouchDown: Boolean = false,
     /** When false, translate opens Google Translate in browser; when true, shows in-app overlay. */
     val floatBallInstantTranslate: Boolean = true,
     val floatBallTranslateEngine: FloatBallTranslateEngine = FloatBallTranslateEngine.GOOGLE,

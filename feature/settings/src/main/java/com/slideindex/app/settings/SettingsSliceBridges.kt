@@ -222,6 +222,7 @@ fun OverlaySettings.toMinimalAppSettings(): AppSettings = AppSettings(
         floatBallDownSwipeShortPercent = floatBallDownSwipeShortPercent,
         floatBallSideSwipeShortPercent = floatBallSideSwipeShortPercent,
         floatBallUpSwipeShortPercent = floatBallUpSwipeShortPercent,
+        floatBallOverlayAnchorAtTouchDown = floatBallOverlayAnchorAtTouchDown,
         floatBallInstantTranslate = floatBallInstantTranslate,
         floatBallTranslateEngine = floatBallTranslateEngine,
         floatBallTranslateTargetLang = floatBallTranslateTargetLang,

@@ -71,7 +71,7 @@ internal class FloatBallStripHost(
     private var onDrag: ((fingerX: Float, fingerY: Float) -> Unit)? = null
     private var onDragEnd: (() -> Unit)? = null
     private var onDragCancel: (() -> Unit)? = null
-    private var onGesture: ((FloatBallGestureType, rawX: Float, rawY: Float) -> Unit)? = null
+    private var onGesture: ((FloatBallGestureType, rawX: Float, rawY: Float, touchDownX: Float, touchDownY: Float) -> Unit)? = null
     private var onGestureHint: ((FloatBallGestureType?) -> Unit)? = null
     private var onPickPreviewStart: ((screenX: Float, screenY: Float) -> Unit)? = null
     private var onPickPreviewProgress: ((progress: Float) -> Unit)? = null
@@ -91,7 +91,9 @@ internal class FloatBallStripHost(
             onPickDrag = { fingerX, fingerY -> onDrag?.invoke(fingerX, fingerY) },
             onPickEnd = { onDragEnd?.invoke() },
             onPickCancel = { onDragCancel?.invoke() },
-            onGesture = { type, rawX, rawY -> onGesture?.invoke(type, rawX, rawY) },
+            onGesture = { type, rawX, rawY, touchDownX, touchDownY ->
+                onGesture?.invoke(type, rawX, rawY, touchDownX, touchDownY)
+            },
             onGestureHint = { type -> onGestureHint?.invoke(type) },
             onPickPreviewStart = { x, y -> onPickPreviewStart?.invoke(x, y) },
             onPickPreviewProgress = { progress -> onPickPreviewProgress?.invoke(progress) },
@@ -109,7 +111,7 @@ internal class FloatBallStripHost(
         onDrag: (fingerX: Float, fingerY: Float) -> Unit,
         onDragEnd: () -> Unit,
         onDragCancel: () -> Unit,
-        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float) -> Unit,
+        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float, touchDownX: Float, touchDownY: Float) -> Unit,
         onGestureHint: (FloatBallGestureType?) -> Unit = {},
         onPickPreviewStart: (screenX: Float, screenY: Float) -> Unit = { _, _ -> },
         onPickPreviewProgress: (progress: Float) -> Unit = {},

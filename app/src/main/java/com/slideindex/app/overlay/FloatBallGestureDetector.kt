@@ -99,6 +99,10 @@ internal class FloatBallGestureDetector(
     private var pendingSingleTapX = 0f
     private var pendingSingleTapY = 0f
 
+    /** 待判定单击那一次的按下位置，供 [onGesture] 的 touchDown 参数使用。 */
+    private var pendingSingleTapDownX = 0f
+    private var pendingSingleTapDownY = 0f
+
     private var onPickPreviewStart: ((screenX: Float, screenY: Float) -> Unit)? = null
     private var onPickPreviewProgress: ((progress: Float) -> Unit)? = null
     private var onPickPreviewMove: ((touchDownX: Float, touchDownY: Float, fingerX: Float, fingerY: Float) -> Unit)? = null
@@ -107,7 +111,13 @@ internal class FloatBallGestureDetector(
     private var onPickDrag: ((fingerX: Float, fingerY: Float) -> Unit)? = null
     private var onPickEnd: (() -> Unit)? = null
     private var onPickCancel: (() -> Unit)? = null
-    private var onGesture: ((FloatBallGestureType, rawX: Float, rawY: Float) -> Unit)? = null
+    private var onGesture: ((
+        FloatBallGestureType,
+        rawX: Float,
+        rawY: Float,
+        touchDownX: Float,
+        touchDownY: Float,
+    ) -> Unit)? = null
     private var onGestureHint: ((FloatBallGestureType?) -> Unit)? = null
     private var onLauncherCaptureMove: ((rawX: Float, rawY: Float) -> Unit)? = null
     private var onLauncherCaptureUp: ((rawX: Float, rawY: Float) -> Unit)? = null
@@ -125,14 +135,20 @@ internal class FloatBallGestureDetector(
         if (dist <= slopPx * 2f) {
             longPressFired = true
             pendingSingleTap = false
-            onGesture?.invoke(FloatBallGestureType.LONG_PRESS, lastX, lastY)
+            onGesture?.invoke(FloatBallGestureType.LONG_PRESS, lastX, lastY, downX, downY)
         }
     }
 
     private val singleTapRunnable = Runnable {
         if (pendingSingleTap) {
             pendingSingleTap = false
-            onGesture?.invoke(FloatBallGestureType.SINGLE_TAP, pendingSingleTapX, pendingSingleTapY)
+            onGesture?.invoke(
+                FloatBallGestureType.SINGLE_TAP,
+                pendingSingleTapX,
+                pendingSingleTapY,
+                pendingSingleTapDownX,
+                pendingSingleTapDownY,
+            )
         }
     }
 
@@ -147,7 +163,7 @@ internal class FloatBallGestureDetector(
         onPickDrag: (fingerX: Float, fingerY: Float) -> Unit,
         onPickEnd: () -> Unit,
         onPickCancel: () -> Unit,
-        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float) -> Unit,
+        onGesture: (FloatBallGestureType, rawX: Float, rawY: Float, touchDownX: Float, touchDownY: Float) -> Unit,
         onGestureHint: (FloatBallGestureType?) -> Unit = {},
         onPickPreviewStart: (screenX: Float, screenY: Float) -> Unit = { _, _ -> },
         onPickPreviewProgress: (progress: Float) -> Unit = {},
@@ -274,21 +290,21 @@ internal class FloatBallGestureDetector(
                     longPressFired -> finishGestureOnly()
                     locked -> finishPick()
                     returnGesture != null -> {
-                        onGesture?.invoke(returnGesture, event.rawX, event.rawY)
+                        onGesture?.invoke(returnGesture, event.rawX, event.rawY, downX, downY)
                         finishGestureOnly()
                     }
                     compoundGesture != null -> {
-                        onGesture?.invoke(compoundGesture, event.rawX, event.rawY)
+                        onGesture?.invoke(compoundGesture, event.rawX, event.rawY, downX, downY)
                         finishGestureOnly()
                     }
                     shouldCommitSwipeGesture(dx, dy) -> {
                         classifySwipe(dx, dy)
-                            ?.let { onGesture?.invoke(it, event.rawX, event.rawY) }
+                            ?.let { onGesture?.invoke(it, event.rawX, event.rawY, downX, downY) }
                         finishGestureOnly()
                     }
                     movedBeyondSlop || totalDist > slopPx -> finishGestureOnly()
                     else -> {
-                        classifyTapRelease(event.rawX, event.rawY)
+                        classifyTapRelease(event.rawX, event.rawY, downX, downY)
                         finishGestureOnly()
                     }
                 }
@@ -386,7 +402,7 @@ internal class FloatBallGestureDetector(
         handler.removeCallbacks(singleTapRunnable)
     }
 
-    private fun classifyTapRelease(upX: Float, upY: Float) {
+    private fun classifyTapRelease(upX: Float, upY: Float, touchDownX: Float, touchDownY: Float) {
         val now = SystemClock.uptimeMillis()
         val isDoubleTap = now - lastTapUpTime <= DOUBLE_TAP_MS &&
             hypot(upX - lastTapUpX, upY - lastTapUpY) <= slopPx * 2f
@@ -394,7 +410,7 @@ internal class FloatBallGestureDetector(
             handler.removeCallbacks(singleTapRunnable)
             pendingSingleTap = false
             lastTapUpTime = 0L
-            onGesture?.invoke(FloatBallGestureType.DOUBLE_TAP, upX, upY)
+            onGesture?.invoke(FloatBallGestureType.DOUBLE_TAP, upX, upY, touchDownX, touchDownY)
             return
         }
         lastTapUpTime = now
@@ -403,6 +419,8 @@ internal class FloatBallGestureDetector(
         pendingSingleTap = true
         pendingSingleTapX = upX
         pendingSingleTapY = upY
+        pendingSingleTapDownX = touchDownX
+        pendingSingleTapDownY = touchDownY
         handler.postDelayed(singleTapRunnable, DOUBLE_TAP_MS)
     }
 
