@@ -132,6 +132,32 @@ object StashCoordinator {
         }
     }
 
+    /**
+     * 给已有条目追加图片（§0.16.14）：就地编辑条里"再补几张图"。
+     *
+     * 与 [addRich] 同一套写法：先 copy 一份 bitmap（调用方手上的图可能马上被回收/复用），
+     * 再切回主线程之外交给仓储；仓储返回 false（条目没了 / 落盘失败，文件已回滚）时不发保存脉冲。
+     */
+    fun appendImages(entryId: String, bitmaps: List<Bitmap>, onDone: (Boolean) -> Unit = {}) {
+        val repo = StashAccess.repository
+        if (repo == null) {
+            onDone(false)
+            return
+        }
+        val copied = bitmaps.mapNotNull { bitmap ->
+            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+        }
+        if (copied.isEmpty()) {
+            onDone(false)
+            return
+        }
+        scope.launch {
+            val ok = repo.appendImages(entryId, copied)
+            if (ok) notifySaved("")
+            onDone(ok)
+        }
+    }
+
     fun pinImageFromStash(context: Context, entry: StashEntry, bitmap: Bitmap) {
         ScreenPinManager.pinFromStashImage(
             context = context,

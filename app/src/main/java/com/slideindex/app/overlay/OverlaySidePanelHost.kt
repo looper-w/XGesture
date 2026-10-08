@@ -245,6 +245,10 @@ class OverlaySidePanelHost(
         backHandler = null
         panelBackInterceptor = null
         attachedBelowChrome = false
+        // 窗已经被系统摘掉：挂起/恢复外部 UI 的动作也一起作废（§0.16.14）。
+        // 不然拉起相册前挂起的那个 lambda 会握着一个已经没有窗口的宿主（虽然内部是空操作，
+        // 但语义上"面板已不在"，留着只会让人以为挂起还在生效）。
+        StashPanelExternalUi.clear()
     }
 
     private fun attachPanelWindow(
@@ -448,6 +452,22 @@ class OverlaySidePanelHost(
 
     fun setDragHidden(hidden: Boolean) {
         panelHost.setDragHidden(hidden)
+    }
+
+    /**
+     * 拉起**外部系统 UI**（相册选择器）前把面板窗挂起（§0.16.14）。
+     *
+     * 直接复用跟手拖动那套既有的隐藏逻辑 [OverlayFullScreenPanelHost.setDragHidden]：
+     * `INVISIBLE` + `FLAG_NOT_TOUCHABLE`。**不另造隐藏逻辑** —— 恢复时同一个方法正好把
+     * 可见性与触摸标志一起复位，不会留下"看得见但点不着"这种半吊子状态。
+     */
+    fun suspendForExternalUi() {
+        panelHost.setDragHidden(true)
+    }
+
+    /** 外部 UI 回来后恢复面板窗（与 [suspendForExternalUi] 成对）。 */
+    fun resumeAfterExternalUi() {
+        panelHost.setDragHidden(false)
     }
 
     /** 跟手拖动期间面板窗要"看得见但不吃触摸"（见 [OverlayFullScreenPanelHost.setTouchable]）。 */

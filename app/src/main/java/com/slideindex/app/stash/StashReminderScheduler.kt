@@ -80,6 +80,14 @@ internal object StashReminderScheduler {
             putExtra(StashReminderReceiver.EXTRA_ENTRY_ID, entryId)
             putExtra(StashReminderReceiver.EXTRA_TEXT, text)
         }
-        return PendingIntent.getBroadcast(context, REQUEST_CODE_BASE + entryId.hashCode(), intent, flags)
+        return PendingIntent.getBroadcast(context, requestCodeOf(entryId), intent, flags)
     }
+
+    /**
+     * 每条闪念一个 request code。
+     *
+     * ⚠️ `StashReminderReceiver` 里「稍后 10 分钟」重排同一个闹钟时**必须用同一个值**，
+     * 否则会新建一个 PendingIntent、旧的那个还挂着（到点响两次）。所以这里是唯一出处。
+     */
+    internal fun requestCodeOf(entryId: String): Int = REQUEST_CODE_BASE + entryId.hashCode()
 }

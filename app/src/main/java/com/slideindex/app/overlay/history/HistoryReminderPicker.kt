@@ -365,6 +365,8 @@ private data class HistoryReminderPreset(
  */
 private fun historyReminderPresets(openedAtMs: Long): List<HistoryReminderPreset> {
     val presets = mutableListOf(
+        // 「1 分钟后」既是常用档，也是**自助测试入口**：设完盯着看是否弹横幅/响/有「稍后 10 分钟」。
+        HistoryReminderPreset(openedAtMs + 60_000L, minutes = 1),
         HistoryReminderPreset(openedAtMs + 5 * 60_000L, minutes = 5),
         HistoryReminderPreset(openedAtMs + 15 * 60_000L, minutes = 15),
         HistoryReminderPreset(openedAtMs + 30 * 60_000L, minutes = 30),

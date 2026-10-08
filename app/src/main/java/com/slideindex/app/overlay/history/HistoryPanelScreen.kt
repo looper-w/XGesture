@@ -82,6 +82,7 @@ import com.slideindex.app.clipboard.ClipboardHistoryFilter
 import com.slideindex.app.clipboard.ClipboardThumbnailCache
 import com.slideindex.app.clipboard.ClipboardWriter
 import com.slideindex.app.overlay.FloatBallTextPick
+import com.slideindex.app.overlay.StashPanelExternalUi
 import com.slideindex.app.stash.StashAccess
 import com.slideindex.app.stash.StashCoordinator
 import com.slideindex.app.stash.StashEntryType
@@ -172,25 +173,40 @@ internal fun HistoryPanelScreen(
 
     /* ---- 面板内直接记（设计稿 `.fab` + `.composer`） ---- */
     var composerOpen by remember { mutableStateOf(false) }
-    /** 输入条里快速选中的标签（存下时落到新条目）。 */
-    var composerTags by remember { mutableStateOf<Set<String>>(emptySet()) }
+    /**
+     * 输入条里快速选中的标签（存下时落到新条目）。
+     *
+     * ⚠️ 草稿（正文 / 标签 / 提醒 / 已选图）放在**进程级单例** [StashComposerDraft] 里（§0.16.14）：
+     * 面板是 overlay 窗，切前台 App / 拉起系统相册时会被系统整个摘掉，下次打开是**全新的组合**，
+     * `remember` 的草稿那时全丢（用户感受就是"选完图回来草稿没了"）。这里用
+     * `by StashComposerDraft.xxx` 直接代理到单例的 `MutableState` —— 下面所有读写点与以前
+     * **一字不差**，只是不再随组合生灭。
+     */
+    var composerTags by StashComposerDraft.tags
     /** 加号弹窗里预设的提醒时间（null = 没设）；存下时写到新条目上（§0.16.9）。 */
-    var composerReminderAt by remember { mutableStateOf<Long?>(null) }
+    var composerReminderAt by StashComposerDraft.reminderAtMs
     /**
      * 加号弹窗里已选的图片（trampoline 解码后落在 cache 的临时文件路径，§0.16.12）。
-     * 未存下之前只存在本地 state；存下时解码成 `StashRichPart.Image`，一次写成**一条多图条目**。
+     * 未存下之前只存在草稿里；存下时解码成 `StashRichPart.Image`，一次写成**一条多图条目**。
      */
-    var composerImagePaths by remember { mutableStateOf<List<String>>(emptyList()) }
+    var composerImagePaths by StashComposerDraft.imagePaths
     /**
      * 提醒时间选择器为谁而开：`entryId = null` = 加号弹窗里"还没存下的那条"，
      * 非 null = 已经在编辑的某条。
      */
     var reminderPicker by remember { mutableStateOf<HistoryReminderPickerTarget?>(null) }
-    var composerText by remember { mutableStateOf("") }
+    var composerText by StashComposerDraft.text
     var composerBarHeight by remember { mutableStateOf(0.dp) }
     /** 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照。 */
     var editTarget by remember { mutableStateOf<HistoryEditTarget?>(null) }
     var editBarHeight by remember { mutableStateOf(0.dp) }
+    /**
+     * 就地编辑条里"补图"已选的图片（§0.16.14，与加号弹窗同一套 trampoline 路径）。
+     *
+     * ⚠️ 按**编辑目标**重置：换一条条目就清空，免得把上一条的图追加到这一条上。
+     * （这份之所以不像加号弹窗那样进单例：它是"某一条条目"的草稿，跟着 `editTarget` 走才对。）
+     */
+    var editImagePaths by remember(editTarget?.entryId) { mutableStateOf<List<String>>(emptyList()) }
     /** 标签管理浮窗（§0.16.4 待办 2）：与输入条/编辑条**同一套居中模态壳**。 */
     var tagManagerOpen by remember { mutableStateOf(false) }
     val composerFocusRequester = remember { FocusRequester() }
@@ -1026,7 +1042,11 @@ internal fun HistoryPanelScreen(
                 imagePaths = composerImagePaths,
                 onAddImage = {
                     // §0.16.12：overlay 里不能直接拉系统选图，走中转 Activity（回来的是本地文件路径）。
+                    // §0.16.14：先把面板窗挂起（它是无障碍覆盖层，不挂起会盖在相册上面），
+                    // 回调里**第一件事**就是恢复 —— 取消（picked 为空）也要恢复。
+                    StashPanelExternalUi.suspend?.invoke()
                     StashComposerImageTrampolineActivity.launch(appContext) { picked ->
+                        StashPanelExternalUi.resume?.invoke()
                         if (picked.isNotEmpty()) {
                             composerImagePaths = (composerImagePaths + picked).distinct()
                         }
@@ -1050,6 +1070,9 @@ internal fun HistoryPanelScreen(
                             val entry = stashEntries.firstOrNull { it.id == target.entryId }
                             val beforeText = entry?.text.orEmpty()
                             val beforeTags = stashMeta.tagsOf(target.entryId)
+                            // 待追加的图片在**动手之前**取快照：下面会把 editTarget 清掉，
+                            // 而 editImagePaths 是按 editTarget 重置的（取晚了就读到空的了）。
+                            val pendingImages = editImagePaths
                             scope.launch {
                                 // 正文留空 = 不改正文（设计稿 `if (v) s.text = v`），只存标签。
                                 val ok = if (text.isBlank()) true else {
@@ -1058,13 +1081,40 @@ internal fun HistoryPanelScreen(
                                 metaRepo?.setTags(target.entryId, tags)
                                 editTarget = null
                                 haptics.confirm()
-                                if (ok) {
+                                // 补图这条路**不给撤销**：仓储的追加接口没有"删掉刚追加的那几张"，
+                                // 所以这里只提示、不摆一个"撤销"按钮出来骗人（§0.16.14）。
+                                if (ok && pendingImages.isEmpty()) {
                                     showUndoMessage(R.string.stash_edit_saved) {
                                         scope.launch {
                                             if (beforeText.isNotBlank()) {
                                                 stashRepo?.updateText(target.entryId, beforeText)
                                             }
                                             metaRepo?.setTags(target.entryId, beforeTags)
+                                        }
+                                    }
+                                }
+                                if (pendingImages.isNotEmpty()) {
+                                    // 解码离开主线程：一张长边 2048 的图解码不便宜。
+                                    val bitmaps = withContext(Dispatchers.IO) {
+                                        pendingImages.mapNotNull { decodeStashImageFile(it) }
+                                    }
+                                    if (bitmaps.isEmpty()) {
+                                        // 一张都没解出来：正文/标签已经存下了，但图没进去，不能谎称成功。
+                                        showPanelMessage(R.string.stash_save_failed)
+                                    } else {
+                                        StashCoordinator.appendImages(target.entryId, bitmaps) { appended ->
+                                            if (appended) {
+                                                showPanelMessage(R.string.stash_edit_saved)
+                                                // 图已经拷进仓库了，cache 里这份临时文件可以删；
+                                                // 草稿也清掉，免得下次打开编辑条又把同一批图追加一遍。
+                                                editImagePaths = emptyList()
+                                                pendingImages.forEach { path ->
+                                                    runCatching { File(path).delete() }
+                                                }
+                                            } else {
+                                                // 失败：草稿**留着**（临时图也不删），用户可以再点一次保存重试。
+                                                showPanelMessage(R.string.stash_save_failed)
+                                            }
                                         }
                                     }
                                 }
@@ -1098,6 +1148,22 @@ internal fun HistoryPanelScreen(
                                 ?.let { deleteEntry(it) }
                         },
                         onVoiceError = showPanelMessage,
+                        imagePaths = editImagePaths,
+                        onAddImage = {
+                            // §0.16.14：与加号弹窗同一条路 —— 先挂起面板窗，再走中转 Activity 选图；
+                            // 回调里第一件事是恢复（取消也要恢复，否则面板一直不可见）。
+                            StashPanelExternalUi.suspend?.invoke()
+                            StashComposerImageTrampolineActivity.launch(appContext) { picked ->
+                                StashPanelExternalUi.resume?.invoke()
+                                if (picked.isNotEmpty()) {
+                                    editImagePaths = (editImagePaths + picked).distinct()
+                                }
+                            }
+                        },
+                        onRemoveImage = { path ->
+                            editImagePaths = editImagePaths - path
+                            runCatching { File(path).delete() }
+                        },
                         onHeightChanged = { editBarHeight = it },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -1118,8 +1184,8 @@ internal fun HistoryPanelScreen(
 /**
  * 提醒时间选择器"为谁而开"（§0.16.9）。
  *
- * `entryId == null` = 加号弹窗里那条**还没存下**的新条目：选到的时间先记在本地
- * （`composerReminderAt`），存下拿到 id 之后再落盘。
+ * `entryId == null` = 加号弹窗里那条**还没存下**的新条目：选到的时间先记在草稿里
+ * （`StashComposerDraft.reminderAtMs`，§0.16.14 起它活得比组合长），存下拿到 id 之后再落盘。
  */
 private data class HistoryReminderPickerTarget(
     val entryId: String?,

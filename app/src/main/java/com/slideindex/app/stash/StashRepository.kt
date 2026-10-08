@@ -207,6 +207,91 @@ class StashRepository @Inject constructor(
         }
     }
 
+    /**
+     * 给已有条目追加图片（§0.16.14）。返回是否成功。
+     *
+     * 与 [addRich] 的差别只在"写哪一条"：这里是**锁内重新读盘 → 定位那一条 → 只在末尾接图片块 → 整表写回**，
+     * 所以和别的写路径（编辑正文 / 星标 / 另一个进程）不会互相覆盖。
+     *
+     * 两条"为什么不这样写"的说明：
+     * - 起点取 `entry.resolvedContentBlocks()` 而不是 `entry.contentBlocks`：纯图条目（type=IMAGE）的
+     *   图片只存在 `imageFileName` 里、`contentBlocks` 是空的；直接往空表上接图片会让
+     *   `allImageFileNames()` 认不出原图（原图会变成孤儿文件并被 prune 掉）。
+     * - **type 一律升到 [StashEntryType.RICH]**：卡片里的富图缩略图是 `enabled = entry.type == RICH && …`
+     *   门控的，不升 type 就等于"存了但看不见"。正文 / 老图都已经进了 `contentBlocks`（见上一条），所以升级不丢内容。
+     * - `createdAtEpochMs` / `pinDisplay*` / `starred` / `text` / `htmlText` 一概不动
+     *   （完成态、标签、提醒在 `StashMetaRepository`，本方法不碰）。
+     *
+     * 落盘是"要么全成、要么不改文件"：任何一张图存不下来、或整表写不进去，都会把本次已经写下的图片文件删掉再返回 false。
+     */
+    suspend fun appendImages(entryId: String, bitmaps: List<Bitmap>): Boolean {
+        if (entryId.isBlank() || bitmaps.isEmpty()) return false
+        return withContext(Dispatchers.IO) {
+            withCrossProcessWrite {
+                val current = readFromDisk()
+                val index = current.indexOfFirst { it.id == entryId }
+                if (index < 0) return@withCrossProcessWrite false
+                val entry = current[index]
+                val existing = entry.resolvedContentBlocks()
+                // 现有图片数只用来生成"看着顺眼"的序号；真正的唯一性由 [nextAppendImageFileName] 保证。
+                val existingImageCount = existing.count { it.kind == ClipboardBlockKind.IMAGE }
+
+                val savedFiles = mutableListOf<String>()
+                val appendedBlocks = mutableListOf<ClipboardContentBlock>()
+                for ((offset, bitmap) in bitmaps.withIndex()) {
+                    val fileName = nextAppendImageFileName(entryId, existingImageCount + offset)
+                    val saved = saveImage(fileName, bitmap)
+                    if (saved == null) {
+                        // 半路失败：把这一批已经落盘的文件收回，索引保持原样。
+                        savedFiles.forEach { File(imageDir, it).delete() }
+                        Log.w(TAG, "appendImages: saveImage failed, rolled back ${savedFiles.size} file(s)")
+                        return@withCrossProcessWrite false
+                    }
+                    savedFiles += saved
+                    appendedBlocks += ClipboardContentBlock.image(saved)
+                }
+                if (appendedBlocks.isEmpty()) return@withCrossProcessWrite false
+
+                // 与 addRich 同一语义：imageFileName 指向新追加的第一张图；原值兜底 ——
+                // 这样升级到 RICH 之后拖拽（`HistoryEntryDragHelper` 读这个字段）仍然指得到一个真实文件。
+                val firstAppendedImageFileName = appendedBlocks.first().fileName
+                    .takeIf { it.isNotBlank() } ?: entry.imageFileName
+                val next = current.toMutableList().also {
+                    it[index] = entry.copy(
+                        // 不升 type 就是"存了但看不见"（见 KDoc）。
+                        type = StashEntryType.RICH,
+                        contentBlocks = existing + appendedBlocks,
+                        imageFileName = firstAppendedImageFileName,
+                    )
+                }
+                try {
+                    writeToDisk(next)
+                } catch (t: Throwable) {
+                    savedFiles.forEach { File(imageDir, it).delete() }
+                    Log.w(TAG, "appendImages: index write failed, rolled back", t)
+                    return@withCrossProcessWrite false
+                }
+                _entries.value = next
+                true
+            }
+        }
+    }
+
+    /**
+     * 追加图片的文件名：`"${entryId}_append_${序号}.png"`，**绝不覆盖已有文件**。
+     *
+     * 序号从"现有图片数"起算只是为了名字连续；磁盘上已经存在同名文件时（例如上一次追加写盘失败留下的
+     * 孤儿文件、或同一 id 上连着追加了两次）就往后挪，直到撞上一个没被占用的名字。
+     */
+    private fun nextAppendImageFileName(entryId: String, startIndex: Int): String {
+        var index = startIndex.coerceAtLeast(0)
+        while (true) {
+            val candidate = "${entryId}_append_$index.png"
+            if (!File(imageDir, candidate).exists()) return candidate
+            index++
+        }
+    }
+
     suspend fun delete(id: String) {
         withContext(Dispatchers.IO) {
             withCrossProcessWrite {
@@ -475,6 +560,11 @@ class StashRepository @Inject constructor(
      * 之前仓储**完全没有**改正文的接口（只有 [toggleStar] 这一个窄改），所以设计稿里
      * 「点卡片 → 就地编辑」是新增能力，不是改造。
      *
+     * ⚠️ 除了 `text` 字段，还要同步**第一个文字块**：RICH 条目的正文渲染 / 复制走的是
+     * `contentBlocks`（`combinedText()` 优先用它），只改 `text` 的话用户看到的是"改了没生效"。
+     * 这不是新问题 —— [appendImages] 会把 TEXT 条目升级成 RICH（正文因此被固化成一个文字块），
+     * 所以从"给一条纯文字闪念补图"那一刻起就会撞上。其余块（图片、追加块）与顺序原样不动。
+     *
      * @return 是否命中并写盘。
      */
     suspend fun updateText(id: String, text: String): Boolean {
@@ -485,9 +575,18 @@ class StashRepository @Inject constructor(
                 val entries = readFromDisk()
                 val index = entries.indexOfFirst { it.id == id }
                 if (index < 0) return@withCrossProcessWrite false
-                // 只碰 text：不动 type / contentBlocks，避免影响既有渲染与钉屏路径。
+                val entry = entries[index]
+                val firstTextIndex = entry.contentBlocks.indexOfFirst { it.kind == ClipboardBlockKind.TEXT }
+                val syncedBlocks = if (firstTextIndex < 0) {
+                    entry.contentBlocks
+                } else {
+                    entry.contentBlocks.toMutableList().also {
+                        it[firstTextIndex] = it[firstTextIndex].copy(text = trimmed)
+                    }
+                }
+                // 不动 type，避免影响既有渲染与钉屏路径。
                 val next = entries.toMutableList().also {
-                    it[index] = it[index].copy(text = trimmed)
+                    it[index] = entry.copy(text = trimmed, contentBlocks = syncedBlocks)
                 }
                 writeToDisk(next)
                 _entries.value = next

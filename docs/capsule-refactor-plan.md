@@ -1322,3 +1322,49 @@ detach 时清 `composeViewRef`/`ownerRef`/`layoutParams`/`windowManager`、注�
 
 **并且要明确**：这三条落地前，加图功能**不要当可用功能用**（现状：能拉起相册、能落 cache，
 但草稿会丢、面板会挡住相册）。
+
+---
+
+### 0.16.14 本轮：提醒从"黑盒"变成"看得见" + 加图三问题一起修
+
+#### 一、提醒（用户实测"完全没效果"→ 查证结论）
+
+真机证据链：`16:46:23.970 AlarmManager: Alarm deliverLocked … STASH_REMIND`（**闹钟准时**）
++ `IntentFirewall: CHECK INTENT … StashReminderReceiver`（**广播确实投给了我们的 Receiver**）
++ 渠道 `stash_remind` 存在、`importance=3`、有系统提示音、未被改
++ **但通知栏里没有这条通知**（活着的只有 1001/4102 两条前台服务通知）
+⇒ **断点在 `StashReminderReceiver` 内部，而它原本一行日志都没有**，所以查不出来。
+
+改动：
+
+1. **加日志**：进入 / entryId 为空 / 通知总开关关 / notify 成功 / notify 异常，每步一条。
+   `notify` **不再用 `runCatching` 吞异常**（这是以前"连崩溃文件都没有"的原因）。
+2. **渠道换 id → `stash_remind_v2` + `IMPORTANCE_HIGH` + 震动**：老渠道是 DEFAULT（不弹横幅、不震动），
+   而**渠道重要性创建后不可改**，只能换 id 重建（旧渠道留着给历史通知）。
+3. **通知加「稍后 10 分钟」**：广播回自己重排**同一个 PendingIntent**
+   （request code 与闹钟本体错开，`StashReminderScheduler.requestCodeOf()` 是唯一出处，避免响两次）。
+4. **点通知本体 = 打开收纳面板**：走 `StashClipboardTrampolineActivity` + `CLEAR_TASK`
+   （保证 trampoline 的 `onCreate` 重跑；只把旧 task 提到前台的话面板不会真打开 —— adb 里踩过）。
+5. **提醒选择器加「1 分钟后」档**：既是常用档，也是**自助测试入口**（设完就能验"横幅/响/稍后按钮"）。
+6. 仍然**不碰数据层**（进程可能是被广播拉起来的，那时 Hilt 仓库还没构造好），也仍不发响铃页。
+
+#### 二、加图（用户实测三问题全修）
+
+1. **草稿不再丢**：新增 `StashComposerDraft`（进程级单例，`mutableStateOf` 的文字 / 标签 / 提醒 / 图片路径），
+   `HistoryPanelScreen` 里那四个 Compose `remember` state 全部换成它 → 面板被系统摘掉/重建后草稿还在。
+2. **面板不再盖住相册**：新增 `StashPanelExternalUi`（挂起/恢复动作的进程级注册点），
+   overlay 侧拉相册**之前** `suspend()`（复用 `OverlayFullScreenPanelHost.setDragHidden(true)`：
+   `INVISIBLE` + `FLAG_NOT_TOUCHABLE`），回调里第一件事 `resume()`。
+3. **编辑弹窗也能加图**：`StashRepository.appendImages(entryId, bitmaps)`（要么全成要么不改；
+   文件名单调 `"${id}_append_${n}.png"` 绝不覆盖）+ `StashCoordinator.appendImages` +
+   编辑条「＋ 图片」+ 缩略图（复用 `HistoryComposerThumbnail`）。
+   **追加时把 `type` 升到 `RICH`** —— 卡片的图片缩略图是 `type == RICH` 门控的，不升就等于"存了看不见"；
+   并给 `imageFileName` 兜底（拖拽路径要读它）。
+
+#### 三、仍然留着（按优先级）
+
+- **批次 2**：`BOOT_COMPLETED`/`MY_PACKAGE_REPLACED`/时区变更重排（现在只在进面板时补排）·
+  "强提醒"档用 `setAlarmClock` · 精确闹钟权限引导。
+- **通知上的「完成」**：需要一条 app 侧动作通道（现在只有「稍后 10 分钟」）。
+- **批次 5**：可靠提醒设置向导 · 响铃页。
+- 已知限制：国内 ROM 强停/极限省电无法 100% 保证；`force-stop` 会清掉全部闹钟。

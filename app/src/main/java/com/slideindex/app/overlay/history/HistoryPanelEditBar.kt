@@ -55,7 +55,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 就地编辑条（设计稿 `.editbar`）：改正文、改标签、追加一段、标记完成、删除。
+ * 就地编辑条（设计稿 `.editbar`）：改正文、改标签、追加一段、补图、标记完成、删除。
  *
  * 与设计稿的差异（**刻意**）：
  * - 设计稿挂在卡片旁边（`openEdit` 里按卡片的 `getBoundingClientRect` 定位），这里做成
@@ -87,6 +87,16 @@ internal fun HistoryPanelEditBar(
     onToggleReminder: () -> Unit,
     onDelete: () -> Unit,
     onVoiceError: (Int) -> Unit = {},
+    /**
+     * 已选图片的本地路径（trampoline 落下来的，见 §0.16.14）。
+     *
+     * ⚠️ 编辑条**只负责选/删**，图片落盘由调用方在保存时走 `StashCoordinator.appendImages`
+     * —— 所以 [onSave] 的 `(text, tags)` 语义一个字都不变。
+     */
+    imagePaths: List<String> = emptyList(),
+    /** 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。 */
+    onAddImage: () -> Unit = {},
+    onRemoveImage: (String) -> Unit = {},
     onHeightChanged: (Dp) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -190,6 +200,29 @@ internal fun HistoryPanelEditBar(
             cursorBrush = SolidColor(scheme.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
         )
+        // 给已有条目补图（§0.16.14）：与加号弹窗**同一套**「＋ 图片」胶囊 + 缩略图
+        // （缩略图直接复用 HistoryComposerThumbnail，连 ✕ 的无障碍文案都不用再写一遍）。
+        // 位置跟弹窗保持一致：正文下面、标签行上面。
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HistoryChip(
+                label = stringResource(R.string.stash_composer_image_add),
+                dotColor = null,
+                selected = false,
+                onClick = onAddImage,
+            )
+            imagePaths.forEach { path ->
+                HistoryComposerThumbnail(
+                    path = path,
+                    onRemove = { onRemoveImage(path) },
+                )
+            }
+        }
         FlowRow(
             modifier = Modifier
                 .fillMaxWidth()

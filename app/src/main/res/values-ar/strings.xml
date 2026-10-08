@@ -3047,6 +3047,7 @@
     <string name="stash_remind_in_minutes">بعد %1$d دقيقة</string>
     <string name="stash_remind_in_hours">بعد %1$d ساعة</string>
     <string name="stash_remind_clear">إزالة التذكير</string>
+    <string name="stash_remind_snooze_10">تأجيل 10 دقائق</string>
     <string name="stash_remind_custom">وقت مخصّص…</string>
     <string name="stash_remind_presets">خيارات جاهزة</string>
     <string name="stash_remind_confirm">تأكيد</string>

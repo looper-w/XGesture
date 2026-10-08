@@ -270,9 +270,12 @@ private val HistoryComposerThumbnailSize = 64.dp
  *
  * 图是 trampoline 解码后落在 cache 里的临时文件，所以这里只用**很小的采样**读缩略图
  * （目标 160px，`remember(path)` 缓存），避免每帧重解码。右上角那枚 ✕ 负责移除。
+ *
+ * `internal`（而不是 private）：就地编辑条"补图"（§0.16.14）要复用**同一个**缩略图，
+ * 免得两份 ✕ 的无障碍文案/尺寸各写一遍走偏。
  */
 @Composable
-private fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
+internal fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
     val theme = historyTheme()
     val shape = RoundedCornerShape(HistoryRadii.sm)
     val thumbnail = remember(path) { decodeComposerThumbnail(path) }

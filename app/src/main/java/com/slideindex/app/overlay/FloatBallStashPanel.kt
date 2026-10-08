@@ -39,7 +39,7 @@ object FloatBallStashPanel {
      */
     fun warmUpBelowChrome(context: android.content.Context) {
         if (sideHost.isAttached) return
-        sideHost.attachHidden(
+        val attached = sideHost.attachHidden(
             context = context,
             initialGravityEnd = true,
             content = ::PanelContent,
@@ -47,6 +47,7 @@ object FloatBallStashPanel {
             // 窗口跟手：进度给宿主，由它换算成窗口左边缘坐标（窗口只有 78% 宽，见 §0.16.3）。
             revealProgress = { HistoryPanelReveal.windowProgress }
         )
+        if (attached) registerExternalUiHooks()
     }
 
     fun show(
@@ -80,6 +81,13 @@ object FloatBallStashPanel {
             )
             searchBootstrapEpoch.intValue = StashPanelLaunchState.epoch
         }
+        if (shown) {
+            // 面板要开了 = 它必须看得见、点得着：顺手把"拉起相册前挂起"那件事复位（§0.16.14）。
+            // 正常路径上相册回调已经恢复过，这里只是兜底 —— 万一回调丢了（进程被杀等），
+            // 不会留下"面板开着但 FLAG_NOT_TOUCHABLE 还挂着、点不动"的死状态。
+            sideHost.resumeAfterExternalUi()
+            registerExternalUiHooks()
+        }
         return shown
     }
 
@@ -108,6 +116,7 @@ object FloatBallStashPanel {
             revealProgress = { HistoryPanelReveal.windowProgress }
         )
         if (shown) sideHost.setTouchable(false)
+        if (shown) registerExternalUiHooks()
         return shown
     }
 
@@ -147,6 +156,8 @@ object FloatBallStashPanel {
         StashPanelLaunchState.clearPendingSearch()
         searchBootstrapEpoch.intValue = 0
         sideHost.setPanelBackInterceptor(null)
+        // 窗没了，挂起/恢复外部 UI 的动作跟着作废（§0.16.14）。
+        StashPanelExternalUi.clear()
     }
 
     /** 应用内语言切换后销毁预热壳，下次打开收纳面板时用新 Locale 重建。 */
@@ -160,6 +171,18 @@ object FloatBallStashPanel {
 
     fun setDragHidden(hidden: Boolean) {
         sideHost.setDragHidden(hidden)
+    }
+
+    /**
+     * 把"拉起外部系统 UI（相册）时挂起面板"的两个动作注册给 overlay 里的 Compose 代码
+     * （§0.16.14）。
+     *
+     * 只有**窗口真的挂上之后**才注册：面板窗被系统摘掉时 [OverlaySidePanelHost] 会把它清掉，
+     * 免得留下指向"已经没有窗口的宿主"的动作。
+     */
+    private fun registerExternalUiHooks() {
+        StashPanelExternalUi.suspend = { sideHost.suspendForExternalUi() }
+        StashPanelExternalUi.resume = { sideHost.resumeAfterExternalUi() }
     }
 
     @Composable
