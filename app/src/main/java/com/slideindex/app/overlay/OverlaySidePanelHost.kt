@@ -44,7 +44,9 @@ class OverlaySidePanelHost(
             OverlayPanelLayoutParams.stashClipboardSidePanel(context, focusable)
         },
         onScreenOff = { dismiss() },
-        excludeLeftBackEdge = false
+        excludeLeftBackEdge = false,
+        // §0.16.13：系统把面板窗摘掉（切前台 App、拉起相册等）后必须复位，否则"面板再也打不开"。
+        onViewDetached = { onPanelViewDetached() },
     )
 
     private var panelVisibilityState: MutableTransitionState<Boolean>? = null
@@ -226,6 +228,23 @@ class OverlaySidePanelHost(
 
     private fun setPanelTargetVisible(visible: Boolean) {
         panelTargetVisibleState?.value = visible
+    }
+
+    /**
+     * 面板视图被系统摘掉之后的复位（§0.16.13）。
+     *
+     * 关键是让 [isUserVisible] / [isShowing] 立刻变回 false —— 它们都要求 `panelHost.isAttached`，
+     * 而 ref 已经在 `OverlayFullScreenPanelHost` 里清掉了，所以这里只要把动画状态的目标值也压回 false，
+     * 下一次点击 / 拖动就会正常走 `show()` → 重新 `attachPanelWindow()`。
+     */
+    private fun onPanelViewDetached() {
+        Log.w(tag, "onPanelViewDetached: reset visibility state so the panel can be reopened")
+        panelVisibilityState?.targetState = false
+        panelTargetVisibleState?.value = false
+        clipboardInputActive = false
+        backHandler = null
+        panelBackInterceptor = null
+        attachedBelowChrome = false
     }
 
     private fun attachPanelWindow(

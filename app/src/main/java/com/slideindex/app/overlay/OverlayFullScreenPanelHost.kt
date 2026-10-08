@@ -26,7 +26,16 @@ class OverlayFullScreenPanelHost(
     private val layoutParamsFactory: (Context, Boolean) -> WindowManager.LayoutParams =
         { context, focusable -> OverlayPanelLayoutParams.fullScreenOverlay(context, focusable) },
     private val onScreenOff: () -> Unit = {},
-    private val excludeLeftBackEdge: Boolean = true
+    private val excludeLeftBackEdge: Boolean = true,
+    /**
+     * 系统把我们的窗口摘掉时回调（§0.16.13 的修复）。
+     *
+     * 例如 Flyme 在切前台 App / 拉起别的 Activity 时会隐藏无障碍覆盖层，我们的 ComposeView 随之
+     * `onViewDetachedFromWindow` —— 但**原来不清 `composeViewRef`**，于是 `isAttached` /
+     * `isViewVisible()` 一直为 true，宿主就"以为面板还开着"：用户再点只会走 dismiss，
+     * 表现为**面板再也打不开**（只能强停 App 才好）。
+     */
+    private val onViewDetached: () -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -92,6 +101,21 @@ class OverlayFullScreenPanelHost(
         layoutParams = params
         appContext = context
         screenOffDismissReceiver.register(context)
+        // §0.16.13：窗口被系统摘掉时（不只是我们自己 hide）要把宿主状态复位，否则"面板打不开"。
+        compose.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+
+            override fun onViewDetachedFromWindow(v: View) {
+                if (composeViewRef !== v) return
+                Log.w(tag, "panel view detached by system -> reset host state")
+                composeViewRef = null
+                ownerRef = null
+                layoutParams = null
+                windowManager = null
+                runCatching { screenOffDismissReceiver.unregister() }
+                runCatching { onViewDetached() }
+            }
+        })
         return dialogOwner
     }
 

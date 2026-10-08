@@ -1292,3 +1292,33 @@ class 属性 → 失败），改成"等空档再编译"；随后 `compileFullDeb
 
 **顺带要确认的**：从选择器回来时草稿（`composerImagePaths` / `composerText` / 标签 / 提醒）还在不在。
 若一起丢了，就得把草稿从 Compose state 提到 ViewModel 或静态量。
+
+#### 0.16.13.1 修复（已提交、已装机验证）：detach 时复位宿主
+
+根因（代码层坐实的）：系统把我们的覆盖窗摘掉时，ComposeView 会 `onViewDetachedFromWindow`，但
+`OverlayFullScreenPanelHost` **不清 `composeViewRef`** → `isAttached` / `isViewVisible()` 永远为 true →
+`OverlaySidePanelHost.isUserVisible` 为 true → `FloatBallStashPanel` 的开关判定"已经开着"，
+于是**再点只会走 dismiss**，而且 `show()` 里 `if (panelHost.isAttached)` 那条分支是对着一个**已经不存在的窗口**
+设可见性 —— 面板自然再也不出来，只能强停 App。
+
+改法：`OverlayFullScreenPanelHost` 加 `onViewDetached` 回调 + `addOnAttachStateChangeListener`；
+detach 时清 `composeViewRef`/`ownerRef`/`layoutParams`/`windowManager`、注销屏幕广播，并回调宿主；
+`OverlaySidePanelHost.onPanelViewDetached()` 把动画状态目标压回 false。
+这样 `isAttached=false` → 下一次点击/拖动会重新 `attachPanelWindow()` ✔。装机实测面板正常打开 ✔。
+
+#### 0.16.13.2 用户实测又发现的三件事（**下一轮必修**）
+
+1. **选完图回来草稿全丢** —— 用户实测："选择完图片再打开面板，发现没有添加成功"。
+   病因：草稿（图片路径/文字/标签/提醒）是 `HistoryPanelScreen` 里的 Compose `remember` state，
+   面板被系统摘掉又重建时整份 state 就没了；`TrampolineResultPort` 的回调写进的是**旧组合**的状态。
+   → 修法：把草稿提到**进程级单例**（照 `StashPanelLaunchState` 的样子，用 `mutableStateOf`），
+   选图回调直接写单例，面板恢复后自然带出缩略图。
+2. **面板盖住了系统相册** —— 用户："添加图片时面板没有 suspend/hide，需要我先关闭面板"。
+   病因：我们的面板是 `TYPE_ACCESSIBILITY_OVERLAY`，**画在系统相册之上**。
+   → 修法：进系统 UI 前**主动挂起**面板（复用 `OverlayFullScreenPanelHost.setDragHidden(true)`：
+   `INVISIBLE` + `FLAG_NOT_TOUCHABLE`），选完在回调里恢复。
+3. **只有加号弹窗有「＋ 图片」，编辑弹窗没有** —— 用户指出这不合理。
+   → 需要给"给已有条目追加图片"加一条仓库路径（`addRich` 是新建条目；追加要新写 `appendImages`）。
+
+**并且要明确**：这三条落地前，加图功能**不要当可用功能用**（现状：能拉起相册、能落 cache，
+但草稿会丢、面板会挡住相册）。
