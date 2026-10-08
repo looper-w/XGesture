@@ -70,7 +70,15 @@ internal class EdgeGestureTouchDispatcher(
                 "panelMode=${gestureSession.panelMode()} active=${gestureSession.isActive()} " +
                 "edgeTouchActive=${edgeCaptureTouchActive()} raw=(${event.rawX},${event.rawY})"
         )
-        if (adjustPanelController.hasAdjustPanel() && !gestureSession.isActive()) {
+        // 调节面板停在屏幕上等待交互时，触摸优先交给它。
+        //
+        // 这里**不能**沿用 `!gestureSession.isActive()`：面板显示时
+        // `AdjustPanelOverlayController.showAdjustPanel()` 会调 `host.onSessionStart()`，
+        // 会话因此保持 active，于是面板出现后的第一次按下会掉进下面的
+        // `gestureSession.isActive() -> forceReset(...)` 分支被吞掉（只 reset、不返回 true），
+        // 表现为"面板上第一次滑没反应、第二次才行"（ColorOS 实测：handleTouch handled=false）。
+        // 边缘手势本身走 beginCaptureStripTouch（那条路径自己会处理 active 会话），不受影响。
+        if (adjustPanelController.hasAdjustPanel() && !edgeCaptureTouchActive()) {
             if (adjustPanelController.handleTouch(event, localX, localY)) return true
         }
         when (gestureSession.panelMode()) {
