@@ -844,6 +844,10 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 - **可能另有 AI 在同一仓库提交**（本轮发生过：对方 `git reset` 把我们的提交摘掉再提交自己的）。提交前先 `git log --oneline -3` + `git reflog -5` 看清 HEAD。
 - **设备**：MEIZU 21，`adb` = `C:\Users\syp\AppData\Local\Android\Sdk\platform-tools\adb.exe`，USB 不稳（install 常需重试数轮）。装机后必须查 `adb shell run-as com.slideindex.app ls -lt files/crashes`（正常时最新仍是 `crash_20261007_170028.txt`）。
   ⚠️ §0.16.5 那轮**装到一半设备整个掉了**：`adb devices` 一直为空，`reconnect` / `kill-server`+`start-server` / 等 60s 都没回来 —— 这种情况只能拔插或换线，**别在 adb 上反复重试等它自己好**（APK 已经构建好，插上后一条 `adb install -r -d` 即可）。
+  ⚠️ **验"手势返回"要短滑**：边缘**长滑**会先命中我们自己的悬浮球（并弹出搜索面板），**短滑**才是系统返回；
+  而且 adb 注入的 `input swipe` 不走系统边缘返回识别（很容易命中自己的悬浮球）—— 这一档只能用手滑，或者先用
+  `input keyevent 4` 当代理。快速判断"面板关没关"的客观信号：`adb shell dumpsys window | grep mCurrentFocus`
+  （面板在 = 焦点是我们的 `APPLICATION_OVERLAY` 窗；关了 = 焦点回 `MainActivity`）。
 
 #### 已有结论、不要再翻案的设计决定
 
@@ -1038,3 +1042,12 @@ onBack()
 
 ⚠️ 手势返回**没法用 adb 模拟**（注入的 swipe 不会走 SystemUI 的边缘手势识别），清单里 1–11 都要用手指划；
 `input keyevent 4` 走同一条返回路径，可以先当代理快速摸底。
+
+**真机结论（用户指正后补验）**：
+
+- 用户实测指正：边缘**长滑**会先命中**我们自己的悬浮球**（还会弹出搜索面板），**短滑才是系统返回**。
+  我先前用 `input swipe 8 1200 420 1200 250`（长滑）去验"手势返回"，命中的是自己的悬浮球 —— 这就是
+  §0.16.6 里"手势返回没反应"那次误判的真正原因（不只是 adb 注入的限制）。
+- 按这个改法补验（客观信号：`dumpsys window | grep mCurrentFocus`）：面板打开时焦点是覆盖窗
+  `Window{…com.slideindex.app}`；左边缘**短滑**（`input swipe 8 1200 130 1200 120`）之后焦点回到
+  `com.slideindex.app/.MainActivity` → **面板关掉了 ✅**（真手势链路上，键盘未弹的那一档也通了）。
