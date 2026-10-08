@@ -2997,6 +2997,7 @@
     <string name="stash_tag_name_hint">اسم الوسم</string>
     <string name="stash_tag_rename">إعادة التسمية</string>
     <string name="stash_tag_color">تغيير اللون</string>
+    <string name="stash_tag_color_picking">تغيير اللون: %1$s</string>
     <string name="stash_tag_delete">حذف</string>
     <!-- اسم الوسم «待办» كلمة مفتاحية ثابتة في الكود، ولا يُترجم. -->
     <string name="stash_tag_protected_hint">وسم «待办» كلمة مفتاحية: لا يمكن إعادة تسميته أو حذفه</string>

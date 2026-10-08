@@ -3017,6 +3017,7 @@
     <string name="stash_tag_name_hint">タグ名</string>
     <string name="stash_tag_rename">名前を変更</string>
     <string name="stash_tag_color">色を変更</string>
+    <string name="stash_tag_color_picking">色を変更：%1$s</string>
     <string name="stash_tag_delete">削除</string>
     <!-- 标签名「待办」是硬编码关键字（TODO_TAG_NAME），此处不翻译。 -->
     <string name="stash_tag_protected_hint">「待办」はキーワードタグです：名前の変更と削除はできません</string>

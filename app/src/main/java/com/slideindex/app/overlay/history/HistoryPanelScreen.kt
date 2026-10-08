@@ -375,6 +375,16 @@ internal fun HistoryPanelScreen(
         scope.launch { metaRepo?.setTagColor(name, colorArgb) }
     }
     /**
+     * 拖拽排序落盘（§0.16.5 数据层 + §0.16.6 UI）。
+     *
+     * 浮窗那边是**本地实时换位**、落下时给最终下标；`moveTag` 的语义（移除后插到第 N 位）
+     * 与拖拽过程每一步一致，所以不会出现"看着落在第 2 位、落盘跑到别处"。
+     */
+    val moveTag: (String, Int) -> Unit = { name, targetIndex ->
+        haptics.confirm()
+        scope.launch { metaRepo?.moveTag(name, targetIndex) }
+    }
+    /**
      * 删除标签 + 撤销。
      *
      * `removeTag` 会**连带清掉所有条目的绑定**，所以撤销不能只把标签定义加回来 ——
@@ -885,11 +895,13 @@ internal fun HistoryPanelScreen(
                 open = tagManagerOpen,
                 tags = availableTags,
                 imeBottom = overlayImeBottom,
+                haptics = haptics,
                 onDismiss = { tagManagerOpen = false },
                 onAdd = addTag,
                 onRename = renameTag,
                 onSetColor = setTagColor,
                 onDelete = deleteTag,
+                onMove = moveTag,
                 modifier = Modifier.fillMaxWidth(),
             )
             HistoryComposerModal(

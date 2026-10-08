@@ -3082,6 +3082,7 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_tag_name_hint">Tag name</string>
     <string name="stash_tag_rename">Rename</string>
     <string name="stash_tag_color">Color</string>
+    <string name="stash_tag_color_picking">Color · %1$s</string>
     <string name="stash_tag_delete">Delete</string>
     <!-- 「待办」= StashMetaRepository.TODO_TAG_NAME，是硬编码的中文关键字（四种语言下标签名都显示成「待办」），
          所以这条提示里的标签名**不能翻译**，否则用户对不上号。 -->

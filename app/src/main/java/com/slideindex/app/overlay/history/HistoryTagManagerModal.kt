@@ -8,6 +8,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,16 +16,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,13 +45,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.slideindex.app.R
 import com.slideindex.app.stash.StashTag
 import com.slideindex.app.stash.StashTagEdits
@@ -72,26 +79,64 @@ internal val HistoryTagPalette: List<Long> = listOf(
     0xFFB0873C,
 )
 
+/** 标签行高。**定死**，长按拖拽的落点就是按它算的（见 [HistoryTagDragState]）。 */
+private val HistoryTagRowHeight = 44.dp
+
+/** 列表最多显示几行（超了自己滚）。行高固定，所以列表高度也是算得出来的。 */
+private const val HistoryTagVisibleRows = 6
+
+/**
+ * 拖拽排序的本地状态（§0.16.5 / §0.16.6）。
+ *
+ * 为什么用一个 holder 而不是 `var x by remember { mutableStateOf(...) }`：
+ * 拖拽回调挂在 `pointerInput` 上，它**只在 key 变化时重建**，捕获普通 local var / 委托属性时
+ * 可能一直读的是旧实例；拿一个 `remember` 出来的稳定对象装状态就没有这个坑。
+ *
+ * 拖拽策略是**本地实时换位**（越过半行就把本地顺序换一格、手指反着补回半行），
+ * 落下时把最终下标交给 `StashMetaRepository.moveTag` —— 那边的语义（移除后插入到第 N 位）
+ * 与这里每一步做的操作完全一致，所以"看着落在哪"就是"落盘落在哪"。
+ */
+private class HistoryTagDragState(initial: List<StashTag>) {
+    val ordered: MutableState<List<StashTag>> = mutableStateOf(initial)
+    val index: MutableState<Int?> = mutableStateOf(null)
+    val offsetY: MutableState<Float> = mutableStateOf(0f)
+
+    /**
+     * 拖拽开始那一刻的顺序。
+     *
+     * 为什么不在落下时跟 `tags`（宿主传进来的列表）比：`pointerInput` 的 lambda 只在 key 变化时重建，
+     * 里面捕获的 `tags` 可能是**旧组合**的那一份；拿 holder 里的快照比就没有这个坑。
+     */
+    val original: MutableState<List<StashTag>> = mutableStateOf(initial)
+
+    fun reset() {
+        index.value = null
+        offsetY.value = 0f
+    }
+}
+
 /**
  * 标签管理浮窗（§0.16.4 待办 2）。
  *
  * 壳子与输入条 / 编辑条**同一套**（96% 宽、最大 720dp、圆角 28、投影 18、内边距 26·26·26·22、
  * 顶部信息行 + 内容 + 底部整行主按钮）—— 用户在面板里看到的所有"居中浮窗"必须是同一个东西。
  *
- * 内容：标签列表（色点 + 名字 + 改名 / 改色 / 删除）+ 新增（名字 + 8 个预设色）。
+ * 内容：标签列表（色点 + 名字 + 改名 / 改色 / 删除，**长按可拖拽排序**）+ 新增（名字 + 8 个预设色）。
  * **「待办」是关键字**（完成态 / `isTodo` / 把手 `pendingTodoCount` 全靠它）：改名与删除禁用并给提示，
- * 改色照旧可用（颜色只影响观感）。
+ * 改色与移动照旧可用（颜色与顺序都不参与关键字判定）。
  */
 @Composable
 internal fun HistoryTagManagerModal(
     open: Boolean,
     tags: List<StashTag>,
     imeBottom: Dp,
+    haptics: HistoryHaptics,
     onDismiss: () -> Unit,
     onAdd: (name: String, colorArgb: Long) -> Unit,
     onRename: (oldName: String, newName: String) -> Unit,
     onSetColor: (name: String, colorArgb: Long) -> Unit,
     onDelete: (name: String) -> Unit,
+    onMove: (name: String, targetIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val theme = historyTheme()
@@ -100,7 +145,57 @@ internal fun HistoryTagManagerModal(
     var newColor by remember(open) { mutableStateOf(HistoryTagPalette.first()) }
     var renaming by remember(open) { mutableStateOf<String?>(null) }
     var renameText by remember(open) { mutableStateOf("") }
+    /** 正在改色的标签：色板统一画在**列表下方**（不在行内），这样每一行都是固定行高、拖拽落点才算得准。 */
     var colorPicking by remember(open) { mutableStateOf<String?>(null) }
+
+    val drag = remember { HistoryTagDragState(tags) }
+    // 外部列表变了（改名 / 删除 / 新增 / 拖拽落盘后）就跟着同步 —— **拖拽进行中不打断**。
+    // ⚠️ key 只放 `tags`：把 `drag.index` 也当 key 的话，落下那一刻 index 归 null 会立刻用**旧的**
+    // `tags` 覆盖本地顺序，列表会先闪回旧顺序再跳到新顺序。
+    LaunchedEffect(tags) {
+        if (drag.index.value == null) drag.ordered.value = tags
+    }
+    val rowHeightPx = with(LocalDensity.current) { HistoryTagRowHeight.toPx() }
+    val listState = rememberLazyListState()
+
+    /** 拖拽：越过半行就换一格，换完把手指的位移反着补回来（行才跟着手指走）。 */
+    fun dragBy(deltaY: Float) {
+        val from = drag.index.value ?: return
+        var index = from
+        var offset = drag.offsetY.value + deltaY
+        val half = rowHeightPx / 2f
+        while (offset > half && index < drag.ordered.value.lastIndex) {
+            drag.ordered.value = drag.ordered.value.toMutableList().apply {
+                add(index + 1, removeAt(index))
+            }
+            index += 1
+            offset -= rowHeightPx
+        }
+        while (offset < -half && index > 0) {
+            drag.ordered.value = drag.ordered.value.toMutableList().apply {
+                add(index - 1, removeAt(index))
+            }
+            index -= 1
+            offset += rowHeightPx
+        }
+        // 到头了就**夹住**：列表是定高（≤6 行就是内容高），再往下/上拖只会让这一行被 LazyColumn
+        // 裁掉（"拖到最上边那一行突然消失"）。夹在半行以内，最多露出去 22dp。
+        if (index == 0 && offset < -half) offset = -half
+        if (index == drag.ordered.value.lastIndex && offset > half) offset = half
+        drag.index.value = index
+        drag.offsetY.value = offset
+    }
+
+    /** 落下：和拖之前的位置不一样才写盘（`moveTag` 自己也会把"没动"当 no-op）。 */
+    fun endDrag() {
+        val from = drag.index.value
+        val name = drag.ordered.value.getOrNull(from ?: -1)?.name
+        val originalIndex = drag.original.value.indexOfFirst { it.name == name }
+        drag.reset()
+        if (from != null && name != null && originalIndex >= 0 && originalIndex != from) {
+            onMove(name, from)
+        }
+    }
 
     AnimatedVisibility(
         visible = open,
@@ -135,17 +230,17 @@ internal fun HistoryTagManagerModal(
                 )
             }
 
-            // ---- 已有标签 ----
-            Column(
+            // ---- 已有标签（长按拖拽排序；行高固定，列表高度 = 行高 × 行数）----
+            val ordered = drag.ordered.value
+            LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp)
-                    // 标签多到一定程度就自己滚，不要把浮窗顶出屏幕。
-                    .heightIn(max = 268.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .height(HistoryTagRowHeight * ordered.size.coerceAtMost(HistoryTagVisibleRows)),
             ) {
-                tags.forEach { tag ->
-                    val protected = StashTagEdits.isProtected(tag.name)
+                itemsIndexed(ordered, key = { _, tag -> tag.name }) { index, tag ->
+                    val dragging = drag.index.value == index
                     TagRow(
                         tag = tag,
                         renaming = renaming == tag.name,
@@ -167,21 +262,71 @@ internal fun HistoryTagManagerModal(
                             colorPicking = if (colorPicking == tag.name) null else tag.name
                         },
                         onDelete = { onDelete(tag.name) },
-                        removable = !protected,
-                        renameable = !protected,
-                        protectedHint = stringResource(R.string.stash_tag_protected_hint),
-                    )
-                    if (colorPicking == tag.name) {
-                        HistoryTagPaletteRow(
-                            selected = tag.colorArgb,
-                            onPick = { color ->
-                                colorPicking = null
-                                onSetColor(tag.name, color)
+                        renameable = !StashTagEdits.isProtected(tag.name),
+                        removable = !StashTagEdits.isProtected(tag.name),
+                        modifier = Modifier
+                            .height(HistoryTagRowHeight)
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer {
+                                if (dragging) {
+                                    translationY = drag.offsetY.value
+                                    scaleX = 1.03f
+                                    scaleY = 1.03f
+                                    shadowElevation = 10.dp.toPx()
+                                }
+                            }
+                            .pointerInput(tag.name) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        val at = drag.ordered.value.indexOfFirst { it.name == tag.name }
+                                        if (at >= 0 && drag.ordered.value.size > 1) {
+                                            // 行高必须一致，所以拖拽一开始就把"改色色板/改名框"收掉。
+                                            colorPicking = null
+                                            renaming = null
+                                            drag.original.value = drag.ordered.value
+                                            drag.index.value = at
+                                            drag.offsetY.value = 0f
+                                            haptics.tick()
+                                        }
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragBy(amount.y)
+                                    },
+                                    onDragEnd = { endDrag() },
+                                    onDragCancel = { drag.reset() },
+                                )
                             },
-                            modifier = Modifier.padding(start = 14.dp, bottom = 8.dp),
-                        )
-                    }
+                    )
                 }
+            }
+
+            // 「待办」是关键字标签：只读规则写成列表下方的一行脚注（不再塞在行内，免得行高不齐）。
+            if (ordered.any { StashTagEdits.isProtected(it.name) }) {
+                Text(
+                    text = stringResource(R.string.stash_tag_protected_hint),
+                    style = TextStyle(fontSize = HistoryFontSizes.tiny),
+                    color = theme.sub,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+
+            // 改色色板（列表下方，标题写明改的是哪一枚）
+            colorPicking?.let { name ->
+                Text(
+                    text = stringResource(R.string.stash_tag_color_picking, name),
+                    style = TextStyle(fontSize = HistoryFontSizes.meta),
+                    color = theme.sub,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+                HistoryTagPaletteRow(
+                    selected = ordered.firstOrNull { it.name == name }?.colorArgb,
+                    onPick = { color ->
+                        colorPicking = null
+                        onSetColor(name, color)
+                    },
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
 
             // ---- 新增 ----
@@ -226,7 +371,7 @@ internal fun HistoryTagManagerModal(
     }
 }
 
-/** 一行标签：色点 + 名字（或改名输入框）+ 改名 / 改色 / 删除。 */
+/** 一行标签：色点 + 名字（或改名输入框）+ 改名 / 改色 / 删除。行高由调用方定死。 */
 @Composable
 private fun TagRow(
     tag: StashTag,
@@ -240,78 +385,67 @@ private fun TagRow(
     onDelete: () -> Unit,
     renameable: Boolean,
     removable: Boolean,
-    protectedHint: String,
+    modifier: Modifier = Modifier,
 ) {
     val theme = historyTheme()
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(44.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(9.dp)
-                    .clip(CircleShape)
-                    .background(Color(tag.colorArgb)),
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(Color(tag.colorArgb)),
+        )
+        if (renaming) {
+            TagNameField(
+                value = renameText,
+                hint = stringResource(R.string.stash_tag_name_hint),
+                onValueChange = onRenameTextChange,
+                onSubmit = onRenameConfirm,
+                modifier = Modifier.weight(1f),
             )
-            if (renaming) {
-                TagNameField(
-                    value = renameText,
-                    hint = stringResource(R.string.stash_tag_name_hint),
-                    onValueChange = onRenameTextChange,
-                    onSubmit = onRenameConfirm,
-                    modifier = Modifier.weight(1f),
-                )
-                TagIconButton(
-                    icon = Icons.Default.Check,
-                    contentDescription = stringResource(R.string.stash_tag_rename),
-                    enabled = renameText.isNotBlank(),
-                    onClick = onRenameConfirm,
-                )
-                TagIconButton(
-                    icon = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.panel_close),
-                    enabled = true,
-                    onClick = onRenameCancel,
-                )
-            } else {
-                Text(
-                    text = tag.name,
-                    style = TextStyle(fontSize = HistoryFontSizes.body),
-                    color = theme.text,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-                TagIconButton(
-                    icon = Icons.Outlined.Edit,
-                    contentDescription = stringResource(R.string.stash_tag_rename),
-                    enabled = renameable,
-                    onClick = onRenameStart,
-                )
-                TagIconButton(
-                    icon = Icons.Outlined.Palette,
-                    contentDescription = stringResource(R.string.stash_tag_color),
-                    // 改色对「待办」也开放：颜色不参与关键字判定。
-                    enabled = true,
-                    onClick = onColorToggle,
-                )
-                TagIconButton(
-                    icon = Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.stash_tag_delete),
-                    enabled = removable,
-                    danger = true,
-                    onClick = onDelete,
-                )
-            }
-        }
-        // 只读标签（「待办」）在被禁用时说明原因，否则用户会以为按钮坏了。
-        if (!removable) {
+            TagIconButton(
+                icon = Icons.Default.Check,
+                contentDescription = stringResource(R.string.stash_tag_rename),
+                enabled = renameText.isNotBlank(),
+                onClick = onRenameConfirm,
+            )
+            TagIconButton(
+                icon = Icons.Default.Close,
+                contentDescription = stringResource(R.string.panel_close),
+                enabled = true,
+                onClick = onRenameCancel,
+            )
+        } else {
             Text(
-                text = protectedHint,
-                style = TextStyle(fontSize = HistoryFontSizes.tiny),
-                color = theme.sub,
-                modifier = Modifier.padding(start = 19.dp, bottom = 4.dp),
+                text = tag.name,
+                style = TextStyle(fontSize = HistoryFontSizes.body),
+                color = theme.text,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            TagIconButton(
+                icon = Icons.Outlined.Edit,
+                contentDescription = stringResource(R.string.stash_tag_rename),
+                enabled = renameable,
+                onClick = onRenameStart,
+            )
+            TagIconButton(
+                icon = Icons.Outlined.Palette,
+                contentDescription = stringResource(R.string.stash_tag_color),
+                // 改色对「待办」也开放：颜色不参与关键字判定。
+                enabled = true,
+                onClick = onColorToggle,
+            )
+            TagIconButton(
+                icon = Icons.Default.Delete,
+                contentDescription = stringResource(R.string.stash_tag_delete),
+                enabled = removable,
+                danger = true,
+                onClick = onDelete,
             )
         }
     }
@@ -320,7 +454,7 @@ private fun TagRow(
 /** 8 个预设色的选色行；选中那枚加一圈 accent 描边。 */
 @Composable
 private fun HistoryTagPaletteRow(
-    selected: Long,
+    selected: Long?,
     onPick: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
