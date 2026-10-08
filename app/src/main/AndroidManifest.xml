@@ -732,6 +732,21 @@
             android:name=".stash.StashReminderReceiver"
             android:exported="false" />
 
+        <!--
+          闪念提醒的补排入口：开机 / 应用更新 / 改系统时间或时区后，照着 StashReminderMirror
+          把未来的提醒重新排进 AlarmManager。数据源是 SharedPreferences，所以不需要 Hilt 就绪。
+        -->
+        <receiver
+            android:name=".stash.StashReminderBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".voice.StashVoicePermissionActivity"
             android:excludeFromRecents="true"

@@ -26,6 +26,11 @@ import com.slideindex.app.service.StashClipboardTrampolineActivity
  * 3. **多一个「稍后 10 分钟」按钮**，直接把这个闹钟往后重排 —— 不需要碰数据层
  *    （进程可能是被这条广播拉起来的，那时 Hilt 仓库还没构造好）。
  *
+ * §0.16.x（闪念提醒可靠性）又加了「完成」按钮：它同样**不碰数据层**，而是用
+ * `PendingIntent.getActivity` 把动作交给 [StashClipboardTrampolineActivity]（那边有稳定的注入点）。
+ * 「稍后」这一次点击则落进 [StashReminderMirror]：既写新时间，也写一个 snooze override，
+ * 让下次打开面板时能把显示的时间纠正过来。
+ *
  * ⚠️ 仍然刻意**不碰数据层**：只读 Intent 里带的 entryId / 正文。
  * 也仍然**不发"响铃页"**：这是"轻提醒"，不是闹钟（要闹钟级体验得另开一档，见计划 §0.16.14）。
  */
@@ -70,6 +75,11 @@ class StashReminderReceiver : BroadcastReceiver() {
                 context.getString(R.string.stash_remind_snooze_10),
                 snoozeIntent(context, entryId, text),
             )
+            .addAction(
+                0,
+                context.getString(R.string.stash_remind_action_done),
+                doneIntent(context, entryId),
+            )
             .setAutoCancel(true)
             .build()
         // ⚠️ 这里**不再**用 runCatching 吞异常：发不出去必须留下痕迹（用户就是这么踩的坑）。
@@ -99,6 +109,14 @@ class StashReminderReceiver : BroadcastReceiver() {
             }
             Log.i(TAG, "snooze: entryId=$entryId 已重排到 +${minutes}min")
         }.onFailure { Log.e(TAG, "snooze 失败 entryId=$entryId", it) }
+        // 镜像写成新时间：重启后补排用的就是它（不然补排会拿 meta 里的旧时间来排，立刻响一次）。
+        // ⚠️ 放在排闹钟之后（不放进 runCatching）：排闹钟失败也该把用户点的"稍后"记下来，
+        // 否则这次点击在数据上等于没发生。
+        StashReminderMirror.put(context, entryId, at, text)
+        // 另外记一个"表里的时间旧了"的标记：这个进程大概率没装 Hilt 数据层，
+        // 写不进 `stash_meta.json`，只能等下次面板打开时由
+        // StashMetaRepository.mergeSnoozeOverrides / clearExpiredReminders 并回去。
+        StashReminderMirror.putSnoozeOverride(context, entryId, at)
     }
 
     private fun ensureChannel(context: Context) {
@@ -139,6 +157,29 @@ class StashReminderReceiver : BroadcastReceiver() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    /**
+     * 「完成」：走 [StashClipboardTrampolineActivity]（它已经是现成的"动作载体"，
+     * 见那边的 `ACTION_OPEN_STASH_PANEL` 写法），由它去写数据层。
+     *
+     * ⚠️ 这里**不能**直接写 `stash_meta.json`：广播的进程可能被 Hilt 都还没构造好，
+     * 而且 `BroadcastReceiver.onReceive` 也不适合承担"读整表 → 改 → 整表写回"。
+     *
+     * request code 用 [DONE_REQUEST_BASE] 另起一段：与闹钟（[StashReminderScheduler.requestCodeOf]）、
+     * 通知本体（[notifyId]）、稍后（[SNOOZE_REQUEST_BASE]）都错开，避免相互覆盖。
+     */
+    private fun doneIntent(context: Context, entryId: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        DONE_REQUEST_BASE + entryId.hashCode(),
+        Intent(context, StashClipboardTrampolineActivity::class.java).apply {
+            action = ACTION_STASH_REMIND_DONE
+            // 与 openPanelIntent 同理：让 trampoline 的 onCreate 一定重新跑
+            // （否则 singleTask + noHistory 的它只会把旧 task 提到前台，动作不执行）。
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            putExtra(EXTRA_ENTRY_ID, entryId)
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
     private fun buildIntent(context: Context, entryId: String, text: String): Intent =
         Intent(context, StashReminderReceiver::class.java).apply {
             action = ACTION_STASH_REMIND
@@ -153,6 +194,13 @@ class StashReminderReceiver : BroadcastReceiver() {
 
         const val ACTION_STASH_REMIND = "com.slideindex.app.action.STASH_REMIND"
         const val ACTION_OPEN_STASH_PANEL = "com.slideindex.app.action.OPEN_STASH_PANEL"
+
+        /**
+         * 通知上的「完成」按钮动作。由 [StashClipboardTrampolineActivity] 处理：
+         * 把条目标为已完成 + 取消它的提醒（**不打开面板**）。
+         */
+        const val ACTION_STASH_REMIND_DONE = "com.slideindex.app.action.STASH_REMIND_DONE"
+
         const val EXTRA_ENTRY_ID = "extra_stash_entry_id"
         const val EXTRA_TEXT = "extra_stash_entry_text"
         const val EXTRA_SNOOZE_MINUTES = "extra_stash_remind_snooze_minutes"
@@ -167,5 +215,8 @@ class StashReminderReceiver : BroadcastReceiver() {
         private const val CHANNEL_ID = "stash_remind_v2"
         private const val NOTIFY_ID_BASE = 24_100
         private const val SNOOZE_REQUEST_BASE = 26_000
+
+        /** 「完成」的 PendingIntent request code 段：另起一段，跟上面三段都错开（见 [doneIntent]）。 */
+        private const val DONE_REQUEST_BASE = 27_000
     }
 }

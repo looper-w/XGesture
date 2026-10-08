@@ -82,6 +82,19 @@ internal fun HistoryPanelEditBar(
     imeBottom: Dp,
     blurActive: Boolean,
     onSave: (text: String, tags: List<String>) -> Unit,
+    /**
+     * 正文**每次变化**都回调（用户打字 / 语音识别结果都走它；给的是原始文本，不是 trim 过的）。
+     *
+     * 为什么需要它（§0.16.14）：面板是 overlay 窗，切前台 App / 拉起系统相册时会被系统整个摘掉，
+     * 下次打开是**全新的组合** —— 这个文件里的 `remember` 正文会丢。调用方拿这个回调把正文
+     * 实时写进**进程级草稿**（[EditSessionDraft]），窗回来时才接得上。
+     *
+     * ⚠️ 只通知，**不参与取初值**：正文初值仍然是"打开时取 [HistoryEditTarget.text]"，
+     * 所以传进来的 `target` 里塞草稿（见 `HistoryPanelScreen` 的 `barTarget`）依旧有效。
+     */
+    onTextChange: (String) -> Unit = {},
+    /** 标签**每次勾选/取消**都回调（整份新集合）。同上：只通知，不改初值语义。 */
+    onTagsChange: (Set<String>) -> Unit = {},
     onAppend: (String) -> Unit,
     onToggleDone: () -> Unit,
     onToggleReminder: () -> Unit,
@@ -154,6 +167,8 @@ internal fun HistoryPanelEditBar(
                     val current = text.text
                     val merged = if (current.isBlank()) recognized else "$current $recognized"
                     text = TextFieldValue(merged, TextRange(merged.length))
+                    // 语音识别也是"正文变了"：同样实时上报（不然说完话切走就丢）。
+                    onTextChange(merged)
                 },
                 onError = onVoiceError,
                 // 设计稿 `.editbar .meta .mic { width:30px; height:30px }`，图标 16px。
@@ -182,7 +197,11 @@ internal fun HistoryPanelEditBar(
         }
         BasicTextField(
             value = text,
-            onValueChange = { text = it },
+            onValueChange = {
+                text = it
+                // 逐字实时上报：调用方据此写进程级草稿（§0.16.14，窗被摘掉也不丢）。
+                onTextChange(it.text)
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp)
@@ -237,7 +256,10 @@ internal fun HistoryPanelEditBar(
                     dotColor = Color(tag.colorArgb),
                     selected = selected,
                     onClick = {
-                        tags = if (selected) tags - tag.name else tags + tag.name
+                        val next = if (selected) tags - tag.name else tags + tag.name
+                        tags = next
+                        // 勾/取消都实时上报（§0.16.14）：调用方写进程级草稿，窗被摘掉也不丢。
+                        onTagsChange(next.toSet())
                     },
                 )
             }

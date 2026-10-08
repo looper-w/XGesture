@@ -197,16 +197,33 @@ internal fun HistoryPanelScreen(
     var reminderPicker by remember { mutableStateOf<HistoryReminderPickerTarget?>(null) }
     var composerText by StashComposerDraft.text
     var composerBarHeight by remember { mutableStateOf(0.dp) }
-    /** 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照。 */
+    /**
+     * 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照
+     * （正文 / 标签 / 完成态 / 提醒时间的**原值**）。
+     *
+     * ⚠️ 它**允许**继续是组合内的 state：它整份都能从数据层重建（`entry` + `stashMeta`），
+     * 窗被摘掉之后重开编辑条就是重新快照一次而已。真正必须活得比组合长的是
+     * "用户改过的那部分" —— 正文 / 标签 / 已选图，那些在 [EditSessionDraft] 里（§0.16.14），
+     * 而且是**实时**写进去的（编辑条的 `onTextChange` / `onTagsChange`）。
+     *
+     * 喂回去的路（窗被系统摘掉 → 组合重建 → 用户再点这条编辑）：
+     * ① `openEdit` → [EditSessionDraft.begin]（同 id 保留草稿）→ `editTarget` 重新快照；
+     * ② 正文 / 标签走下面的 `barTarget`（用草稿覆盖 `target` 的 `text` / `tagNames`，
+     *    编辑条 `remember(target.entryId)` 时取到的就是草稿）；
+     * ③ 图片走 [editImagePaths]（本来就是 [EditSessionDraft.imagePaths] 的代理）。
+     */
     var editTarget by remember { mutableStateOf<HistoryEditTarget?>(null) }
     var editBarHeight by remember { mutableStateOf(0.dp) }
     /**
      * 就地编辑条里"补图"已选的图片（§0.16.14，与加号弹窗同一套 trampoline 路径）。
      *
-     * ⚠️ 按**编辑目标**重置：换一条条目就清空，免得把上一条的图追加到这一条上。
-     * （这份之所以不像加号弹窗那样进单例：它是"某一条条目"的草稿，跟着 `editTarget` 走才对。）
+     * ⚠️ 它现在代理到**进程级单例** [EditSessionDraft]（和 [StashComposerDraft] 同一套做法）：
+     * 以前是 `remember(editTarget?.entryId)`，窗被系统摘掉（切前台 App / 拉起相册，§0.16.13）
+     * 之后组合重建，刚选好的图就没了 —— 用户感受是"选完图回来图全丢"。
+     * 换条目的清空改由 [EditSessionDraft.begin] 负责（它同时把上一条遗留的临时图删掉），
+     * 所以这里不再需要 `remember(entryId)`，下面所有读写点一字不差。
      */
-    var editImagePaths by remember(editTarget?.entryId) { mutableStateOf<List<String>>(emptyList()) }
+    var editImagePaths by EditSessionDraft.imagePaths
     /** 标签管理浮窗（§0.16.4 待办 2）：与输入条/编辑条**同一套居中模态壳**。 */
     var tagManagerOpen by remember { mutableStateOf(false) }
     val composerFocusRequester = remember { FocusRequester() }
@@ -217,6 +234,8 @@ internal fun HistoryPanelScreen(
     LaunchedEffect(selectedTab) {
         if (selectedTab != HistoryPanelTab.Stash) {
             composerOpen = false
+            // 切页签只是把编辑条藏起来：草稿（正文/标签/已选图）留在 [EditSessionDraft] 里，
+            // 切回闪念页再点同一条编辑还能接着改。
             editTarget = null
         }
     }
@@ -334,6 +353,15 @@ internal fun HistoryPanelScreen(
                     true
                 }
                 editTarget != null -> {
+                    // ⚠️ **刻意不碰 [EditSessionDraft]**：关掉编辑条 != 放弃这份草稿。
+                    // 理由：这条路上"关"的成因太多了 —— 换页签、点空白、把面板收起、
+                    // 甚至只是被系统摘掉窗（那时这个 lambda 根本不会被调用），代码分不清
+                    // "用户不要了"还是"窗没了"。而**留着的代价只是下次打开这条编辑条看到
+                    // 上次改到一半的内容**（数据层没被写过，用户再点保存才生效），
+                    // 清掉的代价却是"窗被摘掉回来草稿没了"—— 正是这次要修的毛病。
+                    // 清草稿只有两种时机：①保存成功（[EditSessionDraft.clear]）；
+                    // ②这条条目本身不在了 —— 删掉它（[EditSessionDraft.clear]），
+                    // 或者改去编辑另一条（[EditSessionDraft.begin] 换 entryId 时会作废旧草稿）。
                     editTarget = null
                     true
                 }
@@ -458,9 +486,16 @@ internal fun HistoryPanelScreen(
         }
     }
 
-    /** 打开就地编辑条：快照当前正文 / 标签 / 完成态（设计稿 `openEdit`）。 */
+    /**
+     * 打开就地编辑条：快照当前正文 / 标签 / 完成态（设计稿 `openEdit`）。
+     *
+     * §0.16.14：先 [EditSessionDraft.begin] —— 换条目时旧草稿作废（连带删掉它遗留的 cache 临时图），
+     * 同一条重复打开**保持**已有草稿（这正是"窗被摘掉再回来，改了一半的正文/勾过的标签/刚选的图
+     * 还在"的关键）。快照本身仍然只取数据层原值，草稿的优先级由渲染处的 seed 决定。
+     */
     val openEdit: (com.slideindex.app.stash.StashEntry) -> Unit = { entry ->
         composerOpen = false
+        EditSessionDraft.begin(entry.id)
         editTarget = HistoryEditTarget(
             entryId = entry.id,
             text = entry.text.orEmpty(),
@@ -679,11 +714,16 @@ internal fun HistoryPanelScreen(
             else -> submitComposerRich(value, images)
         }
     }
-    // 进程/设备重启后 AlarmManager 里的提醒会丢：进面板时按当前有效的条目补排一次
-    // （只在"列表从空变非空"那一次跑，不做 BOOT_COMPLETED 接收器 —— 少一个常驻入口）。
+    // 重启/更新后 AlarmManager 里的提醒会丢：进面板时补排一次（`StashReminderBootReceiver` 也会在开机时补）。
+    // 同一处还负责两件对账（§0.16.15）：把「稍后 10 分钟」写回显示、清掉已过期的提醒。
     LaunchedEffect(stashEntries.isNotEmpty()) {
         if (stashEntries.isEmpty()) return@LaunchedEffect
-        val reminders = stashMeta.reminders
+        // ⚠️ 顺序不能反：先并回 snooze override，再清过期 —— 反了会把"有效提醒"连 override 一起清掉、救不回来。
+        val overrides = com.slideindex.app.stash.StashReminderMirror.snoozeOverrides(appContext)
+        metaRepo?.mergeSnoozeOverrides(overrides)
+        metaRepo?.clearExpiredReminders()
+        // 用 `pendingReminders()` 读刚更新过的 store：`stashMeta` 是 Compose 侧快照，拿它会按旧时间再排一遍。
+        val reminders = metaRepo?.pendingReminders() ?: stashMeta.reminders
         if (reminders.isEmpty()) return@LaunchedEffect
         val texts = stashEntries.associate { entry ->
             entry.id to (entry.text ?: entry.combinedText())
@@ -990,6 +1030,8 @@ internal fun HistoryPanelScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) {
+                        // 点空白 = 主动取消编辑：**保留** [EditSessionDraft]（理由见返回键那条路
+                        // 的注释：分不清"不要了"和"窗被摘掉"，而保留的代价只是下次接着改）。
                         when {
                             reminderPicker != null -> reminderPicker = null
                             tagManagerOpen -> tagManagerOpen = false
@@ -1061,18 +1103,55 @@ internal fun HistoryPanelScreen(
                 onBarHeightChanged = { composerBarHeight = it },
             )                // 就地编辑条（设计稿 `.editbar`）：改正文 / 改标签 / 追加 / 完成 / 删除。
                 if (showPanelLayers) editTarget?.let { target ->
+                    /**
+                     * 草稿只有属于**当前这条**时才算数：`EditSessionDraft` 是进程级单例，
+                     * 万一残留的是别的条目的（理论上 `begin` 已经处理过，这里再兜一道），
+                     * 拿它当初始值就会把别人的正文/标签灌进这一条 —— 那是数据串条，比丢草稿严重得多。
+                     */
+                    val draft = EditSessionDraft.takeIf { it.entryId.value == target.entryId }
+                    /**
+                     * 喂给编辑条的**初始值**：有草稿用草稿，没有就用条目原值。
+                     *
+                     * ⚠️ 只能走"换一个 target 实例"这条缝 —— `HistoryPanelEditBar` 不允许改，
+                     * 它的正文/标签是内部的 `remember(target.entryId)`（只在 entryId 变时重新取初值），
+                     * 所以这里的 copy **必须保持 entryId 不变**：否则每打一个字都会重组出一个新
+                     * entryId 快照，把输入框里的内容整段冲掉（比丢草稿还糟）。
+                     *
+                     * 这也正是"窗被系统摘掉后重开"能自愈的原因：组合重建 = 编辑条重新 `remember`，
+                     * 它就会把草稿里那份正文/标签读回去。
+                     */
+                    val barTarget = target.copy(
+                        text = draft?.text?.value ?: target.text,
+                        tagNames = draft?.tags?.value?.toList() ?: target.tagNames,
+                    )
                     HistoryPanelEditBar(
-                        target = target,
+                        target = barTarget,
                         availableTags = availableTags,
                         imeBottom = overlayImeBottom,
                         blurActive = panelBlurActive,
+                        /**
+                         * 正文改成**实时**进草稿（§0.16.14）：编辑条每敲一个字都回调，
+                         * 所以"打了一半就切走 App / 拉相册"也不丢 —— 窗被系统摘掉后组合重建，
+                         * 用户再点这条编辑时 `barTarget` 就会把这份正文喂回去。
+                         *
+                         * 空串回落 `null`：老语义是"留空 = 不改正文"（`onSave` 里仍按 `isBlank()`
+                         * 判断是否写库），草稿也照这个语义表达"没改过正文"，免得下次打开拿一份
+                         * 空草稿把编辑条清空。
+                         */
+                        // 删空正文时**存空串**，不要回落 null：null 只表示"从没改过正文"，
+                        // 否则"我把正文删光了"下次打开会看到原正文复活（D 交接时点出的语义坑）。
+                        onTextChange = { value -> EditSessionDraft.text.value = value },
+                        onTagsChange = { value -> EditSessionDraft.tags.value = value },
                         onSave = { text, tags ->
                             val entry = stashEntries.firstOrNull { it.id == target.entryId }
                             val beforeText = entry?.text.orEmpty()
                             val beforeTags = stashMeta.tagsOf(target.entryId)
                             // 待追加的图片在**动手之前**取快照：下面会把 editTarget 清掉，
-                            // 而 editImagePaths 是按 editTarget 重置的（取晚了就读到空的了）。
+                            // 而草稿（[EditSessionDraft]）可能在保存成功那一刻被整体清掉
+                            // （取晚了就读到空的了）。
                             val pendingImages = editImagePaths
+                            // ⚠️ 正文/标签**不在这里写草稿**：下面 `onTextChange` / `onTagsChange`
+                            // 已经逐字、逐次实时写过了（§0.16.14），到这里草稿就是最新的。
                             scope.launch {
                                 // 正文留空 = 不改正文（设计稿 `if (v) s.text = v`），只存标签。
                                 val ok = if (text.isBlank()) true else {
@@ -1081,6 +1160,10 @@ internal fun HistoryPanelScreen(
                                 metaRepo?.setTags(target.entryId, tags)
                                 editTarget = null
                                 haptics.confirm()
+                                // 正文/标签这条路走完了，草稿的使命就结束了 —— 立刻清掉，
+                                // 否则下次打开这条编辑条会拿着一份"已经落盘的旧草稿"当初始值。
+                                // （下面还有待追加图片时不清：那份草稿要留到追加成功，见那里。）
+                                if (pendingImages.isEmpty()) EditSessionDraft.clear()
                                 // 补图这条路**不给撤销**：仓储的追加接口没有"删掉刚追加的那几张"，
                                 // 所以这里只提示、不摆一个"撤销"按钮出来骗人（§0.16.14）。
                                 if (ok && pendingImages.isEmpty()) {
@@ -1100,14 +1183,17 @@ internal fun HistoryPanelScreen(
                                     }
                                     if (bitmaps.isEmpty()) {
                                         // 一张都没解出来：正文/标签已经存下了，但图没进去，不能谎称成功。
+                                        // 草稿**留着**（临时图也不删）：用户收起再点同一条编辑还能接着重试。
                                         showPanelMessage(R.string.stash_save_failed)
                                     } else {
                                         StashCoordinator.appendImages(target.entryId, bitmaps) { appended ->
                                             if (appended) {
                                                 showPanelMessage(R.string.stash_edit_saved)
-                                                // 图已经拷进仓库了，cache 里这份临时文件可以删；
-                                                // 草稿也清掉，免得下次打开编辑条又把同一批图追加一遍。
-                                                editImagePaths = emptyList()
+                                                // 图已经拷进仓库了：cache 里这份临时文件可以删，整份草稿也清掉
+                                                // （`clear()` 自己会删 [EditSessionDraft.imagePaths] 里的图，
+                                                //  但这里的 `pendingImages` 是保存前的快照，两边都删一道更保险：
+                                                //  追加成功时两者本来是同一批路径）。
+                                                EditSessionDraft.clear()
                                                 pendingImages.forEach { path ->
                                                     runCatching { File(path).delete() }
                                                 }
@@ -1144,6 +1230,8 @@ internal fun HistoryPanelScreen(
                         },
                         onDelete = {
                             editTarget = null
+                            // 这条都没了，草稿（含 cache 临时图）留着只会挡住下一条 —— 立即作废。
+                            EditSessionDraft.clear()
                             stashEntries.firstOrNull { it.id == target.entryId }
                                 ?.let { deleteEntry(it) }
                         },

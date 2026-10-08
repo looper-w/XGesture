@@ -3068,6 +3068,7 @@
     <string name="stash_remind_in_hours">%1$d 時間後</string>
     <string name="stash_remind_clear">リマインドを解除</string>
     <string name="stash_remind_snooze_10">10 分後に再通知</string>
+    <string name="stash_remind_action_done">完了</string>
     <string name="stash_remind_custom">日時を指定…</string>
     <string name="stash_remind_presets">プリセット</string>
     <string name="stash_remind_confirm">決定</string>

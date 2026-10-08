@@ -3156,6 +3156,7 @@
     <string name="stash_remind_in_hours">%1$d 小时后</string>
     <string name="stash_remind_clear">清除提醒</string>
     <string name="stash_remind_snooze_10">稍后 10 分钟</string>
+    <string name="stash_remind_action_done">完成</string>
     <string name="stash_remind_custom">自定义时间…</string>
     <string name="stash_remind_presets">档位</string>
     <string name="stash_remind_confirm">确定</string>

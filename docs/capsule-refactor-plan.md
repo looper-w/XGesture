@@ -1371,3 +1371,36 @@ detach 时清 `composeViewRef`/`ownerRef`/`layoutParams`/`windowManager`、注�
 
 **验证（用户实测）**：设「1 分钟后」→ **弹了（横幅）+ 震动 ✅** —— P0 生效，困扰几天的"提醒没效果"到此闭环。
 仍待单独确认：通知上的「稍后 10 分钟」按钮是否真按 10 分钟重排；**重启后是否还响**（批次 2 未做，目前只在进面板时补排）。
+
+---
+
+### 0.16.15 本轮：提醒可靠性（A）+ 编辑会话实时草稿（D）
+
+**A｜提醒可靠性**
+
+- 新增 `StashReminderMirror`：**纯 SharedPreferences 镜像**（entryId → 时间 + 正文；另一份 snooze override）。
+  存在的理由：开机广播/Receiver 里**不能依赖 Hilt**（进程可能是被拉起来的），而"重启后重排"必须有数据源。
+  `schedule()` 先写镜像再排闹钟、`cancel()` 先清镜像再取消（顺序写进 KDoc）。
+- 新增 `StashReminderBootReceiver`：`BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` / `TIME_SET` / `TIMEZONE_CHANGED`
+  → `rescheduleFromMirror()`（**snooze 优先**、过点跳过）。这就是"重启后不响"的根治。
+- 通知加**「完成」**：`PendingIntent.getActivity` → `StashClipboardTrampolineActivity` 的
+  `ACTION_STASH_REMIND_DONE`（request code 段 27_000 与其它错开）→ `setDone(true)` + 清提醒 + 取消闹钟；
+  落盘放 `applicationScope`（Activity 立刻 finish，`lifecycleScope` 会在 `withContext(IO)` 处被取消）。
+- `StashMetaRepository` 加 `clearExpiredReminders()` 与 `mergeSnoozeOverrides()`：
+  面板打开时**先并回 snooze、再清过期**（顺序不能反，KDoc 写明了为什么），
+  于是"点了稍后但卡片时间不变"这个显示问题也一起修了，过期提醒不再永久挂着 ⏰。
+
+**D｜编辑会话实时草稿**
+
+- 新增 `EditSessionDraft`（**按 entryId**、进程级）：正文 / 标签 / 图片路径。
+- `HistoryPanelEditBar` 新增 `onTextChange` / `onTagsChange`（带默认值、向后兼容；未改初值语义），
+  挂在**输入框逐字**、**语音识别结果**、**标签勾选**三处 → 草稿是**实时**的，不是"保存时写一次"。
+- 三条喂回路径：正文/标签走 `barTarget` 初值、图片走 `imagePaths` 代理；窗被系统摘掉后**再点这条编辑**即恢复。
+- 有意取舍：关编辑条（返回键/点空白/切页签/摘窗）**不清草稿**（保存成功/删条目/换条目才清）；
+  正文**删空存空串**而不是回落 null（否则"原正文复活"）。
+
+**未做（下一批 E）**：`setAlarmClock` 强提醒档（需要先有"档位"UI 概念）· 响铃页（前台服务 + 铃声循环 + 全屏）·
+通知设置向导（用户暂缓）· 编辑条"窗回来自动弹着"（`editTarget` 目前仍是组合内 state）。
+
+**验证**：`assembleFullDebug` + `testFullDebugUnitTest` 通过（109 套 / 623 条 / 0 失败），装机无新崩溃。
+端到端待用户手动验：**重启后仍响** · 通知「完成」 · 点稍后后卡片 ⏰ 变成 +10 分钟。

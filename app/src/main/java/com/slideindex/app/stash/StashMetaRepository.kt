@@ -264,6 +264,132 @@ class StashMetaRepository @Inject constructor(
         if (next == current.reminders) current else current.copy(reminders = next)
     }
 
+    /**
+     * 收尾**已经过点**的提醒：删掉它们（第 4 条：过期提醒清理），并同步清掉闹钟与提醒镜像。
+     *
+     * 「稍后」写回显示（为什么需要它）：用户点了通知上的「稍后 10 分钟」时进程可能没装数据层，
+     * 只能把新时间记在 [StashReminderMirror] 的 snooze override 里；于是 meta 里这一条的时间
+     * **已经过点**、而真实该响的时间在未来。这种条目不能删，要把 meta 的时间**改成那个更晚的时间**
+     * （即 [mergeSnoozeOverrides] 的语义），下次面板打开时才显示对、闹钟也才对。
+     *
+     * 所以处理规则是：
+     * 1. `atMs > now`：不动（这条提醒还没到点）；
+     * 2. `atMs <= now` 且 snooze override 在未来：把 meta 改成 override 的时间，**不删**
+     *    （用户点过「稍后」、并且还没到那个新时间）；
+     * 3. `atMs <= now` 且没有 override、或 override 也过点了：删掉，并 `AlarmManager.cancel` + 镜像一并清。
+     *
+     * 幂等、可反复调用。
+     *
+     * 用法（调用点在 `HistoryPanelScreen` 的补排 `LaunchedEffect` 里，由主任务接线）：
+     * ```
+     * val overrides = StashReminderMirror.snoozeOverrides(appContext)
+     * metaRepo?.mergeSnoozeOverrides(overrides)
+     * metaRepo?.clearExpiredReminders()
+     * // 再用"并过 override 之后"的 reminders 去 rescheduleAll(...)
+     * ```
+     * ⚠️ 顺序不能反：先 [mergeSnoozeOverrides] 再清，否则第 2 条规则看不到 override、
+     * 会把一条其实还有效的提醒删掉（override 也会被一起清掉，救不回来）。
+     *
+     * @param nowMs 判定"过期"的时间基准，留参数是为了可测（默认当前时间）。
+     * @return 真正删掉的条数（第 2 条那种"改成更晚时间"的不计入）。
+     */
+    suspend fun clearExpiredReminders(nowMs: Long = System.currentTimeMillis()): Int {
+        // 「稍后」优先：这也是 mergeSnoozeOverrides 的同一份语义，两个方法都要认它。
+        val overrides = StashReminderMirror.snoozeOverrides(appContext)
+        // 先算出"删哪些 / 改哪些"，副作用（闹钟、镜像、偏好）留到写盘之后再做 ——
+        // transform 里尽量只做纯计算，便于推理。
+        val expiredRemovals = mutableListOf<String>()
+        val overriddenToFuture = mutableListOf<Pair<String, Long>>()
+        mutate { current ->
+            var changed = false
+            val reminders = current.reminders.toMutableMap()
+            current.reminders.forEach { (entryId, atEpochMs) ->
+                if (atEpochMs > nowMs) return@forEach
+                val override = overrides[entryId]
+                if (override != null && override > nowMs) {
+                    // 用户在"稍后"里把它推到了未来，而且那个新时间还没到：保留并纠正时间。
+                    reminders[entryId] = override
+                    overriddenToFuture += entryId to override
+                    changed = true
+                } else {
+                    // 没有 override，或者 override 自己也是过去时间（闹钟早已响过/被系统丢掉）→ 真过期。
+                    reminders.remove(entryId)
+                    expiredRemovals += entryId
+                    changed = true
+                }
+            }
+            if (!changed) current else current.copy(reminders = reminders)
+        }
+
+        // 闹钟：过期的取消；被"稍后"纠正的按新时间重排 ——
+        // 那条闹钟本来就已经被「稍后」排到 override 时间上了，这里重排是幂等的（而且能修好
+        // "用户后来在面板里手动改了时间、但 override 还留着"的残留）。
+        expiredRemovals.forEach { entryId ->
+            StashReminderScheduler.cancel(appContext, entryId)
+            StashReminderMirror.removeSnoozeOverride(appContext, entryId)
+        }
+        val overriddenTexts = StashReminderMirror.all(appContext).associate { it.first to it.third }
+        overriddenToFuture.forEach { (entryId, atEpochMs) ->
+            // 重排时正文取自镜像（meta 不存正文）：镜像里那份就是用户设置时写进去的正文。
+            StashReminderScheduler.schedule(appContext, entryId, atEpochMs, overriddenTexts[entryId].orEmpty())
+            StashReminderMirror.removeSnoozeOverride(appContext, entryId)
+        }
+        Log.i(
+            TAG,
+            "clearExpiredReminders: 删除 ${expiredRemovals.size} 条过期提醒，" +
+                "按稍后时间顺延 ${overriddenToFuture.size} 条",
+        )
+        return expiredRemovals.size
+    }
+
+    /**
+     * 把 [StashReminderMirror] 攒下的「稍后」时间**并回**提醒表。
+     *
+     * 为什么要有这一步：通知上的「稍后」是在广播进程里点的，那边刻意不碰数据层，
+     * 只能把新时间记进 `SharedPreferences`。如果一直不并回来，面板里显示的还是老时间，
+     * [StashReminderScheduler.rescheduleAll] 也会照老时间重排 —— 老时间已过点，闹钟立刻响一次。
+     *
+     * 规则（**只前进不后退**）：override 必须是**未来时间**、且比当前值更晚，才更新 ——
+     * 前者保证不会把一个已经过期的提醒"复活"成一条立刻要响的闹钟（那种情况交给
+     * [clearExpiredReminders] 删掉），后者防住"用户先手动改成一个更晚的时间、
+     * 之后那个旧的 snooze 才被并回来"把提醒往前提。并成功后清掉该 override，避免下次重复并。
+     *
+     * 幂等。调用点（`HistoryPanelScreen` 的补排 `LaunchedEffect`，由主任务接线）：
+     * ```
+     * metaRepo?.mergeSnoozeOverrides(StashReminderMirror.snoozeOverrides(appContext))
+     * ```
+     *
+     * @param nowMs 判定"override 还算不算数"的时间基准，留参数是为了可测（默认当前时间）。
+     * @return 真正被更新的条数。
+     */
+    suspend fun mergeSnoozeOverrides(
+        overrides: Map<String, Long>,
+        nowMs: Long = System.currentTimeMillis(),
+    ): Int {
+        if (overrides.isEmpty()) return 0
+        val merged = mutableListOf<Pair<String, Long>>()
+        mutate { current ->
+            val reminders = current.reminders.toMutableMap()
+            overrides.forEach { (entryId, overrideAt) ->
+                // 表里没有这一条的提醒 → 忽略（用户可能已经取消/删除了）。
+                val existing = reminders[entryId] ?: return@forEach
+                if (overrideAt > nowMs && overrideAt > existing) {
+                    reminders[entryId] = overrideAt
+                    merged += entryId to overrideAt
+                }
+            }
+            if (merged.isEmpty()) current else current.copy(reminders = reminders)
+        }
+        merged.forEach { (entryId, atEpochMs) ->
+            // 只改镜像里的时间、保留正文：这里拿不到正文（meta 不存），而用空串覆盖
+            // 会让这条提醒重启补排后的通知变成"有一条闪念到时间了"这种没有内容的兜底文案。
+            StashReminderMirror.updateTime(appContext, entryId, atEpochMs)
+            StashReminderMirror.removeSnoozeOverride(appContext, entryId)
+        }
+        Log.i(TAG, "mergeSnoozeOverrides: 并回 ${merged.size} 条稍后时间")
+        return merged.size
+    }
+
     /* ---------------- 清理 ---------------- */
 
     /** 条目被删除时调用：把它的标签绑定 / 完成态 / 追加内容 / 来源 / 提醒一并清掉。 */
