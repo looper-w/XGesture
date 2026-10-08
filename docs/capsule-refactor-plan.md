@@ -843,6 +843,7 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 - **不要用 `git add -A`**：仓库里有 `.ohc_apk/`、`.ohc_decompiled/`、`.ohc_jadx.log`、`PowerShell 7.6.6/`、`null/`（4000+ 文件）—— 已写进 `.gitignore`，提交时仍应**显式指定路径**（`app/`、`docs/`、`ui_demo*.html`）并用 `git status --porcelain` 复核暂存清单。
 - **可能另有 AI 在同一仓库提交**（本轮发生过：对方 `git reset` 把我们的提交摘掉再提交自己的）。提交前先 `git log --oneline -3` + `git reflog -5` 看清 HEAD。
 - **设备**：MEIZU 21，`adb` = `C:\Users\syp\AppData\Local\Android\Sdk\platform-tools\adb.exe`，USB 不稳（install 常需重试数轮）。装机后必须查 `adb shell run-as com.slideindex.app ls -lt files/crashes`（正常时最新仍是 `crash_20261007_170028.txt`）。
+  ⚠️ §0.16.5 那轮**装到一半设备整个掉了**：`adb devices` 一直为空，`reconnect` / `kill-server`+`start-server` / 等 60s 都没回来 —— 这种情况只能拔插或换线，**别在 adb 上反复重试等它自己好**（APK 已经构建好，插上后一条 `adb install -r -d` 即可）。
 
 #### 已有结论、不要再翻案的设计决定
 
@@ -862,8 +863,9 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 2. **列表滑动收起顶栏** → 本轮做**收起第一行**（搜索+条数+关闭），页签与筛选行常驻
 
 **本轮结果**：`:app:testFullDebugUnitTest` → **108 套 / 614 条 / 0 失败**（上一轮 610 条，新增 4 条 `move` 用例）；
-APK 已构建（`app/build/outputs/apk/full/debug/app-full-debug.apk`），但**本轮装机没做成** —— 装到一半 USB 掉线、
-`adb devices` 持续为空（见下"环境"那条），设备上仍是上一轮 `0b229969` 的版本。
+本轮提交 `e71d2b3a`（6 文件）。APK 已构建（`app/build/outputs/apk/full/debug/app-full-debug.apk`），
+但**本轮装机没做成** —— 装到一半 USB 掉线、`adb devices` 持续为空（见下"环境"那条），
+设备上仍是上一轮 `0b229969` 的版本。
 
 #### 1. 标签排序的数据层（UI 未接）
 
