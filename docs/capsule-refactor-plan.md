@@ -536,11 +536,11 @@ Compose 的 `Modifier.alpha` 和 `Modifier.graphicsLayer` 都是"层"（RenderNo
 | P1 数据层 | ✅ **完成，编译通过** | 新增 `stash/StashMetaRepository.kt`（标签定义 + 标签绑定 + 完成态 + 追加内容，独立文件 `stash_meta.json`，跨进程锁/监听、首运行灌默认五标签、`pruneOrphans`、`pendingTodoCount`）；`StashAccess` 加 `metaRepository`；`StashEntry.matchesQuery(query, tagNames = emptyList())` 加参数（不破坏既有调用点）；`StashRepository` 加 **读失败拒写**（数据保护）+ **`updateText()`**（以前仓储完全没有改正文的接口） |
 | P2 把手 | ✅ **完成，编译通过** | 新增 `overlay/HistoryFloatHandleGestureExclusion.kt`（右缘排除区，现有工具做不了）；`HistoryFloatContent.kt` **按 demo 重做形态**（视觉 9×28 / 圆角 5 / 距右 12dp / 命中区 48×48 / 有待办整条变色 / 接上 `onLongClick`）；`HistoryFloatService.kt` 挂排除区 + **息屏隐藏** + `handleAlert` 随 500ms 轮询刷新 |
 | P3a 参数对齐 | ✅ **完成，编译通过** | 面板宽 **50% → 78%**（`HistoryPanelUi.historyPanelWidth`，新增 `PANEL_WIDTH_FRACTION`）；圆角 **14 → 26dp**（新 `HistoryPanelCornerRadius`）；卡片操作行 **32/20 → 48/22dp**（新 `CARD_ACTION_HIT_DP` / `CARD_ACTION_GLYPH_DP`）；`HistoryPanelColors.cardBackground(starred, done = false)` 加完成态（+ `DONE_CONTENT_ALPHA`）；页签文案 4 套 locale 改为 闪念 / Flashes / ひらめき / ومضات |
-| P3b 面板结构 | 🟡 **部分完成** | ✅ **已做**：标签筛选 chip 行（新 `HistoryTagFilterRow.kt`，横向滚动无滚动条；「全部」+ 各标签单选，标签定义来自 `stash_meta.json` 所以增删标签自动跟随）；`HistoryPanelViewModel` 加 `selectedTag`（SavedStateHandle 持久化）/`availableTags`/`metaRepository` 形参（有默认值）；`filteredStashEntries` 改为 4 路 combine，**并把标签名接进 `matchesQuery`**；`HistoryPanelViewModelFactory` 透传 `StashAccess.metaRepository`；文案 `stash_tag_filter_all`（values + values-zh，ja/ar 自动回退英文）。<br>✅ **已做（本次）**：**左侧时间轴槽** —— 新增 `HistoryTimelineGrouping.kt`（纯逻辑：今天/昨天/更早分组、摊平成 Lazy 行、竖线强度，见 §0.6）与 `HistoryTimelineGutter.kt`（62dp 槽 + 54dp 竖线 + 7dp 节点 + 分组名）；`HistoryPanelScreen` 的闪念列表改成"分组表头与条目同层的扁平列表"、行间距归零、左内边距归零；**时间移出卡片**（`HistoryEntryCardShell` 新增 `showTimestamp`，闪念传 `false`、剪贴板仍在卡片内）；分组文案 `stash_group_today/_yesterday/_earlier` 四套 locale，并**补齐了 ja/ar 缺失的 `stash_tag_filter_all`**；新增单测 `HistoryTimelineGroupingTest`（8 例，全绿）。<br>✅ **已做（第二轮）**：**卡片重排 + 操作行 + 空状态三选一** —— `HistoryEntryCardShell` 加 `done`（内容 0.62 淡出）/`showActionDivider`/可空 `headerTrailing`（**闪念卡片头部整行消失**，照设计稿）；正文完成态划掉（`textDecoration`）；追加块（虚线 + `＋ 内容`，`HistoryCardAppendBlock`）；底部 `.foot` 行（来源 chip + 标签 chip，`FlowRow`）；操作行改成「主状态 + 复制 + ⋮」，**星标**按 `isTodo` 规则成为主状态动作、「取词」搬进 ⋮ 菜单（⋮ = 星标 / 取词 / 钉屏 / 分享 / 保存图片 / —— / 删除，删除前有分隔线）；**来源**落地（`StashMetaStore.sources` 字符串键 + `setSource`，接线剪贴板 / 取词 / 图片三条路径）；空状态按「全空 / 搜不到 / 标签筛不出」三分支各给文案 + 出口（新 `HistoryEmptyState.kt`）。详见 **§0.7**。<br>✅ **已做（第三轮）**：**FAB + 就地输入条**（新 `HistoryPanelComposer.kt`）—— 54dp FAB（圆角 19、主题色、加号，打开后变玻璃底 + 转 45°）、输入条（48dp 胶囊 + 送出圆键 + 说明行、顶部 26dp 圆角）、**IME 抬升**（`rememberOverlayImeBottomHeight()`）、回车/送出键存下、存下后清空并**清掉搜索与标签筛选**（否则新条目可能被筛掉）、返回键先收输入条、输入条打开时列表底部让位。**P3b 到此全部做完。** |
-| P4 动效 | ✅ **完成** | ✅ **第四轮**：**新条目 flash**（`Animatable` + 1.4s 主题色环 + 柔光，设计稿 `.item.flash`）· **首屏错开淡入**（前 8 行 40ms 步进，窗口 720ms 后不再给新滚进来的行播）· **换页动效**（页内容 16dp 位移 + 淡入，跟随翻页比例；比例在 `graphicsLayer` 里读，不触发重组）· **触觉**（新 `HistoryHaptics`：存下/复制/删除/完成/星标 = CONFIRM，把手长按 = LONG_PRESS，菜单项 = 轻点；`HapticHelper` 新增 `actionConfirm`/`actionTick` 两个**只受总开关+强度**控制的通用档）· **把手脉冲**（新 `HistorySaveSignal` 跨窗传「刚存下」，设计稿 `.pip.pulse` 900ms / 35% 处 `-3px + scaleY 1.18`）。<br>✅ **第五轮**：**跟手拉出 + 右拖收回（弹回）** —— 新 `HistoryPanelReveal`（跨窗共享进度）+ `HistoryPanelRevealDriver`（拖动贴手指 / 松手弹簧）+ 把手侧 8px 轴锁定与过半轻震 + 面板窗"看得见但不吃触摸"模式；侧栏宿主新增 `dragReveal` 与 `setTouchable`。做法是 P0 的方案 B（**不是** §0.1 的合并同窗），见 **§0.10**。<br>⏳ **仍缺**：**peek**（存下后 1.2s 浮出预览，要新开一个 `FLAG_NOT_TOUCHABLE` 小窗；事件源 `HistorySaveSignal.lastSavedText` 已备好）· 设计稿那层 20% 遮罩（会让更低层的把手一起变暗，见 §0.10）· 页签指示片（miuix `MiuixTabRowWithContour` 自带，**没有要改的**） |
+| P3b 面板结构 | ✅ **完成**（状态标记曾长期停在 🟡，见 §0.3.1） | ✅ **已做**：标签筛选 chip 行（新 `HistoryTagFilterRow.kt`，横向滚动无滚动条；「全部」+ 各标签单选，标签定义来自 `stash_meta.json` 所以增删标签自动跟随）；`HistoryPanelViewModel` 加 `selectedTag`（SavedStateHandle 持久化）/`availableTags`/`metaRepository` 形参（有默认值）；`filteredStashEntries` 改为 4 路 combine，**并把标签名接进 `matchesQuery`**；`HistoryPanelViewModelFactory` 透传 `StashAccess.metaRepository`；文案 `stash_tag_filter_all`（values + values-zh，ja/ar 自动回退英文）。<br>✅ **已做（本次）**：**左侧时间轴槽** —— 新增 `HistoryTimelineGrouping.kt`（纯逻辑：今天/昨天/更早分组、摊平成 Lazy 行、竖线强度，见 §0.6）与 `HistoryTimelineGutter.kt`（62dp 槽 + 54dp 竖线 + 7dp 节点 + 分组名）；`HistoryPanelScreen` 的闪念列表改成"分组表头与条目同层的扁平列表"、行间距归零、左内边距归零；**时间移出卡片**（`HistoryEntryCardShell` 新增 `showTimestamp`，闪念传 `false`、剪贴板仍在卡片内）；分组文案 `stash_group_today/_yesterday/_earlier` 四套 locale，并**补齐了 ja/ar 缺失的 `stash_tag_filter_all`**；新增单测 `HistoryTimelineGroupingTest`（8 例，全绿）。<br>✅ **已做（第二轮）**：**卡片重排 + 操作行 + 空状态三选一** —— `HistoryEntryCardShell` 加 `done`（内容 0.62 淡出）/`showActionDivider`/可空 `headerTrailing`（**闪念卡片头部整行消失**，照设计稿）；正文完成态划掉（`textDecoration`）；追加块（虚线 + `＋ 内容`，`HistoryCardAppendBlock`）；底部 `.foot` 行（来源 chip + 标签 chip，`FlowRow`）；操作行改成「主状态 + 复制 + ⋮」，**星标**按 `isTodo` 规则成为主状态动作、「取词」搬进 ⋮ 菜单（⋮ = 星标 / 取词 / 钉屏 / 分享 / 保存图片 / —— / 删除，删除前有分隔线）；**来源**落地（`StashMetaStore.sources` 字符串键 + `setSource`，接线剪贴板 / 取词 / 图片三条路径）；空状态按「全空 / 搜不到 / 标签筛不出」三分支各给文案 + 出口（新 `HistoryEmptyState.kt`）。详见 **§0.7**。<br>✅ **已做（第三轮）**：**FAB + 就地输入条**（新 `HistoryPanelComposer.kt`）—— 54dp FAB（圆角 19、主题色、加号，打开后变玻璃底 + 转 45°）、输入条（48dp 胶囊 + 送出圆键 + 说明行、顶部 26dp 圆角）、**IME 抬升**（`rememberOverlayImeBottomHeight()`）、回车/送出键存下、存下后清空并**清掉搜索与标签筛选**（否则新条目可能被筛掉）、返回键先收输入条、输入条打开时列表底部让位。**P3b 到此全部做完。** |
+| P4 动效 | ✅ **完成** | ✅ **第四轮**：**新条目 flash**（`Animatable` + 1.4s 主题色环 + 柔光，设计稿 `.item.flash`）· **首屏错开淡入**（前 8 行 40ms 步进，窗口 720ms 后不再给新滚进来的行播）· **换页动效**（页内容 16dp 位移 + 淡入，跟随翻页比例；比例在 `graphicsLayer` 里读，不触发重组）· **触觉**（新 `HistoryHaptics`：存下/复制/删除/完成/星标 = CONFIRM，把手长按 = LONG_PRESS，菜单项 = 轻点；`HapticHelper` 新增 `actionConfirm`/`actionTick` 两个**只受总开关+强度**控制的通用档）· **把手脉冲**（新 `HistorySaveSignal` 跨窗传「刚存下」，设计稿 `.pip.pulse` 900ms / 35% 处 `-3px + scaleY 1.18`）。<br>✅ **第五轮**：**跟手拉出 + 右拖收回（弹回）** —— 新 `HistoryPanelReveal`（跨窗共享进度）+ `HistoryPanelRevealDriver`（拖动贴手指 / 松手弹簧）+ 把手侧 8px 轴锁定与过半轻震 + 面板窗"看得见但不吃触摸"模式；侧栏宿主新增 `dragReveal` 与 `setTouchable`。做法是 P0 的方案 B（**不是** §0.1 的合并同窗），见 **§0.10**。<br>⏳ **订正（见 §0.3.1）**：**peek 已在 P5 落地**（`HistorySavePeekWindow`）；页签指示片 miuix 自带、不用改；**只有"设计稿那层 20% 遮罩"是有意不做**（§0.10，它会让更低层的把手一起变暗） |
 | P5 输入面 | ✅ **完成** | ✅ **第六轮**：**输入槽**（设计稿 `.slot`）—— 新 `HistoryNoteSlotWindow.kt`：长按把手就地记一条，贴把手弹出、宽度 72→300dp **从右缘长出来**、抢焦点弹输入法、回车/✓ 存下、空内容直接收起、返回键收起；存下后**把手脉冲 + peek 预览**自动发生（`HistorySaveSignal`）。<br>✅ **peek**（设计稿 `.peek`）—— 新 `HistorySavePeekWindow.kt`：`FLAG_NOT_TOUCHABLE` 小窗、贴把手左侧、`已存下 + 正文（超 18 字截断）`、1.2s 自动消失，连续存下会重新计时。详见 **§0.11**。<br>✅ **第七轮**：**就地编辑条**（新 `HistoryPanelEditBar.kt`）—— 改正文（多行、光标停在末尾）/ 改标签 / **追加一段** / 完成 / 删除 / 保存；入口在卡片 ⋮ 里。**撤销接线**（设计稿的单槽 `undoFn`）—— 存下 / 删除 / 完成 / 星标 / 编辑保存 / 追加；删除的撤销靠新增的 `StashRepository.restore()`，`delete` 因此不再立刻删图片，改由启动时 `pruneOrphanImages()` 收敛。详见 **§0.12**。<br>✅ **第八轮**：**提醒**（设计稿 `.item .remind` + `.editbar` 的「提醒」）—— 元数据加 `reminders`；新 `StashReminderScheduler` + `StashReminderReceiver`（**绝对时间 + 每条一个 request code**，到点只发通知，不响铃不震动）；卡片时间行出现 `⏰ 明天 09:00` 这样的 chip；编辑条「提醒」按钮一键设/清（默认就是设计稿的"明天 09:00"）；**完成即取消提醒**（设计稿同款）；进面板时把未来的提醒补排一次（重启自愈）。详见 **§0.13**。 |
 | P6 语音 | ✅ **完成** | ✅ **第九轮（真做）**：manifest 加 `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE` + `StashVoiceInputService`（`foregroundServiceType="microphone"`）+ `StashVoicePermissionActivity`（权限跳板）；**会话状态机** `StashVoiceSession`（Idle/Listening/Error + partial/final/error + sessionId）；识别优先**端上识别**（`createOnDeviceSpeechRecognizer`），不支持时退回标准识别器；**三处输入面**（输入槽 / 面板输入条 / 编辑条）都挂了同一个麦克风按钮（`HistoryVoiceMicButton`：在听时实心 + 呼吸缩放，结果只给"点它的那一面"）。详见 **§0.14**。 |
-| P7 真机适配 | ⏳ 未开始 | IME 避让 · 全屏/横屏/息屏 · 深浅色 · 无障碍 · 性能 |
+| P7 真机适配 | ⏳ **未开始**（其中 IME 避让已被 §0.16.4–0.16.7 覆盖大半） | 全屏/横屏/分屏 · 深浅色 · 无障碍审计 · 性能 —— 仍待做；IME 避让：overlay 专用 IME 高度助手 + 弹窗抬升 + §0.16.7「键盘优先返回」已覆盖 |
 
 **待你确认/复核的点：**
 1. `values-ja` / `values-ar` 的「闪念」译文（`ひらめき` / `ومضات`）是我拟的，**建议母语者过一遍**。
@@ -599,6 +599,34 @@ Compose 的 `Modifier.alpha` 和 `Modifier.graphicsLayer` 都是"层"（RenderNo
     已改用 `BoxWithConstraints` 的 `maxWidth`。重连设备后要截图确认是 **78%**（右侧留 22% 能看到后面的 App）。
 19. **自注册单例的纪律**（§0.15 ① 的教训）：新增数据层仓库时，必须确认"进程启动就会构造"，
     并且**在真机上看一眼文件是否真的生成** —— `?.` 调用链会把"对象不存在"变成静默空操作。
+
+---
+
+### 0.3.1 验收状态订正（2026-10-08，接手前先看这里）
+
+**先明确一件事**：上面 1–19 是各轮留下的"待你确认/复核"提醒，**不等于"这些都没做"**。
+用户从 UI 复刻那轮（`c8fee4e1`）起就**一直在日常使用这个面板**，所以"日常交互覆盖得到"的项按**已通过**计；
+只把"日常使用盖不到的专项"留作待验。当前状态：
+
+- ✅ **已通过**（日常使用覆盖 / 本轮真机核对过）：
+  2、3、8、9、10、11、12、13、17、18
+  - 其中本条会话直接核对过的：面板宽 78% 与两页签排版（2、18，多张真机截图）、
+    时间轴竖线连续无断口（3，截图）、元数据真的落盘（17，`files/stash_meta.json` 里标签/绑定/order 都在，
+    重装重启后仍在）、标签拖拽排序（用户自验）、返回键与手势返回（§0.16.6/§0.16.7 的清单）。
+  - 12⑥「输入槽停在屏幕偏下时可能被输入法盖住」仍属 P7 的 IME 避让，单独留待。
+- ⚠️ **仍待专门验**（日常使用盖不到的专项）：
+  1（ja/ar 译文请母语者过一遍）· 1b（英文/日文下时间轴分组名会不会被面板左缘切掉）·
+  6（**深色主题**下的小 chip 与完成态）· 14（提醒到点通知、重启后补排）· 16（语音权限/端上识别/锁屏被掐）
+- 🅿️ **设计决定 / 有意不做**：4（「待办」仍是硬编码中文关键字 —— §0.16.4 已定只读规则：可改色、禁改名删除）·
+  5（来源 chip 只接剪贴板/取词/图片三条线）· 15（提醒只有"明天 09:00"一档，设计稿即如此）·
+  P4 的 20% 遮罩（§0.10）
+- 🗑️ **已废弃**：7（面板输入条已改成屏幕居中模态，见 §0.16.4；那五条"输入法会不会弹"的验收已由
+  §0.16.6/§0.16.7 的键盘路径覆盖）· 19（纪律条目，已并入 §0.16.4 的"环境与协作注意"）
+- ⏳ **P7 真机适配整期未开始**：其中 **IME 避让**已被 §0.16.4–0.16.7 覆盖大半；
+  **全屏/横屏/分屏排版 · 深色主题 · 无障碍审计 · 性能** 仍待做。
+
+> 一句话：**代码层面 P1–P6 已完成（含 P3b 的结构改造），P7 未开始**；
+> "真机验收"里日常使用盖得到的算过，只剩上面 5 项专项 + P7 那四块。
 
 ---
 
@@ -913,7 +941,7 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
 
 #### 遗留
 
-- 标签拖拽 UI 未接（见上）；`moveTag` 目前只有单测在用。
+- ~~标签拖拽 UI 未接（见上）；`moveTag` 目前只有单测在用。~~ ✅ **§0.16.6 已接上真机拖拽**（用户自验通过）。
 - 收起/展开是**阈值触发**（16dp），没有做"下滑才收、上滑立刻展"的方向联动 —— 那需要把两个
   `LazyListState` 提到 `HistoryPanelScreen`，等真有人觉得现在这套别扭再动。
 - **收起时"条数"跟着一起藏了**（真机核对时发现）：条数与搜索框同行，想让它在滚动时也看得见，
@@ -978,7 +1006,9 @@ APK 已构建并装机，`crashes` 最新仍是 `crash_20261007_170028.txt`、cr
 #### 本轮遗留
 
 - 标签拖拽没有边缘自动滚动（>6 个标签时）。
-- 面板"点面板外关窗"与输入法在轮 2 的可聚焦改动后需要真机再确认一遍（见回退预案）。
+- ~~面板"点面板外关窗"与输入法在轮 2 的可聚焦改动后需要真机再确认一遍（见回退预案）。~~
+  ✅ **已确认**（§0.16.7 真机结论：短滑手势关面板；点空白关面板一路也在用）；唯一没专门验的是
+  轮 2 验收 ② 的"点面板外**穿透到底层 App 且不误触**"——日常使用未见问题（见 §0.3.1）。
 
 ---
 
