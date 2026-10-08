@@ -3149,6 +3149,10 @@
     <string name="stash_star_cleared">已取消星标</string>
     <string name="stash_remind_tomorrow">明天</string>
     <string name="stash_remind_toggle">提醒</string>
+    <string name="stash_remind_in_minutes">%1$d 分钟后</string>
+    <string name="stash_remind_in_hours">%1$d 小时后</string>
+    <string name="stash_remind_clear">清除提醒</string>
+    <string name="stash_remind_current">当前：%1$s</string>
     <string name="stash_remind_set">已设提醒</string>
     <string name="stash_remind_cleared">已取消提醒</string>
     <string name="stash_remind_notify_title">闪念提醒</string>

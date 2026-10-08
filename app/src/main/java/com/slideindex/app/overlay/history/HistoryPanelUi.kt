@@ -1,7 +1,10 @@
 package com.slideindex.app.overlay.history
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -40,6 +43,20 @@ internal fun HistoryPanelToolbarIcon(
         )
     }
 }
+
+/**
+ * 浮窗卡片本体"吃点击"（**空实现，只消费**）。
+ *
+ * ⚠️ 没有它，点在卡片上的**空白处**（内边距 / 行间距 / 纯文字区）会穿到下面那层
+ * "点空白关闭"的遮罩上 —— 用户实测：手指明明落在弹窗里，弹窗却被关掉了。
+ * 面板自己早就这么干了（`HistoryPanelScreen` 里面板根节点那个空 `clickable {}`），
+ * 三块浮窗当时漏了这一步。
+ */
+@Composable
+internal fun Modifier.historyConsumeTaps(): Modifier = this.clickable(
+    interactionSource = remember { MutableInteractionSource() },
+    indication = null,
+) {}
 
 /** 对齐设计稿：正文 `--f-sm` 12.5px、行高 1.6；元信息 `--f-tiny` 10.5px。 */
 internal object HistoryPanelTypography {

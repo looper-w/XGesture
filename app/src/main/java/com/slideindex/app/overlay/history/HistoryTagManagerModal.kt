@@ -208,6 +208,8 @@ internal fun HistoryTagManagerModal(
                 .padding(bottom = imeBottom)
                 .shadow(18.dp, shape)
                 .clip(shape)
+                // 卡片本体吃点击：不然点在卡片空白处会穿到"点空白关闭"的遮罩上（§0.16.9）。
+                .historyConsumeTaps()
                 .background(theme.glassSolid)
                 .border(1.dp, theme.glassBorder, shape)
                 .padding(start = 26.dp, end = 26.dp, top = 26.dp, bottom = 22.dp),

@@ -115,6 +115,8 @@ internal fun HistoryPanelEditBar(
                 // 现在是**屏幕居中的大浮窗**（不再是贴底抽屉）：四角都圆。
                 RoundedCornerShape(28.dp),
             )
+            // 卡片本体吃点击：不然点在卡片空白处会穿到"点空白关闭"的遮罩上（§0.16.9）。
+            .historyConsumeTaps()
             // 设计稿的就地编辑条是 `.editbar.g` —— 同样用玻璃底。
             .background(theme.glassSolid)
             // 设计稿编辑条是 `padding: 14px 14px 12px`；这里是贴底抽屉，所以底部留出安全边。

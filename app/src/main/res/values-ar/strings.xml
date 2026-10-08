@@ -3041,6 +3041,10 @@
     <string name="stash_star_cleared">تمت إزالة النجمة</string>
     <string name="stash_remind_tomorrow">غدًا</string>
     <string name="stash_remind_toggle">تذكير</string>
+    <string name="stash_remind_in_minutes">بعد %1$d دقيقة</string>
+    <string name="stash_remind_in_hours">بعد %1$d ساعة</string>
+    <string name="stash_remind_clear">إزالة التذكير</string>
+    <string name="stash_remind_current">الحالي: %1$s</string>
     <string name="stash_remind_set">تم ضبط التذكير</string>
     <string name="stash_remind_cleared">تم إلغاء التذكير</string>
     <string name="stash_remind_notify_title">تذكير ومضة</string>

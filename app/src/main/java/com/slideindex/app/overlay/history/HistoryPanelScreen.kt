@@ -168,6 +168,13 @@ internal fun HistoryPanelScreen(
     var composerOpen by remember { mutableStateOf(false) }
     /** 输入条里快速选中的标签（存下时落到新条目）。 */
     var composerTags by remember { mutableStateOf<Set<String>>(emptySet()) }
+    /** 加号弹窗里预设的提醒时间（null = 没设）；存下时写到新条目上（§0.16.9）。 */
+    var composerReminderAt by remember { mutableStateOf<Long?>(null) }
+    /**
+     * 提醒时间选择器为谁而开：`entryId = null` = 加号弹窗里"还没存下的那条"，
+     * 非 null = 已经在编辑的某条。
+     */
+    var reminderPicker by remember { mutableStateOf<HistoryReminderPickerTarget?>(null) }
     var composerText by remember { mutableStateOf("") }
     var composerBarHeight by remember { mutableStateOf(0.dp) }
     /** 就地编辑条（设计稿 `.editbar`）：非 null 就是打开着，且是打开时的快照。 */
@@ -280,10 +287,21 @@ internal fun HistoryPanelScreen(
         }
     }
 
-    DisposableEffect(activeSearchQuery, selectedTab, composerOpen, editTarget, tagManagerOpen) {
+    DisposableEffect(
+        activeSearchQuery,
+        selectedTab,
+        composerOpen,
+        editTarget,
+        tagManagerOpen,
+        reminderPicker,
+    ) {
         onRegisterBackInterceptor {
-            // 返回键依次收：标签管理 → 编辑条 → 输入条 → 清搜索（→ 关面板）。
+            // 返回键依次收：提醒选择器 → 标签管理 → 编辑条 → 输入条 → 清搜索（→ 关面板）。
             when {
+                reminderPicker != null -> {
+                    reminderPicker = null
+                    true
+                }
                 tagManagerOpen -> {
                     tagManagerOpen = false
                     true
@@ -467,40 +485,49 @@ internal fun HistoryPanelScreen(
             }
         }
     }
-    /** 设/清提醒。默认时间就是设计稿的「明天 09:00」（`historyDefaultReminderAt`）。 */
-    val toggleReminder: (com.slideindex.app.stash.StashEntry) -> Unit = { entry ->
-        val current = stashMeta.reminderOf(entry.id)
-        val next = if (current != null) null else historyDefaultReminderAt()
+    /** 设/清提醒（§0.16.9 起：时间由 [reminderPicker] 选，不再只有"明天 09:00"一档）。 */
+    val applyReminder: (Long?) -> Unit = applyReminder@{ at ->
+        val target = reminderPicker ?: return@applyReminder
+        reminderPicker = null
+        val entryId = target.entryId
+        if (entryId == null) {
+            // 加号弹窗那条还没存下的新条目：先记在本地，存下后再落盘。
+            composerReminderAt = at
+            return@applyReminder
+        }
+        val entry = stashEntries.firstOrNull { it.id == entryId }
+        val before = stashMeta.reminderOf(entryId)
         haptics.tick()
         scope.launch {
-            metaRepo?.setReminder(entry.id, next)
-            if (next == null) {
-                StashReminderScheduler.cancel(appContext, entry.id)
-                // 撤销 = 把原来那个时间设回去（注意别用 toggleReminder 递归：局部 val 不能引用自己）。
-                showUndoMessage(R.string.stash_remind_cleared) {
-                    scope.launch {
-                        metaRepo?.setReminder(entry.id, current)
-                        if (current != null && current > System.currentTimeMillis()) {
-                            StashReminderScheduler.schedule(
-                                context = appContext,
-                                entryId = entry.id,
-                                atEpochMs = current,
-                                text = entry.text.orEmpty(),
-                            )
-                        }
-                    }
-                }
+            metaRepo?.setReminder(entryId, at)
+            if (at == null) {
+                StashReminderScheduler.cancel(appContext, entryId)
             } else {
                 StashReminderScheduler.schedule(
                     context = appContext,
-                    entryId = entry.id,
-                    atEpochMs = next,
-                    text = entry.text.orEmpty(),
+                    entryId = entryId,
+                    atEpochMs = at,
+                    text = entry?.text.orEmpty(),
                 )
-                showUndoMessage(R.string.stash_remind_set) {
-                    scope.launch {
-                        metaRepo?.setReminder(entry.id, null)
-                        StashReminderScheduler.cancel(appContext, entry.id)
+            }
+            // 编辑条的胶囊要立刻反映新时间（它读的是打开时的快照）。
+            if (editTarget?.entryId == entryId) editTarget = editTarget?.copy(reminderAtMs = at)
+            // 撤销 = 把原来那个时间设回去（注意别递归引用自己：局部 val 不能引用自身）。
+            showUndoMessage(if (at == null) R.string.stash_remind_cleared else R.string.stash_remind_set) {
+                scope.launch {
+                    metaRepo?.setReminder(entryId, before)
+                    if (before != null && before > System.currentTimeMillis()) {
+                        StashReminderScheduler.schedule(
+                            context = appContext,
+                            entryId = entryId,
+                            atEpochMs = before,
+                            text = entry?.text.orEmpty(),
+                        )
+                    } else {
+                        StashReminderScheduler.cancel(appContext, entryId)
+                    }
+                    if (editTarget?.entryId == entryId) {
+                        editTarget = editTarget?.copy(reminderAtMs = before)
                     }
                 }
             }
@@ -550,6 +577,18 @@ internal fun HistoryPanelScreen(
                         val tagsToApply = composerTags.toList()
                         scope.launch { metaRepo?.setTags(newEntryId, tagsToApply) }
                     }
+                    // §0.16.9：加号弹窗里预设的提醒，也在拿到新条目 id 之后落盘 + 排闹钟。
+                    composerReminderAt?.let { at ->
+                        scope.launch {
+                            metaRepo?.setReminder(newEntryId, at)
+                            StashReminderScheduler.schedule(
+                                context = appContext,
+                                entryId = newEntryId,
+                                atEpochMs = at,
+                                text = value,
+                            )
+                        }
+                    }
                     showUndoMessage(R.string.stash_saved) {
                         scope.launch { stashRepo?.delete(newEntryId) }
                     }
@@ -558,6 +597,7 @@ internal fun HistoryPanelScreen(
                 if (success) {
                     composerText = ""
                     composerTags = emptySet()
+                    composerReminderAt = null
                     // 设计稿 `addFromComposer()` 里 `filter = null; query = ''`：
                     // 不清筛选的话新条目可能正好落在筛选之外，用户会以为没存上。
                     //
@@ -855,7 +895,10 @@ internal fun HistoryPanelScreen(
                     open = composerOpen,
                     onOpenChange = {
                         composerOpen = it
-                        if (!it) composerTags = emptySet()
+                        if (!it) {
+                            composerTags = emptySet()
+                            composerReminderAt = null
+                        }
                     },
                     modifier = Modifier.align(Alignment.BottomEnd),
                 )
@@ -865,7 +908,7 @@ internal fun HistoryPanelScreen(
         // ---------------- 全屏居中模态层 ----------------
         // 窗口是满屏的，所以输入条 / 编辑条 / 标签管理都能真正居中在**屏幕**上（而不是面板那 78% 里）；
         // 底下那层压暗同样是满屏的，点空白即关闭当前浮窗。
-        val modalOpen = composerOpen || editTarget != null || tagManagerOpen
+        val modalOpen = composerOpen || editTarget != null || tagManagerOpen || reminderPicker != null
         if (modalOpen) {
             Box(
                 modifier = Modifier
@@ -877,6 +920,7 @@ internal fun HistoryPanelScreen(
                         indication = null,
                     ) {
                         when {
+                            reminderPicker != null -> reminderPicker = null
                             tagManagerOpen -> tagManagerOpen = false
                             editTarget != null -> editTarget = null
                             else -> composerOpen = false
@@ -891,8 +935,10 @@ internal fun HistoryPanelScreen(
                 .width(maxWidth * 0.96f)
                 .widthIn(max = 720.dp),
         ) {
+            // 提醒选择器开着时，其它几块浮窗先不渲染：它们全是"屏幕居中卡片"，叠在一起会糊成一片。
+            val showPanelLayers = reminderPicker == null
             HistoryTagManagerModal(
-                open = tagManagerOpen,
+                open = tagManagerOpen && showPanelLayers,
                 tags = availableTags,
                 imeBottom = overlayImeBottom,
                 haptics = haptics,
@@ -905,7 +951,7 @@ internal fun HistoryPanelScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             HistoryComposerModal(
-                open = composerOpen,
+                open = composerOpen && showPanelLayers,
                 text = composerText,
                 onTextChange = { composerText = it },
                 onSubmit = submitComposer,
@@ -915,11 +961,18 @@ internal fun HistoryPanelScreen(
                 onToggleTag = { name ->
                     composerTags = if (name in composerTags) composerTags - name else composerTags + name
                 },
+                reminderAtMs = composerReminderAt,
+                onReminderClick = {
+                    reminderPicker = HistoryReminderPickerTarget(
+                        entryId = null,
+                        initialAtMs = composerReminderAt,
+                    )
+                },
                 imeBottom = overlayImeBottom,
                 focusRequester = composerFocusRequester,
                 onBarHeightChanged = { composerBarHeight = it },
             )                // 就地编辑条（设计稿 `.editbar`）：改正文 / 改标签 / 追加 / 完成 / 删除。
-                editTarget?.let { target ->
+                if (showPanelLayers) editTarget?.let { target ->
                     HistoryPanelEditBar(
                         target = target,
                         availableTags = availableTags,
@@ -965,17 +1018,11 @@ internal fun HistoryPanelScreen(
                                 ?.let { setDone(it, next) }
                         },
                         onToggleReminder = {
-                            // 编辑条先按"取反"乐观更新（meta 的写入是异步的，等它回来再渲染会顿一下）；
-                            // 真正的设/清由 toggleReminder 按 meta 的当前值决定，两边判断一致。
-                            editTarget = target.copy(
-                                reminderAtMs = if (target.reminderAtMs != null) {
-                                    null
-                                } else {
-                                    historyDefaultReminderAt()
-                                },
+                            // §0.16.9：不再"一点就明天 09:00 / 再点清掉"，改成打开时间选择器。
+                            reminderPicker = HistoryReminderPickerTarget(
+                                entryId = target.entryId,
+                                initialAtMs = target.reminderAtMs,
                             )
-                            stashEntries.firstOrNull { it.id == target.entryId }
-                                ?.let { toggleReminder(it) }
                         },
                         onDelete = {
                             editTarget = null
@@ -987,9 +1034,29 @@ internal fun HistoryPanelScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
+            // 提醒时间选择器（§0.16.9）：编辑条的「提醒」与加号弹窗的 ⏰ 胶囊都打开它。
+            HistoryReminderPickerModal(
+                open = reminderPicker != null,
+                currentAtMs = reminderPicker?.initialAtMs,
+                imeBottom = overlayImeBottom,
+                onPick = applyReminder,
+                onDismiss = { reminderPicker = null },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
+
+/**
+ * 提醒时间选择器"为谁而开"（§0.16.9）。
+ *
+ * `entryId == null` = 加号弹窗里那条**还没存下**的新条目：选到的时间先记在本地
+ * （`composerReminderAt`），存下拿到 id 之后再落盘。
+ */
+private data class HistoryReminderPickerTarget(
+    val entryId: String?,
+    val initialAtMs: Long?,
+)
 
 @Composable
 private fun HistoryStashTabBody(

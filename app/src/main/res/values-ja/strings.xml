@@ -3061,6 +3061,10 @@
     <string name="stash_star_cleared">スターを外しました</string>
     <string name="stash_remind_tomorrow">明日</string>
     <string name="stash_remind_toggle">リマインド</string>
+    <string name="stash_remind_in_minutes">%1$d 分後</string>
+    <string name="stash_remind_in_hours">%1$d 時間後</string>
+    <string name="stash_remind_clear">リマインドを解除</string>
+    <string name="stash_remind_current">現在：%1$s</string>
     <string name="stash_remind_set">リマインドを設定しました</string>
     <string name="stash_remind_cleared">リマインドを解除しました</string>
     <string name="stash_remind_notify_title">ひらめきのリマインド</string>

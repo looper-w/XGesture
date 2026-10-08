@@ -103,6 +103,10 @@ internal fun HistoryComposerModal(
     availableTags: List<com.slideindex.app.stash.StashTag> = emptyList(),
     selectedTags: Set<String> = emptySet(),
     onToggleTag: (String) -> Unit = {},
+    /** 已预设的提醒（null = 没设）；显示在标签行末尾那枚 ⏰ 胶囊上。 */
+    reminderAtMs: Long? = null,
+    /** 点那枚 ⏰ 胶囊：打开提醒时间选择器（§0.16.9）。 */
+    onReminderClick: () -> Unit = {},
     imeBottom: Dp,
     focusRequester: FocusRequester,
     onBarHeightChanged: (Dp) -> Unit = {},
@@ -131,6 +135,8 @@ internal fun HistoryComposerModal(
                 .padding(bottom = imeBottom)
                 .shadow(18.dp, shape)
                 .clip(shape)
+                // 卡片本体吃点击：不然点在卡片空白处会穿到"点空白关闭"的遮罩上（§0.16.9）。
+                .historyConsumeTaps()
                 .background(theme.glassSolid)
                 .border(1.dp, theme.glassBorder, shape)
                 .padding(horizontal = 26.dp, vertical = 24.dp)
@@ -183,21 +189,30 @@ internal fun HistoryComposerModal(
                         .focusRequester(focusRequester),
                 )
             }
-            if (availableTags.isNotEmpty()) {
-                androidx.compose.foundation.layout.FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    availableTags.forEach { tag ->
-                        HistoryChip(
-                            label = tag.name,
-                            dotColor = Color(tag.colorArgb),
-                            selected = tag.name in selectedTags,
-                            onClick = { onToggleTag(tag.name) },
-                        )
-                    }
+            // ⏰ 提醒胶囊**永远**在（标签可以为空），按用户建议塞在标签行的行尾、不新起一行（§0.16.9）。
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                availableTags.forEach { tag ->
+                    HistoryChip(
+                        label = tag.name,
+                        dotColor = Color(tag.colorArgb),
+                        selected = tag.name in selectedTags,
+                        onClick = { onToggleTag(tag.name) },
+                    )
                 }
+                HistoryChip(
+                    label = if (reminderAtMs == null) {
+                        "⏰ " + stringResource(R.string.stash_remind_toggle)
+                    } else {
+                        "⏰ " + formatReminderTime(reminderAtMs)
+                    },
+                    dotColor = null,
+                    selected = reminderAtMs != null,
+                    onClick = onReminderClick,
+                )
             }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
