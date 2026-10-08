@@ -62,6 +62,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -208,9 +209,14 @@ internal fun HistoryComposerModal(
                 onAddImage = onAddImage,
                 onRemoveNewImage = onRemoveImage,
                 onVoiceError = onVoiceError,
-                // 弹窗：回车就是"存下"（提示语「想点什么…回车存下」说的就是它）。
-                onSubmitKey = onSubmit,
-                hint = stringResource(R.string.stash_composer_hint),
+                // §0.16.19（用户明确要求）：**弹窗也改成回车换行**，提交只走「存下」按钮。
+                //
+                // ⚠️ `null` ⇒ 那一层是 `ImeAction.Default` 且**完全不挂 onDone** —— 回车只会插入换行。
+                // 与编辑条（同样传 null）行为完全一致，两处都不再有"回车 = 确认"。
+                // 提示语必须跟着换（否则文案与行为矛盾）：用新 key `stash_composer_hint_multiline`
+                // （旧的 `stash_composer_hint` 仍留着，别的地方可能还在用）。
+                onSubmitKey = null,
+                hint = stringResource(R.string.stash_composer_hint_multiline),
                 focusRequester = focusRequester,
                 // 弹窗要靠它把焦点从别处拉回正文（比如插完图接着打字）。
                 focusDelegation = true,
@@ -312,6 +318,13 @@ internal fun DraftBlockEditorSurface(
      */
     existingImageFileNames: Set<String> = emptySet(),
 ) {
+    /**
+     * 图片块解码的采样目标（§0.16.19）。
+     *
+     * ⚠️ 在这里算**一次**、传给每个图片块：目标只取决于"正文能有多宽"，
+     * 与具体是哪张图无关；每个块各算一次会在重组时重复读 `LocalWindowInfo`。
+     */
+    val imageTargetPx = draftBlockImageTargetPx()
     /** 本层的协程作用域：给"滚进视口"用（滚动的 `animateScrollTo` 是挂起函数）。 */
     val coroutineScope = rememberCoroutineScope()
     /**
@@ -590,6 +603,8 @@ internal fun DraftBlockEditorSurface(
                             // §0.16.18：图片块也要上报 y（插图后目标块常常就是刚补的空文字块，
                             // 但图片本身很高，用户想看到的往往是图本身）。
                             onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
+                            // §0.16.19：按显示宽度解码（原来固定 480px，整宽渲染时糊）。
+                            imageTargetPx = imageTargetPx,
                         )
                     }
                 }
@@ -772,6 +787,9 @@ private fun HistoryComposerTextBlock(
  * §0.16.18：**解不出来时不再留一块空白** —— 空白块让用户以为"图插进去了"，实际上存下时会被跳过。
  * 现在中间给一个「加载失败」占位（复用现成的 `stash_save_failed` 文案，本仓库不许新增字符串 key），
  * ✕ 仍然在，用户能看见"这里是坏的"并自己删掉重选。
+ *
+ * §0.16.19：解码采样目标由调用方按**显示宽度**给（[imageTargetPx]），不再是写死的 480px ——
+ * 这块图占正文整宽（≈面板宽），480px 放大到 1080px 就是用户说的"太糊"。
  */
 @Composable
 private fun DraftBlockEditorImage(
@@ -779,10 +797,13 @@ private fun DraftBlockEditorImage(
     onRemove: () -> Unit,
     /** 上报本块在**视口坐标系**里的 y（§0.16.18 的"插入后滚到目标"要用）。 */
     onBlockPlaced: (Int) -> Unit,
+    /** 解码采样目标（长边像素，§0.16.19）。 */
+    imageTargetPx: Int,
 ) {
     val theme = historyTheme()
     val shape = RoundedCornerShape(HistoryRadii.sm)
-    val bitmap = remember(path) { decodeDraftImage(path) }
+    // `remember(path, imageTargetPx)`：目标变了要重新解码（不同宽度的宿主）。
+    val bitmap = remember(path, imageTargetPx) { decodeDraftImage(path, imageTargetPx) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -864,6 +885,71 @@ private val HistoryComposerBodyImageHeight = 120.dp
 /** 加号弹窗里图片缩略图的边长。 */
 private val HistoryComposerThumbnailSize = 64.dp
 
+/** 缩略图解码的采样目标（§0.16.19）：64dp 在 2.5~3x 屏上约 160~192px，留余量取 320。 */
+private const val HistoryComposerThumbnailTargetPx = 320
+
+/**
+ * 图片块解码的**兜底**采样目标（没有 `LocalWindowInfo` 时用，§0.16.19）。
+ *
+ * 1080 = 常见手机屏幕的宽度像素；正文图块是**整宽**渲染的，采样到屏幕宽就 1:1 不糊了。
+ */
+private const val HistoryComposerImageTargetDefaultPx = 1080
+
+/**
+ * 图片块解码采样目标的**上限**（§0.16.19，防内存）。
+ *
+ * 最坏情况估算（ARGB_8888 = 4 字节/像素）：1080 宽、4:3 → 1080×810 ≈ **3.5MB**；
+ * 一条闪念塞 10 张图 → ~35MB（弹窗草稿里每张图一个 `remember(path)`），
+ * 这在"一条闪念"的量级上仍然可接受（`StashRepository` 的缩略图缓存本身是 1/8 堆）。
+ * 所以上限就卡在 1080：**多图条目也不会被一刀切地放大**。
+ */
+private const val HistoryComposerImageTargetMaxPx = 1080
+
+/** 与 `historyPanelWidthDpOf`（`HistoryPanelUi.kt`）里那个面板宽度上限保持同一个值。 */
+private val HistoryComposerPanelMaxWidth = 420.dp
+
+/**
+ * 正文图片块的解码采样目标（§0.16.19）。
+ *
+ * 依据（用户给的算式：**显示尺寸 × density × 1.5~2**）：
+ * - 显示尺寸 = 正文图块的实际宽度。它占**面板整宽**（`fillMaxWidth`），
+ *   面板宽有 420dp 上限（`panelWidthOf`），所以取 `min(屏幕宽, 420dp)` 就是上限；
+ * - density 用 `LocalDensity.fontScale` 之外的真实缩放（`density`）；
+ * - ×2 是因为 `inSampleSize` 只能取 **2 的幂**：目标要略微超前，否则会掉到一半（÷2）那一档，
+ *   而"掉一半"正是糊的来源。
+ *
+ * 为什么不直接用 `historyPreviewWidthPx()`（卡片缩略图用的那个）：它内部含
+ * "容器旋转就取 min(w,h)" 那套卡片专用兜底，而这里要的是"弹窗正文的整宽上限"，
+ * 两者算式不同（差 24dp 与 960 上限）；各自写清楚比互相借用更好维护。
+ *
+ * ⚠️ 只在**正文块编辑器**里用：面板卡片的缩略图**早就**是按显示宽度解码的
+ * （`historyPreviewWidthPx()` + `loadThumbnailByFileNameForCard`），见本次交付说明。
+ */
+@Composable
+private fun draftBlockImageTargetPx(): Int {
+    val density = LocalDensity.current
+    val container = LocalWindowInfo.current.containerSize
+    val screenWidthPx = if (container.width > 0) container.width else container.height
+    return with(density) {
+        val panelMaxPx = HistoryComposerPanelMaxWidth.roundToPx()
+        val displayWidthPx = if (screenWidthPx > 0) minOf(screenWidthPx, panelMaxPx) else panelMaxPx
+        (displayWidthPx * HistoryComposerImageTargetOversample)
+            .toInt()
+            .coerceAtMost(HistoryComposerImageTargetMaxPx)
+            .coerceAtLeast(HistoryComposerImageTargetDefaultPx / 2)
+    }
+}
+
+/**
+ * 采样目标的"超前系数"（§0.16.19）。
+ *
+ * 2.0 = 用户给的 1.5~2 里的上界：`inSampleSize` 只有 2 的幂，目标按 1.5 算时
+ * 4000px 的图会解到 2000px（够），但 1600px 的图会落到 1600（也够）—— 真正的风险是
+ * **刚好卡在档位边界**（比如源图 2200px、目标 1100px → 采样 2 → 1100px，勉强；
+ * 源图 2100px、目标 1050px → 采样 2 → 1050px，也勉强）。取 2.0 让"下一档"总是有余量。
+ */
+private const val HistoryComposerImageTargetOversample = 2.0f
+
 /**
  * 加号弹窗里的一张已选图片（§0.16.12）。
  *
@@ -917,21 +1003,30 @@ internal fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
     }
 }
 
-/** 缩略图解码：只求"看得清是哪张"，长边采样到 160px 以内。 */
+/**
+ * 缩略图解码（[HistoryComposerThumbnail] 用，64dp 小图）。
+ *
+ * §0.16.19：采样目标 160 → **[HistoryComposerThumbnailTargetPx]**（按"64dp 显示 × 2.5 density"
+ * 留余量）。160px 是"缩略图当图标"的量级，在 2.5~3x 屏上确实会发虚。
+ *
+ * ⚠️ 这是**唯一**还存在"写死小目标"的解码点，而它现在**没有任何生产调用方**
+ * （两个编辑入口的正文都走块编辑器了，见 [HistoryComposerThumbnail] 的 KDoc）——
+ * 所以这一处调高只是"以后复用别再发虚"，不是本次糊的根因。
+ */
 private fun decodeComposerThumbnail(path: String): android.graphics.Bitmap? =
-    decodeComposerImage(path, targetPx = 160)
+    decodeComposerImage(path, targetPx = HistoryComposerThumbnailTargetPx)
 
 /**
- * 块编辑器里图片块的解码：整宽 120dp 的画布上 160px 会糊，采样目标提到 480px。
+ * 块编辑器里图片块的解码（§0.16.19：采样目标由调用方按显示宽度给）。
  *
  * 仍然走 `inSampleSize`（2 的幂）—— 这是"看得清"和"不把内存喂爆"之间最省的折中；
- * 结果由调用方 `remember(path)` 缓存，不会每帧重解码。
+ * 结果由调用方 `remember(path, imageTargetPx)` 缓存，不会每帧重解码。
  *
  * 两个编辑入口（弹窗 / 编辑条）共用它：一个吃 cache 临时文件、一个吃暂存夹文件，
  * 对 `BitmapFactory` 来说都是"一个路径"，所以没必要分两份。
  */
-private fun decodeDraftImage(path: String): android.graphics.Bitmap? =
-    decodeComposerImage(path, targetPx = 480)
+private fun decodeDraftImage(path: String, targetPx: Int): android.graphics.Bitmap? =
+    decodeComposerImage(path, targetPx = targetPx)
 
 /** 复用同一套采样逻辑：先只读尺寸、再按 2 的幂降采样解出来。失败一律给 null（调用方自己兜底）。 */
 private fun decodeComposerImage(path: String, targetPx: Int): android.graphics.Bitmap? = runCatching {

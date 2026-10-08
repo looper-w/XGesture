@@ -3045,6 +3045,7 @@
     <string name="stash_empty_tag_hint">別のタグを選ぶか、すべて表示してください</string>
     <string name="stash_empty_tag_action">すべて表示</string>
     <string name="stash_composer_hint">何か書き留める… Enter で保存</string>
+    <string name="stash_composer_hint_multiline">何か書き留める… 改行でメモを追加</string>
     <string name="stash_composer_send">保存</string>
     <string name="stash_composer_note">保存すると「今日」の一番上にすぐ出ます</string>
     <string name="stash_composer_empty">まず何か書いてください</string>

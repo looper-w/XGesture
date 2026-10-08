@@ -3025,6 +3025,7 @@
     <string name="stash_empty_tag_hint">جرّب وسمًا آخر، أو اعرض الكل</string>
     <string name="stash_empty_tag_action">عرض الكل</string>
     <string name="stash_composer_hint">اكتب شيئًا… Enter للحفظ</string>
+    <string name="stash_composer_hint_multiline">اكتب شيئًا… سطر جديد لإضافة ملاحظة</string>
     <string name="stash_composer_send">حفظ</string>
     <string name="stash_composer_note">سيظهر ما تحفظه مباشرة في أعلى «اليوم»</string>
     <string name="stash_composer_empty">اكتب شيئًا أولًا</string>

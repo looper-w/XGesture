@@ -3133,6 +3133,7 @@
     <string name="stash_empty_tag_hint">换个标签，或者看全部</string>
     <string name="stash_empty_tag_action">看全部</string>
     <string name="stash_composer_hint">想点什么… 回车存下</string>
+    <string name="stash_composer_hint_multiline">想点什么… 换行可加备注</string>
     <string name="stash_composer_send">存下</string>
     <string name="stash_composer_note">存下后直接出现在今天的最上面，不用去别处找</string>
     <string name="stash_composer_empty">先写点什么</string>

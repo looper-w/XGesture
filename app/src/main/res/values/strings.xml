@@ -3111,6 +3111,7 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_empty_tag_hint">Try another tag, or view all</string>
     <string name="stash_empty_tag_action">View all</string>
     <string name="stash_composer_hint">Jot something down… Enter to save</string>
+    <string name="stash_composer_hint_multiline">Jot something down… Line break adds a note</string>
     <string name="stash_composer_send">Save</string>
     <string name="stash_composer_note">Saved notes appear right here at the top of Today</string>
     <string name="stash_composer_empty">Write something first</string>
