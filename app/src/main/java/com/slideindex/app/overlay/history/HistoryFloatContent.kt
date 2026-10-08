@@ -27,13 +27,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -45,6 +48,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -249,6 +253,22 @@ private fun HistoryFloatHandle(
     } else {
         scheme.onSurface.copy(alpha = if (active) 0.24f else 0.12f)
     }
+    // ── 相位桥 + 诊断计数器 ──
+    // `glowPhase` 是**动画状态**，若只在绘制 lambda 里读，它的逐帧推进要依赖
+    // "绘制阶段也观察快照读取"这条机制；实测出现过"标记在画、但条内永远纯蓝"的现象，
+    // 与"`t` 没有逐帧推进（恒为初值 0 → 主带中心落在条右侧外）"完全吻合。
+    // `rememberGlowObservedPhase` 把相位**提升为组合期可观察的状态**，能同时满足两件事：
+    // 1) 让"动画是否在推进"变成可探测的（探针能读到真实变化的 t / draw 次数）；
+    // 2) 万一绘制期的观察真的没生效，这里也能自愈（镜像状态变化 → 重组 → 重绘）。
+    // 对性能的影响：只在 `glowActive` 为 true 期间、每个动画帧触发一次**这一个** composable
+    // 的重组（不是整个把手树），符合"只在 hasPending 时跑"的既有 gate。
+    val glowObserved = glowPhase?.let { rememberGlowObservedPhase(it) }
+    var glowDrawCounter by remember { mutableLongStateOf(0L) }
+    var glowLastProbeAtMs by remember { mutableLongStateOf(0L) }
+    // ⚠️ `LocalContext.current` 是 **@Composable** 调用：只能在**这里**（composable 体）取，
+    // 由闭包带进 `drawWithCache` 的 cache block 与绘制 lambda。上一版把它写进了 cache block，
+    // 编译器直接报 "@Composable invocations can only happen from the context of a @Composable function"。
+    val probeContext = LocalContext.current.applicationContext
 
     Box(
         modifier = Modifier
@@ -397,6 +417,17 @@ private fun HistoryFloatHandle(
                 //    `glowActive` 若在这个 `drawWithCache` 的 block 里读，就不会形成对它的依赖，
                 //    状态翻转时这一层不会失效 → 条体永远不亮（哪怕光已经该画了）。
                 val litWhiteWeight = if (glowActive) HANDLE_GLOW_BAR_WHITEN else 0f
+                // ── 诊断用：相位探针要的"条在窗内的位置"，必须在**本 cache block 内**算出来 ──
+                // ⚠️ 两条作用域纪律（上一版就是在这两行上编不过的）：
+                // 1) `LocalContext.current` 是 **@Composable** 调用，不能出现在 `drawWithCache {}`
+                //    这个普通 lambda 里 —— `probeContext` 已在 composable 体里取好并闭包进来了；
+                // 2) `barWidthPx` 原本是在**绘制 lambda 里**才定义的局部量，本 block 里没有这个名字，
+                //    所以这里从 `barWidth`（`Dp`）现算一个 px 值。单位与绘制 lambda 一致（都是 px），
+                //    所以探针里的数值可以直接和 `barRect` 对比。
+                val probeBarWidthPx = barWidth.toPx()
+                val probeBarLeftPx = size.width - HANDLE_EDGE_GAP_DP.dp.toPx() - probeBarWidthPx
+                val probeBarRightPx = size.width - HANDLE_EDGE_GAP_DP.dp.toPx()
+                val probeBarHeightPx = barHeightPx
                 // 光的颜色全从主题色 accent 推出来（不许新增颜色资源）。
                 val coreColor = glowCore(scheme.primary)
                 // 拖尾的渐变色也只算一次：`i` 决定色相漂移量，逐帧要变的只有位置/透明度。
@@ -423,28 +454,65 @@ private fun HistoryFloatHandle(
                     // 这时不但不建动画时钟，连一次 draw call 都不多发。
                     // ⚠️ `glowPhase.value` 在这里读 = 在**绘制阶段**读动画状态：
                     // 每帧只让这一层 draw 失效（invalidate），不触发重组，也不重绘别处。
-                    val t = glowPhase?.value ?: run {
+                    val t = glowObserved?.value ?: run {
                         // 没光的时候仍要把边框补上（上面把边框挪到最后了）。
                         drawPath(barPath, barBorderColor, style = Stroke(width = borderWidthPx))
                         return@onDrawWithContent
                     }
-                    val beat = glowBeat(t)
+                    val beatRaw = glowBeat(t)
+                    // ⚠️ 防御性兜底（**不是修法**，修法在 [glowBeat] 的单位换算）：
+                    // 万一呼吸函数将来又被改出"恒 0 / 负数"，这里把它夹回 [GLOW_BEAT_MIN, 1]，
+                    // 至少保证"光还在，只是不呼吸"，而不是整条光以 alpha 0 画出去（
+                    // 那种情况在真机上和"完全没实现"长得一模一样，极难排查）。
+                    val beat = beatRaw.coerceIn(GLOW_BEAT_MIN, 1f)
                     // 主带位置（px）：中心从"条左缘往左 1.5 条宽"走到"条右缘往右 1.5 条宽"，
                     // 起止都在条外 → 一个周期里能看清"进来 → 经过 → 离开"，才有扫过的速度感。
                     val travel = barWidthPx * (1f + 2f * HANDLE_GLOW_TRAVEL_SCALE)
                     val bandX = barRect.right + barWidthPx * HANDLE_GLOW_TRAVEL_SCALE -
                         travel * t
                     // ③ 条内"过曝主带 + 递减拖尾"（clip 在条形状里，不会糊到条外）。
-                    //    扫动靠每帧重算几何（`bandX`），不是 `translationX` ——
-                    //    因为拖尾的间距/透明度/色相都要随位置变，必须逐帧重画渐变。
-                    //    ⚠️ 必须**先画这一层**：它是"过曝的芯"，被下面那层柔光压过之后就发灰了。
+                    //    扫动靠每帧重算几何（`bandX`），不是 `translationX`。
+                    //
+                    //    §体验修正（真机验证之后）：**主带不再用"两端透明"的渐变**。
+                    //    原来那条 `linearGradient(Transparent, 色, Transparent)` 跨 2.6 条宽，
+                    //    于是在 9dp 的条上，条内每一像素拿到的都是"锥形的中间值 + 蓝色条体混色"
+                    //    → 真机上就是"看不见"。现在改成：**不透明近白实心块 + 两端各 2.5dp 短渐隐**，
+                    //    也就是"一节发白的光块扫过蓝条"。
+                    //
+                    // ⚠️ 排查用：把这一帧的相位/几何/条内像素采样写进诊断文件（约 300ms 一行）。
+                    //    这是判断"`t` 到底有没有在推进"的唯一手段（真机 logcat 被吞，只能写文件）：
+                    //    `t` 若恒为 0，主带中心落在条右侧外（barRect.right + 1.5 条宽），
+                    //    条内自然"永远是纯蓝" —— 与实测完全一致，所以必须先排除它。
+                    glowDrawCounter += 1L
+                    if (GLOW_DEBUG && GLOW_DEBUG_FILE_MODE) {
+                        maybeWriteGlowPhaseProbe(
+                            context = probeContext,
+                            t = t,
+                            beatRaw = beatRaw,
+                            beatFixed = beat,
+                            bandX = bandX,
+                            barLeftPx = probeBarLeftPx,
+                            barRightPx = probeBarRightPx,
+                            barWidthPx = probeBarWidthPx,
+                            barHeightPx = probeBarHeightPx,
+                            coreHalfPx = barWidthPx * HANDLE_GLOW_CORE_HALF_SCALE,
+                            bandAlpha = (HANDLE_GLOW_CORE_ALPHA * beat).coerceIn(0f, 1f),
+                            bandAlphaRaw = (HANDLE_GLOW_CORE_ALPHA * beatRaw).coerceIn(0f, 1f),
+                            barPathBounds = barPath.getBounds(),
+                            drawCounter = glowDrawCounter,
+                            lastWriteAtMs = glowLastProbeAtMs,
+                            onWrote = { glowLastProbeAtMs = it },
+                        )
+                    }
                     clipPath(barPath) {
                         for (i in 0 until HANDLE_GLOW_BAND_COUNT) {
                             val f = i.toFloat()
                             // 拖尾在主带的**右边** = 光整体从右往左扫（"从屏幕外扫进来"）。
                             val center = bandX + f * barWidthPx * HANDLE_GLOW_SPACING_SCALE
                             // 间距与 alpha 都递减（`pow`），产生"扫过去"的速度感；
-                            // 亮度统一乘 `beat` 做呼吸；`coerceIn` 只是防御（alpha 必须落 0…1）。
+                            // 亮度统一乘 `beat` 做呼吸；`coerceIn` 只是防御。
+                            // 拖尾 alpha 现在也拉满（0.85^i → 0.85 / 0.72，再乘 beat ≥ 0.75 → 最暗 ≥0.54），
+                            // 满足"余晖也要看得见（≥0.5）"：主带 1.0 仍是最亮的一层，层次不会被抹平。
                             val bandAlpha = (HANDLE_GLOW_CORE_ALPHA * HANDLE_GLOW_TRAIL_DECAY.pow(f) * beat)
                                 .coerceIn(0f, 1f)
                             // 主带更宽、拖尾更窄：宽的亮核 + 细的余晖，层次才拉得开。
@@ -453,17 +521,57 @@ private fun HistoryFloatHandle(
                             } else {
                                 HANDLE_GLOW_TRAIL_HALF_SCALE
                             }
-                            // 两端透明（start/end 都在条外）→ 不会出现硬边。
-                            drawRect(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(Color.Transparent, bandColors[i], Color.Transparent),
-                                    start = Offset(center - half, barRect.center.y),
-                                    end = Offset(center + half, barRect.center.y),
-                                ),
-                                topLeft = Offset(center - half, barRect.top),
-                                size = Size(half * 2f, barRect.height),
-                                alpha = bandAlpha,
-                            )
+                            val bandTop = barRect.top
+                            val bandHeight = barRect.height
+                            if (i == 0) {
+                                // 主带：实心近白圆角块（**alpha 1.0 × beat**，没有锥形衰减），
+                                // 只有两个端头各 [HANDLE_GLOW_CORE_FADE_DP] 做短渐隐。
+                                drawRoundRect(
+                                    color = coreColor,
+                                    topLeft = Offset(center - half, bandTop),
+                                    size = Size(half * 2f, bandHeight),
+                                    cornerRadius = CornerRadius(cornerPx, cornerPx),
+                                    alpha = bandAlpha,
+                                )
+                                val fadePx = HANDLE_GLOW_CORE_FADE_DP.dp.toPx()
+                                // 左端渐隐：从"中心色"渐到透明（start 用核心色 → end 透明）。
+                                drawRect(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(coreColor, Color.Transparent),
+                                        start = Offset(center - half, barRect.center.y),
+                                        end = Offset(center - half + fadePx, barRect.center.y),
+                                    ),
+                                    topLeft = Offset(center - half, bandTop),
+                                    size = Size(fadePx, bandHeight),
+                                    alpha = bandAlpha,
+                                )
+                                // 右端渐隐：透明 → 中心色。
+                                drawRect(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(Color.Transparent, coreColor),
+                                        start = Offset(center + half - fadePx, barRect.center.y),
+                                        end = Offset(center + half, barRect.center.y),
+                                    ),
+                                    topLeft = Offset(center + half - fadePx, bandTop),
+                                    size = Size(fadePx, bandHeight),
+                                    alpha = bandAlpha,
+                                )
+                            } else {
+                                // 拖尾：保留色相渐变（青 → 品红），但**只在两端各留一点柔边**
+                                //（渐变跨 2 倍渐隐宽度、中间是实色），这样它是"一条有色的余晖"，
+                                // 而不是"两端透明的一片雾"。
+                                val fadePx = barWidthPx * HANDLE_GLOW_TRAIL_FADE_SCALE
+                                drawRect(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(Color.Transparent, bandColors[i], bandColors[i], Color.Transparent),
+                                        start = Offset(center - half, barRect.center.y),
+                                        end = Offset(center + half, barRect.center.y),
+                                    ),
+                                    topLeft = Offset(center - half, bandTop),
+                                    size = Size(half * 2f, bandHeight),
+                                    alpha = bandAlpha,
+                                )
+                            }
                         }
                     }
                     // ④ 外层辉光（bloom）：**画在条本体之上**，而且不只是沿条宽、还往**上下左右**外扩
@@ -501,6 +609,17 @@ private fun HistoryFloatHandle(
                     }
                     // ⑤ 最后补 1dp 边框：让"发光"的条仍然有清楚轮廓，也不会被光糊掉边界。
                     drawPath(barPath, barBorderColor, style = Stroke(width = borderWidthPx))
+                    // ⑥ 【临时诊断涂色】走的是与流光**完全相同**的绘制路径（同一个 draw scope、
+                    //    同一次 onDrawWithContent）。目的只有一个：判定"用户看到的那条蓝条，
+                    //    到底是不是这个组件画的"。
+                    //    - 能看到不透明品红条 + 左边一个品红光斑 → 就是这个组件，问题在渐变太弱/被裁；
+                    //    - 什么都看不到 → 那条蓝条**不是这里画的**，别再在这里调参数，得换目标。
+                    //    ⚠️ 只有在有光时才走到这里（`glowPhase` 为 null 时上面已经 return），
+                    //    所以这就是需求里的"glowActive 为 true 才涂、为 false 完全不画"。
+                    //    定位完把 `if (GLOW_DEBUG)` 去掉即可（`GLOW_DEBUG=false` 时零开销）。
+                    if (GLOW_DEBUG) {
+                        drawDebugMarker(barRect, cornerPx)
+                    }
                 }
             },
         contentAlignment = Alignment.CenterEnd,
@@ -540,6 +659,31 @@ private fun HistoryHandleGlowSweep(): State<Float> {
         ),
         label = "handleGlowPhase",
     )
+}
+
+/**
+ * 把 [source] 的相位**桥接成组合期可观察的状态**。
+ *
+ * 为什么需要这座桥（本文件里最重要的一条排查结论）：
+ * 原先整条流光只在 `drawWithCache` 的**绘制 lambda** 里读 `animateFloat` 的 `State`，
+ * 依赖"Compose 在绘制阶段也观察快照读取"这条机制。真机表现是：
+ * 诊断描边（同一 lambda、同一 `if` 之后）**每次都画出来了**，但条内**永远是纯蓝**、
+ * 三帧完全一致 —— 这与"`t` 停在初值 0、主带中心因此永远落在条右侧外"完全吻合。
+ * 这座桥用 `withFrameNanos` 逐帧把 source 的值搬进一个 `mutableFloatStateOf`：
+ * - 这个 float state 是**在组合期/效果期被读**的，镜像一变就重组 → 重绘必定发生；
+ * - 于是"动画在不在推进"也变成可探测的（探针读到的 `t` 就是真实值）。
+ * 代价：`glowActive` 期间每动画帧触发**这一个** composable 的一次重组（不是整棵把手树），
+ * 且仅在"有未处理提醒"时发生 —— 与既有的性能 gate 一致。
+ */
+@Composable
+private fun rememberGlowObservedPhase(source: State<Float>): State<Float> {
+    val mirror = remember { mutableFloatStateOf(source.value) }
+    LaunchedEffect(source) {
+        while (true) {
+            withFrameNanos { mirror.floatValue = source.value }
+        }
+    }
+    return mirror
 }
 
 /** 向左拖动超过这个距离就认为用户想拉出收纳面板（未进入跟手时的兜底判定）。 */
@@ -584,8 +728,8 @@ private const val HANDLE_EDGE_GAP_DP = 3
 //
 // 一眼参数表（真机上调观感只改这里）：
 // - 速度：HANDLE_GLOW_PERIOD_MS = 2600ms 扫一遍（原 2200ms 偏"温吞"，调快一点更有"AI 在跑"的感觉）
-// - 呼吸：同一个 phase 复用，按 1200ms 一个"拍"（700ms 亮 / 500ms 暗，见 [GLOW_BEAT_PERIOD]）
-//   —— 故意和扫描周期**不同频**，避免"光到哪亮到哪"的僵硬感
+// - 呼吸：同一个 phase 复用，约 1200ms 一个"拍"（700ms 亮 / 500ms 暗）——
+//   周期以"圈"为单位记在 [GLOW_BEAT_PERIOD_SWEEPS]，故意和扫描周期**不同频**
 // - 主带：亮度拉满，HANDLE_GLOW_CORE_HALF_SCALE 让它比条还宽 → "过曝"的通光感
 // - 拖尾：3 条，间距 0.62×条宽、alpha 每次 ×0.55 衰减、色相每次 +0.10（青→蓝→紫）
 // - 辉光：HANDLE_GLOW_BLOOM_*，把光"漏"到条外的关键（也是"存在感"的主要来源）
@@ -605,15 +749,27 @@ private const val HANDLE_GLOW_TRAVEL_SCALE = 1.5f
 /**
  * 主带半宽 = 条宽的这个比例。
  *
- * §体验修正：原来 0.55 —— 主带比条宽一点点，而渐变是"两端透明"的，
- * 于是条内只有中间一小段真的亮（条宽 9dp、主带可见部分 ≈ 4.5dp），
- * 这就是"看不见"的直接原因之一。
- * 现在 1.3（主带 2.6×条宽，只有最外缘才透明）→ **整条都被灌亮**，观感即"过曝通光"。
+ * §体验修正（真机品红验证之后定稿）：主带现在是一个**实心不透明圆角块**，
+ * 半宽 = 1.8 × 条宽 → 全宽 3.6 × 9 ≈ 32dp，只有两端各 [HANDLE_GLOW_CORE_FADE_DP]
+ * 做短渐隐。条宽只有 9dp，所以"实心部分"横扫整条时一定有 ≥9dp 的完全实心覆盖
+ * —— 这就是"必定看得见"的来源（不再依赖锥形渐变的中间值）。
  */
-private const val HANDLE_GLOW_CORE_HALF_SCALE = 1.3f
+private const val HANDLE_GLOW_CORE_HALF_SCALE = 1.8f
+
+/**
+ * 主带两端各留多长的短渐隐（dp）。
+ *
+ * 只用来消掉硬边（"一节光块"的边缘要是刀切的一样会很假），**不能长**：
+ * 它越长，"实心不透明"的部分就越短，就又回到"两端透明看不见"的老问题上了。
+ * 2.5dp 在 9dp 的条上刚好"边缘柔一点点"。
+ */
+private const val HANDLE_GLOW_CORE_FADE_DP = 2.5f
 
 /** 拖尾半宽 = 条宽的这个比例（比主带窄 → 宽亮核 + 细余晖，层次拉得开）。 */
 private const val HANDLE_GLOW_TRAIL_HALF_SCALE = 0.45f
+
+/** 拖尾的柔边 = 条宽的这个比例（渐变跨 2 倍这个值，中间是实色 → 不至于"整条都是雾"）。 */
+private const val HANDLE_GLOW_TRAIL_FADE_SCALE = 0.35f
 
 /** 拖尾条数（含主带）。1 主带 + 2 余晖 = 3，再多在 9dp 上就糊成一片了。 */
 private const val HANDLE_GLOW_BAND_COUNT = 3
@@ -621,8 +777,14 @@ private const val HANDLE_GLOW_BAND_COUNT = 3
 /** 拖尾之间的间距 = 条宽的这个比例。 */
 private const val HANDLE_GLOW_SPACING_SCALE = 0.70f
 
-/** 拖尾 alpha 的递减系数：第 i 条 = 主带 × 0.55^i。 */
-private const val HANDLE_GLOW_TRAIL_DECAY = 0.55f
+/**
+ * 拖尾 alpha 的递减系数：第 i 条 = 主带 × **[HANDLE_GLOW_TRAIL_DECAY]^i**。
+ *
+ * §体验修正：原来是 0.55 → 两条余晖只有 0.55 / 0.30，用户反馈"拖尾看不见"。
+ * 需求要求余晖也给足（≥0.5），所以改成 0.85 → **0.85 / 0.72**（再乘 `beat ≥ 0.75`，
+ * 最暗时仍 ≥0.54）。层次还在（主带 1.0 > 0.85 > 0.72），但不会再淡到看不见。
+ */
+private const val HANDLE_GLOW_TRAIL_DECAY = 0.85f
 
 /** 主带峰值不透明度（还会再乘呼吸包络 `beat`）。拉高到 1.0：用户反馈"看不见"，宁可过曝。 */
 private const val HANDLE_GLOW_CORE_ALPHA = 1.0f
@@ -631,10 +793,10 @@ private const val HANDLE_GLOW_CORE_ALPHA = 1.0f
  * 外层辉光的不透明度峰值（同样乘 `beat`），再按 [HANDLE_GLOW_BLOOM_LAYER_ALPHAS] 逐层递减。
  *
  * §体验修正：0.55 + 5dp 模糊 + 只往左溢 0–5dp，结果是"光基本还在条里、条外几乎看不见"。
- * 现在提到 0.85 并配 9dp 模糊 + 大幅左溢 + 纵向外扩（见 [HANDLE_GLOW_BLOOM_LAYER_SCALES]
+ * 现在提到 **1.0** 并配 9dp 模糊 + 大幅左溢 + 纵向外扩（见 [HANDLE_GLOW_BLOOM_LAYER_SCALES]
  * 与 [HANDLE_GLOW_BLOOM_SPILL_SCALE]），让条左侧有一圈**一眼能看见**的光环。
  */
-private const val HANDLE_GLOW_BLOOM_ALPHA = 0.85f
+private const val HANDLE_GLOW_BLOOM_ALPHA = 1.0f
 
 /** 辉光的模糊半径（越大越柔、越"光晕"）。9dp 在 48dp 命中区里仍然收得住，不会糊成一团。 */
 private const val HANDLE_GLOW_BLOOM_RADIUS_DP = 9f
@@ -642,14 +804,16 @@ private const val HANDLE_GLOW_BLOOM_RADIUS_DP = 9f
 /**
  * 辉光的层宽（以条宽为单位，从内到外）。三层叠出"细芯 → 亮晕 → 大范围柔光"。
  *
- * 关键：**最外层要比条宽大得多**（2.6×9dp ≈ 23dp），这样无论主带在条内哪个位置，
+ * 关键：**最外层要比条宽大得多**（3.2 × 9dp ≈ 29dp），这样无论主带在条内哪个位置，
  * 光晕都必然从条的左缘漏出去一大截 —— 这是"存在感"的唯一来源，
  * 因为条的右侧只剩 3dp（见 [HANDLE_EDGE_GAP_DP]），光只能往左走。
+ * ⚠️ 外层 3.2 已经接近窗口左缘的余量上限（见 [HANDLE_GLOW_BLOOM_LIMIT_RATIO] 的几何），
+ * 再放大就会被 `coerceAtLeast(springX)` 夹住、变成硬边光块。
  */
-private val HANDLE_GLOW_BLOOM_LAYER_SCALES = floatArrayOf(0.9f, 1.7f, 2.6f)
+private val HANDLE_GLOW_BLOOM_LAYER_SCALES = floatArrayOf(0.9f, 1.8f, 3.2f)
 
 /** 三层辉光的 alpha 系数（乘 [HANDLE_GLOW_BLOOM_ALPHA]）。外层更淡 = 边缘渐隐，不会像硬边方块。 */
-private val HANDLE_GLOW_BLOOM_LAYER_ALPHAS = floatArrayOf(1.0f, 0.55f, 0.30f)
+private val HANDLE_GLOW_BLOOM_LAYER_ALPHAS = floatArrayOf(1.0f, 0.55f, 0.35f)
 
 /**
  * 辉光往条**上下**外扩多少（以条宽为单位）。
@@ -686,13 +850,14 @@ private const val HANDLE_BAR_BORDER_DP = 1f
 /**
  * 主带（近白亮核）的色相/饱和度/亮度目标。
  *
- * §配色修正（关键）：条本体是**蓝色主题色**，而之前的流光主带也是 accent 的蓝
- *（sat 0.75 / hue 跟着 accent 走）—— **蓝底扫蓝光，对比天然极低**，渲染完全正常也难看出来。
- * 现在主带不再保留 accent 的色相，而是压成"白/极浅青"：
- * - `sat 0.30`、`value 0.98` → 在蓝条上是明显的"过曝"亮核；
- * - `[GLOW_CORE_HUE] = 0.50`（青，180°）留一点点冷色倾向，不做成纯白（纯白在 9dp 上像贴白胶带）。
+ * §配色修正（关键）：条本体是**蓝色主题色**，而更早的实现里流光主带也是 accent 的蓝
+ *（sat 0.75 / hue 跟着 accent 走）—— **蓝底扫蓝光，对比天然极低**。
+ * 现在主带不再保留 accent 的色相，压成"近白/极浅青"：
+ * `sat 0.12`、`value 0.98` → 实际约 **#F1FAFF**（R,G,B ≈ 241/250/255，三个通道都 >200，
+ * 满足"截图像素判定里有近白像素"的验收口径），再加 [HANDLE_GLOW_CORE_ALPHA]=1.0 的实心块。
+ * 只留一点点冷色倾向（不做纯白：纯白在 9dp 上像贴了一条白胶带）。
  */
-private const val HANDLE_GLOW_CORE_SATURATION = 0.30f
+private const val HANDLE_GLOW_CORE_SATURATION = 0.12f
 private const val HANDLE_GLOW_CORE_VALUE = 0.98f
 
 /** 主带固定色相（0.50 = 青，180°）。**不再继承 accent** —— 理由见上面的"配色修正"。 */
@@ -723,48 +888,70 @@ private const val HANDLE_GLOW_TRAIL_VALUE_STEP = 0.07f
  */
 private const val HANDLE_GLOW_BAR_WHITEN = 0.14f
 
-/** 呼吸包络的"拍"长（ms）。和 HANDLE_GLOW_PERIOD_MS **不同频**，见 glowBeat 的注释。 */
-private const val GLOW_BEAT_PERIOD = 1200f
+/**
+ * 呼吸的"拍"长，单位是**"几圈扫描"**（不是毫秒！见 [glowBeat] 的单位纪律注释）。
+ *
+ * 2600ms / 1200ms ≈ **2.1667 圈一拍** → 一拍 ≈ 1200ms，与 2600ms 的扫描**不同频**
+ *（两者不是整数倍关系），所以"光扫到哪"与"呼吸到哪"不会锁死，观感不僵硬。
+ * ⚠️ 这两个数（2.1667 与 2600/1200）是绑定的：若改 [HANDLE_GLOW_PERIOD_MS]，
+ *    这里要按 `扫描周期ms / 期望拍长ms` 重算，否则呼吸会跟着扫描一起变慢/变快。
+ */
+private const val GLOW_BEAT_PERIOD_SWEEPS = HANDLE_GLOW_PERIOD_MS / 1200f
 
-/** 一拍里"亮着"的比例：0.58 × 1200 ≈ 0.7s 亮 / 0.5s 暗。 */
+/** 一拍里"亮着"的比例：0.58 × 1200ms ≈ **0.7s 亮 / 0.5s 暗**。 */
 private const val GLOW_BEAT_DUTY = 0.58f
 
 /**
  * 暗段最低亮度。
  *
  * §体验修正：原来 0.30 —— 一拍 1200ms 里亮段只占 58%，再乘一个会掉到 0.30 的包络，
- * 实际观感是"大半时间都暗着"，用户说的"不像在发光"很可能就来自这里。
- * 现在抬到 0.62：暗谷仍然比峰谷有变化（呼吸感还在），但**任何时刻都不会低于六成亮**，
- * 符合用户"一直炫光流彩"的原话。
+ * 实际观感是"大半时间都暗着"。
+ * 现在 **0.75**：暗谷仍然有变化（呼吸感还在），但**任何时刻都不会低于 3/4 亮**，
+ * 按用户"一直炫光流彩"的要求收窄了呼吸振幅。
+ * ⚠️ 这个值现在有**第二个职责**：它是 [glowBeat] 的返回值下界，也是绘制侧的**兜底夹紧**
+ * （`beat.coerceIn(GLOW_BEAT_MIN, 1f)`）—— 万一呼吸函数将来又被改错，光也不会全透明。
+ * ⚠️ 验收口径依赖它：主带最终 alpha = `1.0 × beat`，`beat ≥ 0.75` 才能保证
+ * "近白实心块 × 0.75" 叠在蓝条上仍是近白像素（R,G,B 都 >200）。
  */
-private const val GLOW_BEAT_MIN = 0.62f
+private const val GLOW_BEAT_MIN = 0.75f
 
 /** 亮起用的幂次（>1 = 起得慢一点 = 更像"吸气"）。 */
 private const val GLOW_BEAT_ATTACK_POW = 1.6f
 
 /**
- * 呼吸包络：把扫描进度 `t` 当相位用，返回当前亮度系数（GLOW_BEAT_MIN…1）。
+ * 呼吸包络：把扫描进度 [t] 当相位用，返回当前亮度系数（**恒在 [GLOW_BEAT_MIN] … 1 之间**）。
+ *
+ * ⚠️ **单位纪律（这里出过一次致命的 bug，改之前务必先看这段）**：
+ * [t] 是 `animateFloat` 的扫描进度，**定义域 0..=1、单位是"圈（周期）"，不是毫秒**。
+ * 上一版写成 `beat = (t / GLOW_BEAT_PERIOD) % 1f`，而那个常量当时是 **1200（毫秒）**，
+ * 于是 `beat = t / 1200 ≤ 0.00083` —— **永远**落在 `beat < GLOW_BEAT_DUTY(0.58)` 的"亮"分支，
+ * 且 `q = beat / 0.58 ≈ 0.0014`，再 `pow(1.6)` 后 ≈ **0.003**。
+ * 结论：beat 恒≈0，主带与两条拖尾全部以 alpha≈0 画出去。
+ * 真机相位探针实测 `t=0.7001 beat=0.000 alpha=0.000`（0.003 在 3 位小数下就是 0.000），
+ * 条内因此永远纯蓝 —— 三个"看不见"的排查方向（gate/裁剪/invalidate）全是错的方向。
+ * 现在把周期定义成**"几圈扫描"**这个单位：[GLOW_BEAT_PERIOD_SWEEPS] = 2600/1200 ≈ 2.1667，
+ * `t × 2.1667` 才等于"已经过去的拍数"；周期与扫描**不同频**（这正是需求要的"错开、不僵硬"）。
  *
  * 为什么复用扫描进度而不是再开一个 `animateFloat`：需求是"单个 float 驱动"，
- * 再开一个无限动画就多一个每帧跑的值；而扫描周期（2600ms）与拍长（1200ms）**不成整数倍**，
- * 两者叠加出来的亮峰/暗谷在视觉上不会同步 → 正是要的"错开、不僵硬"。
+ * 再开一个无限动画就多一个每帧跑的值。
  *
- * 形状：亮段前 42% 用 pow 慢起、后半保持接近满亮，暗段下降并保底 [GLOW_BEAT_MIN]。
+ * 形状：一亮一暗为一拍。亮段占 [GLOW_BEAT_DUTY]（=0.58 拍 ≈ 0.7s）：前 42% 用 pow 慢起、
+ * 之后平滑收到满亮；暗段（≈0.5s）从满亮平滑落到 [GLOW_BEAT_MIN] 保底。
  * 比正弦"更有呼吸感"（正弦太像均匀闪烁）。
  */
 private fun glowBeat(t: Float): Float {
-    // `t` 在进入组合的第一帧可能是 1.0（animateFloat 的初值就是 0…1 的端点），
-    // 所以先取模再夹紧，避免越界。
-    val p = (t % 1f + 1f) % 1f
-    val beat = (p / GLOW_BEAT_PERIOD) % 1f
+    // 双保险：`animateFloat` 的端点理论上可能给出 1.0，取模后落回 [0,1)。
+    val p = ((t % 1f) + 1f) % 1f
+    // 0..1 的"扫描圈数" → 0..1 的"拍内位置"（乘周期再取小数 = 每 GLOW_BEAT_PERIOD_SWEEPS 圈拍一次）。
+    val beat = (p * GLOW_BEAT_PERIOD_SWEEPS) % 1f
     return if (beat < GLOW_BEAT_DUTY) {
-        // 亮：慢起 → 接近满亮。
-        val q = beat / GLOW_BEAT_DUTY
-        (q / 0.42f).coerceAtMost(1f).pow(GLOW_BEAT_ATTACK_POW)
+        // 亮段：前 42% 慢起（pow>1 = 起得慢），之后平滑收到 1.0。
+        val q = (beat / GLOW_BEAT_DUTY).coerceIn(0f, 1f)
+        (q / 0.42f).coerceAtMost(1f).pow(GLOW_BEAT_ATTACK_POW).coerceIn(0f, 1f)
     } else {
-        // 暗：从满亮落回保底值。
-        val q = (beat - GLOW_BEAT_DUTY) / (1f - GLOW_BEAT_DUTY)
-        (1f - q).pow(1.5f).coerceAtLeast(GLOW_BEAT_MIN)
+        // 暗段：从 1.0 平滑落到 GLOW_BEAT_MIN 保底（再乘一次曲线让它更有"呼"的感觉）。
+        val q = ((beat - GLOW_BEAT_DUTY) / (1f - GLOW_BEAT_DUTY)).coerceIn(0f, 1f)
+        (1f - q).pow(1.5f).coerceIn(GLOW_BEAT_MIN, 1f)
     }
 }
 
@@ -889,6 +1076,173 @@ private val GLOW_DEBUG_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPatt
 /** 探针文件超过这么多行就整体重写（只保留最后 [GLOW_DEBUG_KEEP_LINES] 行），避免无限增长。 */
 private const val GLOW_DEBUG_MAX_LINES = 200
 private const val GLOW_DEBUG_KEEP_LINES = 40
+
+/**
+ * 诊断涂色用的不透明亮绿（**故意用主题色里绝不会出现的颜色**）。
+ *
+ * §颜色选择：从品红 `0xFFFF00FF` 改成亮绿 `0xFF00FF00`，是为了让截图判定能区分
+ * "旧包（品红）/ 新包（绿）"，并避免和系统/其它 App 自带的粉色元素混淆。
+ */
+private val GLOW_DEBUG_MARKER_COLOR = Color(0xFF00FF00)
+
+/** 判定圈半径（12dp）：空心圈，只用来确认"看的就是这个组件"，不参与任何真实发光计算。 */
+private const val GLOW_DEBUG_MARKER_RADIUS_DP = 12f
+
+/**
+ * 是否把**亮带相位/几何**写进诊断文件。
+ *
+ * ⚠️ 与 [GLOW_DEBUG]（诊断描边）分开：描边会挡住观察窗口，而相位探针不会改任何像素。
+ * 排查"条内为什么没有光"时应当**关掉描边、打开相位探针**（否则描边挡住条内、又回到互相遮挡）。
+ * 定位完把这两个开关一起删。
+ */
+private const val GLOW_DEBUG_FILE_MODE = true
+
+/** 相位探针文件（`filesDir` 下）。读：`adb shell run-as <pkg> cat files/glow_phase_debug.txt`。 */
+private const val GLOW_DEBUG_PHASE_FILE = "glow_phase_debug.txt"
+
+/** 相位探针的行数上限；超了只留最后若干行（约 300ms 一行，正常一次复现只有十几行）。 */
+private const val GLOW_DEBUG_PHASE_MAX_LINES = 200
+private const val GLOW_DEBUG_PHASE_KEEP_LINES = 80
+
+/** 相位探针的最小写入间隔（ms）：别每帧写盘，约 3–4 帧一行足够看出 `t` 是否推进。 */
+private const val GLOW_DEBUG_PHASE_INTERVAL_MS = 300L
+
+/**
+ * 把这一帧的**相位与亮带几何**追加到诊断文件（约 300ms 一行）。
+ *
+ * 为什么需要它：真机 logcat 被 ROM 吞掉，而"条内永远纯蓝"有两种完全不同的原因，
+ * 只能靠数据区分（下面是**实际踩过的坑**，留档）：
+ * - **`t` 恒为初值 0** → 主带中心 = `barRect.right + 1.5×条宽`（条**右侧之外**），条内永远没有光；
+ * - **`t` 在推进、`overlap=true`，但 `beat≈0`** → 光带的几何全对、却以 alpha≈0 画出去。
+ *   **这一条就是真凶**（2026 实测：`t=0.7001 beat=0.000 alpha=0.000 overlap=true`）：
+ *   [glowBeat] 把 0..1 的扫描圈数当成毫秒去除以 1200，beat 恒≈0.003。
+ * 所以这行里 `beat`（函数原值）与 `fix`（兜底夹紧后的值）必须分开打印：
+ * **两者不等**就说明呼吸函数又算错了、只是被兜底救住了。
+ * `drawCounter` 用来看绘制 lambda 到底有没有被反复调用（`t`/`overlap` 之外的第三个自由度）。
+ *
+ * ⚠️ 这里读的是 Compose 的 `DrawScope.size` 坐标系（该层局部坐标，单位 px），
+ * 与 `barRect`/`bandX` 完全同一坐标系，所以数值可直接对比。
+ */
+private fun maybeWriteGlowPhaseProbe(
+    context: Context,
+    t: Float,
+    beatRaw: Float,
+    beatFixed: Float,
+    bandX: Float,
+    barLeftPx: Float,
+    barRightPx: Float,
+    barWidthPx: Float,
+    barHeightPx: Float,
+    coreHalfPx: Float,
+    bandAlpha: Float,
+    bandAlphaRaw: Float,
+    barPathBounds: Rect,
+    drawCounter: Long,
+    lastWriteAtMs: Long,
+    onWrote: (Long) -> Unit,
+) {
+    val now = System.currentTimeMillis()
+    if (now - lastWriteAtMs < GLOW_DEBUG_PHASE_INTERVAL_MS) return
+    onWrote(now)
+    val line = buildString {
+        append(LocalTime.now().format(GLOW_DEBUG_TIME_FORMAT))
+        append(" draws=").append(drawCounter)
+        append(" t=").append(String.format("%.4f", t))
+        // `beat` 是 `glowBeat` 的**原值**，`fix` 是绘制侧兜底夹紧后的值。
+        // 两者不等就说明呼吸函数又算错了（兜底在生效）—— 这是"函数坏了但光还在"的信号。
+        append(" beat=").append(String.format("%.3f", beatRaw))
+        append(" fix=").append(String.format("%.3f", beatFixed))
+        append(" alpha=").append(String.format("%.3f", bandAlpha))
+        append(" alphaRaw=").append(String.format("%.3f", bandAlphaRaw))
+        // ⚠️ 兜底不是修法：只要原值 ≤0 就在这里留一个显式告警，避免"又靠兜底糊过去"。
+        if (beatRaw <= 1e-4f) append(" WARN_beat_zero")
+        // 几何全部是 px（同一坐标系）：band 的左右边界与 bar 一比就知道"这一帧光带在不在条里"。
+        append(" bar=[").append(fmt1(barLeftPx)).append(",").append(fmt1(barRightPx)).append("]")
+        append(" w=").append(fmt1(barWidthPx)).append(" h=").append(fmt1(barHeightPx))
+        append(" bandX=").append(fmt1(bandX))
+        append(" coreHalf=").append(fmt1(coreHalfPx))
+        append(" band=[").append(fmt1(bandX - coreHalfPx)).append(",").append(fmt1(bandX + coreHalfPx)).append("]")
+        append(" overlap=").append(
+            (minOf(bandX + coreHalfPx, barRightPx) - maxOf(bandX - coreHalfPx, barLeftPx)) > 0f,
+        )
+        append(" pathBounds=[").append(fmt1(barPathBounds.left)).append(",").append(fmt1(barPathBounds.top))
+        append(",").append(fmt1(barPathBounds.right)).append(",").append(fmt1(barPathBounds.bottom)).append("]")
+    }
+    Log.d(GLOW_DEBUG_TAG, line)
+    val file = File(context.filesDir, GLOW_DEBUG_PHASE_FILE)
+    val existing = if (file.exists()) {
+        runCatching { file.readLines() }.getOrDefault(emptyList())
+    } else {
+        emptyList()
+    }
+    val kept = if (existing.size >= GLOW_DEBUG_PHASE_MAX_LINES) {
+        existing.takeLast(GLOW_DEBUG_PHASE_KEEP_LINES)
+    } else {
+        existing
+    }
+    file.writeText((kept + line).joinToString(separator = "\n", postfix = "\n"))
+}
+
+/** 探针里浮点的短格式（1 位小数，px 值够用，行也更短）。 */
+private fun fmt1(value: Float): String = String.format("%.1f", value)
+
+/** 诊断光斑圆心距左窗缘的最小距离（防空/防被窗口边界切掉一半）。 */
+private const val GLOW_DEBUG_MARKER_MIN_INSET_DP = 14f
+
+/**
+ * 诊断轮廓的线宽（1.5dp）：够细，不遮挡条内的光；够粗，截图里一眼能认出。
+ * ⚠️ 不要为了"更显眼"把它加粗：这条轮廓现在是**空心**的，加粗会开始盖住条内像素，
+ * 把"里面是蓝还是白"这个关键读数重新毁掉。
+ */
+private const val GLOW_DEBUG_MARKER_STROKE_DP = 1.5f
+
+/**
+ * 【临时诊断】把条画成**亮绿空心轮廓** + 左侧一个亮绿**空心判定圈**。
+ *
+ * 为什么要这一步：探针已经证明 `glowActive=true`、绘制 lambda 一直被调用，但用户
+ * "一点变化都看不到"。这时只有两种可能，而调参数无法区分：
+ * - **看得见亮绿轮廓** → 用户看的就是这个组件 → 那问题在"渐变太弱 / 被裁"，继续调 HANDLE_GLOW_*；
+ * - **看不见轮廓** → 用户看的那条蓝条**根本不是这个组件画的**（窗口没上屏 / 画在别处 /
+ *   被系统丢掉）→ 继续调参数是白费，必须换排查目标。
+ *
+ * §实测演进（为什么从"实心品红"→"实心亮绿"→最后定成"空心亮绿"）：
+ * - 实心涂色能回答"是不是本组件"，但**它自己盖住了要观察的对象** —— 同一张截图里
+ *   "光"和"标记"互相遮挡，于是就没法判断"光到底画出来没有"（用户那次实测就是这么卡住的）；
+ * - 改成**描边**之后：轮廓证身份，**轮廓内部保持透明** → 里面是"蓝条"还是"近白块"
+ *   就是"光有没有画出来"的直接读数；而且条本身不透明、盖住了背后的视频/墙面，
+ *   所以这个判据不受背景干扰（近白像素判定法就是因为背景太亮而作废的）。
+ *
+ * ⚠️ 光斑**只往条的左侧**摆：条右缘距屏幕右缘只有 3dp（见 [HANDLE_EDGE_GAP_DP]），
+ * 往右画会直接被屏幕边缘/窗口边界切掉，反而让"看不见"无法解释。
+ * ⚠️ 白描边必须保留在**绘制的最末尾**（调用点在 `onDrawWithContent` 最后一条），
+ * 否则会被光盖住、失去"证身份"的作用。
+ */
+private fun DrawScope.drawDebugMarker(barRect: Rect, cornerPx: Float) {
+    val strokeWidth = GLOW_DEBUG_MARKER_STROKE_DP.dp.toPx()
+    // 1) 条的**轮廓**（条内部必须保持透明：里面是蓝条还是近白块，就是"光有没有画出来"的读数）。
+    drawRoundRect(
+        color = GLOW_DEBUG_MARKER_COLOR,
+        topLeft = Offset(barRect.left, barRect.top),
+        size = Size(barRect.width, barRect.height),
+        cornerRadius = CornerRadius(cornerPx, cornerPx),
+        style = Stroke(width = strokeWidth),
+        alpha = 1f,
+    )
+    // 2) 左侧的判定圈（同样空心，半径 12dp），圆心和条垂直居中。
+    val radiusPx = GLOW_DEBUG_MARKER_RADIUS_DP.dp.toPx()
+    // 圆心至少离左窗缘 [GLOW_DEBUG_MARKER_MIN_INSET_DP]，避免被窗口边界切掉一半
+    //（被切一半会让"看不见"变得不可判读）。命中区宽 48dp、条左缘在 36dp、
+    // 半径 12dp → 圆心落在 ~24dp，离左缘 24dp，完全在窗内（见简报里的几何计算）。
+    val centerX = (barRect.left - radiusPx)
+        .coerceAtLeast(GLOW_DEBUG_MARKER_MIN_INSET_DP.dp.toPx())
+    drawCircle(
+        color = GLOW_DEBUG_MARKER_COLOR,
+        radius = radiusPx,
+        center = Offset(centerX, barRect.center.y),
+        style = Stroke(width = strokeWidth),
+        alpha = 1f,
+    )
+}
 
 /**
  * 往探针文件追加一行（原子覆盖写，不做流式追加）。
