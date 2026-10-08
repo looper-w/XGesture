@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -42,6 +44,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
@@ -67,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.slideindex.app.R
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -273,6 +278,11 @@ internal fun HistoryComposerModal(
  *   编辑条的语音按钮在标题行上（本层之外），只有本层知道"插进了哪一块、光标在哪"，
  *   所以用它把这次改动转给外面（弹窗不需要：它的语音按钮就在本层里，`insertVoiceAtCursor`
  *   已经在回调里把改动交给 `onBlocksChange` 了）。
+ * - [existingImageFileNames]（§0.16.18）：**"哪些路径是已落盘的文件名"**。图片块里那两种路径
+ *   （cache 绝对路径 / 暂存夹文件名）没法靠字符串判据可靠区分 —— Windows 风格的路径、
+ *   将来换存储目录都会让 `startsWith("/")` 这类猜测失效。所以由调用方把"条目原本就有的文件名"
+ *   传进来，本层只做**集合成员判断**。误判的代价很具体：把"新选的图"当"已有文件"，
+ *   用户一保存这张图就**不会**落盘（块还在、打开却没有图）。
  */
 @Composable
 internal fun DraftBlockEditorSurface(
@@ -292,7 +302,18 @@ internal fun DraftBlockEditorSurface(
     showVoiceButton: Boolean = true,
     /** 语音识别结果被插到某块光标处之后回调（给"语音按钮在本层外面"的编辑条用）。 */
     onTextInsertedAtCursor: ((List<DraftBlock>) -> Unit)? = null,
+    /**
+     * 条目**原本就有**的图片文件名（§0.16.18）。
+     *
+     * 只用来回答一个问题：删掉某个图片块时，要不要顺手删它的文件？
+     * 是"新选的 cache 临时文件"才删；是"暂存夹里的已有文件"**绝不能删**（那是用户的原图）。
+     * 判据是**集合成员**而不是"路径长得像什么"，理由见上面 KDoc。
+     * 默认空集 = 没有任何"已有文件名"（弹窗里本来就全是新选的图）。
+     */
+    existingImageFileNames: Set<String> = emptySet(),
 ) {
+    /** 本层的协程作用域：给"滚进视口"用（滚动的 `animateScrollTo` 是挂起函数）。 */
+    val coroutineScope = rememberCoroutineScope()
     /**
      * 每块的焦点句柄。`remember` 一次、按 id 取用：**不能**跟着块生灭 ——
      * 焦点衔接（删图后跳到上一个文字块）恰恰发生在"新块刚加进来、下一帧才要去要焦点"的那一刻。
@@ -319,11 +340,62 @@ internal fun DraftBlockEditorSurface(
      * "图插到我最后打字的那一块的光标处"，正好是用户的心智模型（[latestValues] 同理）。
      */
     var lastFocusedBlockId by remember { mutableStateOf<String?>(null) }
+    /**
+     * 正文区的滚动状态（§0.16.18）。
+     *
+     * 为什么必须有它：块一多（一张图就 120dp）就超过视口（`heightIn(160..320)`），
+     * 没有滚动的话下半截**根本够不到** —— 用户看到的是"图底下的东西看不见也滑不到"。
+     *
+     * ⚠️ 视口高度**不改成无限高**：弹窗/编辑条都是"屏幕居中浮窗"，正文无限高会把
+     * 「存下」/「保存」按钮顶出屏幕。所以是"固定视口 + 内部滚动"。
+     */
+    val scrollState = rememberScrollState()
+    /**
+     * 各块在**视口坐标系**里的 y（由每块 `onGloballyPositioned` 上报）。
+     *
+     * 用途是"插入之后把目标块滚进视口"：块高不是固定值（文字块随行数变、图片块 120dp），
+     * 靠"index × 估算高度"一定会滚歪，所以这里记**实测**位置。
+     * 值是"相对当前滚动位置"的，所以判断可见性时要加上 `scrollState.value`（见 [scrollBlockIntoView]）。
+     */
+    val blockViewportOffsets = remember { mutableStateMapOf<String, Int>() }
+    /** 正文视口高度（px，由容器 `onGloballyPositioned` 实测上报）；0 = 还没测到。 */
+    var viewportHeightPx by remember { mutableStateOf(0) }
 
     /** 当前"插入/修改"的落点：优先最后聚焦那块（还在的话），否则退到最后一个文字块。 */
     fun targetTextBlockId(): String? =
         lastFocusedBlockId?.takeIf { id -> blocks.any { it.id == id && it is DraftBlock.Text } }
             ?: blocks.lastOrNull { it is DraftBlock.Text }?.id
+
+    /**
+     * 把某个块滚进视口（§0.16.18）。
+     *
+     * 只在"确实看不到"时才滚（可见就什么都不做）：插一张图之后正文里光标那块本来就多半可见，
+     * 每次都滚会把用户已经调好的位置晃走。
+     *
+     * ⚠️ 位置是**估算**的：用的是该块上一次 `onGloballyPositioned` 报上来的 y。
+     * 刚插进来的块当帧还没测量 → 拿不到 y → 这时按"滚动到底"处理（新块总在后面，
+     * 滚到底是用户想看到的结果）。误差最多几十像素（块间距/行高变化），不会滚到别处。
+     */
+    fun scrollBlockIntoView(blockId: String) {
+        val current = scrollState.value
+        // ⚠️ 用**实测**的视口高度，不用 `scrollState.viewportSize`：后者在"内容还不满一屏"
+        // （maxValue == 0）时是 0，会把下面的可见性判断整个短路掉。
+        val viewport = viewportHeightPx
+        val target = blockViewportOffsets[blockId]?.let { it + current }
+        // 视口还没测量时按"滚到底"兜底 —— 至少让新块露出来（新块总在正文后面）。
+        if (target == null || viewport <= 0) {
+            coroutineScope.launch { scrollState.animateScrollTo(scrollState.maxValue) }
+            return
+        }
+        // 上下各留一点余量：块正好贴住视口边沿时，光标那行其实已经贴边/被圆角切了。
+        val top = current + HistoryComposerScrollSlack
+        val bottom = current + viewport - HistoryComposerScrollSlack
+        if (target !in top..bottom) {
+            val destination = (target - HistoryComposerScrollSlack)
+                .coerceIn(0, maxOf(scrollState.maxValue, 0))
+            coroutineScope.launch { scrollState.animateScrollTo(destination) }
+        }
+    }
 
     /** 把 [paths] 里的图**按顺序**插到当前光标处（取消选图 = 空列表 = 什么都不做）。 */
     fun insertImagesAtCursor(paths: List<String>) {
@@ -450,7 +522,12 @@ internal fun DraftBlockEditorSurface(
                 .heightIn(
                     min = HistoryComposerBodyMinHeightDp,
                     max = HistoryComposerBodyMaxHeightDp,
-                ),
+                )
+                // §0.16.18：块一多就超出视口，必须能滚（否则图底下的东西看不见也滑不到）。
+                // 视口高度仍然是 160..320（见 KDoc）：无限高会把「存下」/「保存」顶出屏幕。
+                .verticalScroll(scrollState)
+                // 记下**实测**视口高度：它比"按 dp 换算"准（窗口缩放 / 字体大小都会影响）。
+                .onGloballyPositioned { coords -> viewportHeightPx = coords.size.height },
             // 块间距 7dp：太小看不出"这是两块"（尤其空块），太大就断成两个输入框了。
             verticalArrangement = Arrangement.spacedBy(HistoryComposerBlockGap),
         ) {
@@ -493,6 +570,11 @@ internal fun DraftBlockEditorSurface(
                             pendingCursor = pendingCursor,
                             onSubmitKey = onSubmitKey,
                             focusDelegation = focusDelegation,
+                            // §0.16.18：上报本块在视口里的 y（"插入后滚到目标块"要用它算位置）。
+                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
+                            // 只有"插入造成的光标移动"才需要滚（打字时的光标移动不滚，
+                            // 否则用户往上翻着看时会被一次次拽回底部）。
+                            autoScroll = { scrollBlockIntoView(block.id) },
                         )
                     }
 
@@ -501,8 +583,13 @@ internal fun DraftBlockEditorSurface(
                             path = resolveImagePath(block.path),
                             onRemove = {
                                 onBlocksChange { list -> list.filterNot { it.id == block.id } }
-                                onRemoveNewImage(block.path)
+                                // §0.16.18：只删**新选的** cache 临时文件；已落盘的图（文件名在
+                                // [existingImageFileNames] 里）绝不能删 —— 那是用户的原图。
+                                if (block.path !in existingImageFileNames) onRemoveNewImage(block.path)
                             },
+                            // §0.16.18：图片块也要上报 y（插图后目标块常常就是刚补的空文字块，
+                            // 但图片本身很高，用户想看到的往往是图本身）。
+                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
                         )
                     }
                 }
@@ -553,6 +640,10 @@ private fun HistoryComposerTextBlock(
     onSubmitKey: (() -> Unit)?,
     /** 块**已经**被聚焦时，要不要再抢一次焦点（弹窗要、编辑条不要，见 surface 的 KDoc）。 */
     focusDelegation: Boolean,
+    /** 上报本块在**视口坐标系**里的 y（§0.16.18 的"插入后滚到目标"要用）。 */
+    onBlockPlaced: (Int) -> Unit,
+    /** 因**插入**而落光标时要执行的动作（滚进视口）；打字时的光标移动不调它。 */
+    autoScroll: () -> Unit,
 ) {
     val theme = historyTheme()
     /** 与 `KeyboardOptions` 同一处决定：null ⇒ 回车换行（Default），非 null ⇒ 回车提交（Done）。 */
@@ -580,8 +671,17 @@ private fun HistoryComposerTextBlock(
                 runCatching { ownFocusRequester.requestFocus() }
             }
         }
+        // §0.16.18：`pendingCursor` **只**在"插入（图 / 语音）"和"退格删图后回头"时被写下，
+        // 所以这里就是"插入之后"的那个时机 —— 顺手把这块滚进视口。
+        // 放在 `SideEffect` 里：那时布局已经量过，`onBlockPlaced` 报上来的 y 才是新的。
+        SideEffect { autoScroll() }
     }
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            // §0.16.18：上报本块在视口里的 y（在滚动容器坐标系里，值会随滚动变化）。
+            .onGloballyPositioned { coords -> onBlockPlaced(coords.positionInParent().y.toInt()) },
+    ) {
         if (showHint && hint != null) {
             Text(
                 text = hint,
@@ -668,11 +768,17 @@ private fun HistoryComposerTextBlock(
  *
  * ⚠️ [path] 是**已经解析过**的可解码路径（暂存夹文件名 → 绝对路径那一步在
  * [DraftBlockEditorSurface] 的 `resolveImagePath` 里做完了）。
+ *
+ * §0.16.18：**解不出来时不再留一块空白** —— 空白块让用户以为"图插进去了"，实际上存下时会被跳过。
+ * 现在中间给一个「加载失败」占位（复用现成的 `stash_save_failed` 文案，本仓库不许新增字符串 key），
+ * ✕ 仍然在，用户能看见"这里是坏的"并自己删掉重选。
  */
 @Composable
 private fun DraftBlockEditorImage(
     path: String,
     onRemove: () -> Unit,
+    /** 上报本块在**视口坐标系**里的 y（§0.16.18 的"插入后滚到目标"要用）。 */
+    onBlockPlaced: (Int) -> Unit,
 ) {
     val theme = historyTheme()
     val shape = RoundedCornerShape(HistoryRadii.sm)
@@ -683,7 +789,8 @@ private fun DraftBlockEditorImage(
             .height(HistoryComposerBodyImageHeight)
             .clip(shape)
             // 解码失败也留一块同样大小的底：用户至少知道"这里有张图"，而不是正文莫名断开。
-            .background(theme.fieldBg),
+            .background(theme.fieldBg)
+            .onGloballyPositioned { coords -> onBlockPlaced(coords.positionInParent().y.toInt()) },
     ) {
         if (bitmap != null) {
             Image(
@@ -691,6 +798,16 @@ private fun DraftBlockEditorImage(
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize(),
+            )
+        } else {
+            // ⚠️ 空白是最糟的反馈：用户会以为"图在这儿了"，直到保存后打开才发现没有。
+            // 文案复用 `stash_save_failed`（本仓库不许新增字符串 key）。
+            Text(
+                text = stringResource(R.string.stash_save_failed),
+                style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.meta),
+                color = theme.sub,
+                maxLines = 1,
+                modifier = Modifier.align(Alignment.Center),
             )
         }
         Box(
@@ -732,6 +849,14 @@ private val HistoryComposerBlockGap = 7.dp
 
 /** 空文字块的最小高度：保证"图下面那一块"也点得到光标。 */
 private val HistoryComposerEmptyBlockMinHeight = 40.dp
+
+/**
+ * "滚到目标块"时上下留的余量（§0.16.18）。
+ *
+ * 为什么需要：块正好贴住视口上/下沿时，光标那一行其实已经被圆角/边缘切掉了。
+ * 24dp 是"看得出整块、又不会为了露一行把整屏都滚走"的值。
+ */
+private const val HistoryComposerScrollSlack = 24
 
 /** 正文里图片块的高度。 */
 private val HistoryComposerBodyImageHeight = 120.dp

@@ -69,11 +69,15 @@ class HistoryFloatService : Service() {
     /** 长按把手的就地输入槽（懒创建）。 */
     private var slotWindow: HistoryNoteSlotWindow? = null
     /**
-     * 「提醒流光」自愈轮询的退避状态（见 [refreshHandlePendingGlow]）。
-     * `0L` = 还没算过 → 下一次 tick 立刻算（这就是"启动即恢复"）。单位 ms。
+     * 「提醒流光」自愈轮询的退避状态（见 [refreshHandlePendingGlow]）。单位 ms。
      */
     private var pendingGlowBackoffMs = 0L
     private var pendingGlowRefreshedAtMs = 0L
+    /**
+     * 是否**至少算过一次** [StashReminderPendingState]。
+     * 用它保证"进程起来后必然算一次"这件事不被退避/可见性 gate 吃掉（见 [refreshHandlePendingGlow]）。
+     */
+    private var hasEverComputed = false
     /** [HistorySaveSignal] 的普通回调（Service 里没有组合上下文）。 */
     private val saveListener: (String) -> Unit = { text ->
         // 把手自己都被藏起来时（全屏/横屏/息屏）不要凭空冒出一个预览。
@@ -333,25 +337,29 @@ class HistoryFloatService : Service() {
      * - `refresh` 本身很轻（一次 `getActiveNotifications` + 一次偏好读 + 一遍提醒表），30s 一次无所谓；
      * - **退避**是为了"状态不翻转时不要每 30s 白跑一趟"：连续没有变化就翻倍到 240s 封顶；
      *   一旦结果翻转（点亮/熄灭）立刻回到 30s，保证关键变化跟得紧。
-     * - 这条自愈轮询挂在**已有的** 500ms [fullscreenCheckRunnable] 上，不额外起协程/计时器；
-     *   首次调用（`pendingGlowBackoffMs == 0L`）会立刻算一次 —— 这就是"进程/服务起来就恢复"。
+     * - 这条自愈轮询挂在**已有的** 500ms [fullscreenCheckRunnable] 上，不额外起协程/计时器。
      *
-     * ⚠️ 只在 `viewAdded`（把手窗真的上屏了）之后才算：窗口没上屏时算出来也没人看，
-     * 还会把退避计时器提前推进，等真能看见时反而更慢。全屏/横屏/息屏被藏起来的情况
-     * 也应当跳过（那些状态下 `applyFloatVisibility` 只是把窗口透明，`viewAdded` 仍为 true）。
+     * ⚠️ **"首次必然计算一次"不依赖任何 gate**（用户特别要求）：
+     * 用一个 [hasEverComputed] 标志，只要还没算过，就跳过"退避间隔"判断无条件算一次；
+     * 算完（不管结果）才置位。这样即使 `viewAdded` 在头几拍还是 false、或者 [pendingGlowBackoffMs]
+     * 在别处被推进过，都不会出现"永远没算过"的情况 —— 而没算过时 `hasPending` 永远是初值 false。
+     * 唯一保留的前置条件是"把手真的可能被看见"（窗口已上屏且没被全屏/横屏/息屏藏起来），
+     * 那是为了不在没人看的窗口期白算；但它不会**消费**首次计算的机会（标志只在真算过之后置位）。
      */
     private fun refreshHandlePendingGlow() {
+        val firstTime = !hasEverComputed
         // 把手看不见的时候不算：没上屏，或正被全屏/横屏/息屏藏着
         // （那三种状态下 `applyFloatVisibility` 只是把窗口 alpha 归零，`viewAdded` 仍是 true）。
-        // 这时算出来没人看，还会把退避计时器提前推进，等真能看见时反而更慢。
+        // ⚠️ 注意这里**不置位** `hasEverComputed`：首次计算的机会要留到把手真能看见的那一刻。
         if (!viewAdded || hiddenForFullscreen || hiddenForLandscape || hiddenForScreenOff) return
         val now = SystemClock.elapsedRealtime()
-        // 首次（0L）立刻算一次：这就是"进程/服务启动后自动恢复"。
-        if (pendingGlowBackoffMs != 0L && now - pendingGlowRefreshedAtMs < pendingGlowBackoffMs) return
+        // 首次无条件算；之后才按退避间隔节流。
+        if (!firstTime && now - pendingGlowRefreshedAtMs < pendingGlowBackoffMs) return
+        hasEverComputed = true
+        pendingGlowRefreshedAtMs = now
         // 放到 Default 线程算：`refresh` 里有 `getActiveNotifications` 和偏好读取，
         // 虽然很轻，但这里是 500ms 的服务 tick（主线程），不该把 IO/系统调用压在主线程上。
         // 它内部只写一个 Compose state（`hasPending`），从后台线程写是安全的。
-        pendingGlowRefreshedAtMs = now
         deps.applicationScope.launch(Dispatchers.Default) {
             val changed = StashReminderPendingState.refresh(applicationContext)
             pendingGlowBackoffMs = if (changed) {

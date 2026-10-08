@@ -131,8 +131,20 @@ internal fun HistoryPanelEditBar(
      * ⚠️ 必须有：已有图片块存的是**文件名**（`ClipboardContentBlock.fileName`），
      * 直接丢给 `BitmapFactory` 是解不出来的（当前目录里没有这个文件）。
      * 调用方用 `StashAccess.repository?.imageFilePath(name)` 拼。
+     *
+     * ⚠️ §0.16.18：**新选的图是绝对路径，必须原样直通**（不能再拼一次目录 —— 否则拼出一个
+     * 不存在的路径、块变空白、保存时图被跳过，用户看到的就是"加图没成功"）。
+     * 调用方（`HistoryPanelScreen`）走的是共用的 `resolveEditBlockImagePath`，
+     * 它按 [existingImageFileNames] 分流；本组件只负责把集合透传下去。
      */
     resolveImagePath: (String) -> String,
+    /**
+     * 条目**原本就有**的图片文件名（§0.16.18）。
+     *
+     * 只用来回答"删掉这个图块时要不要顺手删文件"：新选的 cache 临时文件才删，
+     * 已有文件（用户的原图）绝不能删。判据是**集合成员**，不是"路径长得像什么"。
+     */
+    existingImageFileNames: Set<String> = emptySet(),
     onHeightChanged: (Dp) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -226,6 +238,7 @@ internal fun HistoryPanelEditBar(
             resolveImagePath = resolveImagePath,
             showVoiceButton = true,
             onTextInsertedAtCursor = { updated -> onBlocksChange { updated } },
+            existingImageFileNames = existingImageFileNames,
         )
         FlowRow(
             modifier = Modifier

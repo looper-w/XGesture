@@ -2,6 +2,7 @@
 
 package com.slideindex.app.overlay.history
 
+import android.content.Context
 import android.graphics.BlurMaskFilter
 import android.util.Log
 import androidx.compose.animation.core.Animatable
@@ -48,12 +49,16 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.slideindex.app.ui.theme.OverlayAwareModuleTheme
+import java.io.File
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlinx.coroutines.delay
@@ -114,16 +119,23 @@ fun HistoryFloatContent(
             StashReminderPendingState.hasPending.value && handleVisible && !active
         }
     }
-    // ── 临时的可观测性打点（只为定位"到底触发没触发"，不改任何 UI）──
-    // 为什么用 `snapshotFlow` 而不是 `LaunchedEffect(glowActive)`：三个输入都要能单独看出来。
-    // `distinctUntilChanged` 让它**只在三元组真的翻转时**打一次（这就是"节流"：
-    // 平常一帧都不打，不会刷爆 logcat；进组合时先打一条当前值）。用户复现一次，
-    // `adb logcat -s HandleGlow` 即可判定：
-    // - 全程只有 pending=false → 提醒/通知那条链没点亮 `hasPending`（不是绘制问题）；
-    // - 出现 hasPending=true handleVisible=true active=false（glowActive=true）却依然看不见
-    //   → 那就是纯绘制/对比度问题，往参数上调（见文件末尾那组 HANDLE_GLOW_*）。
+    // ── 临时的可观测性探针（只为定位"到底触发没触发"，不改任何 UI）──
+    // ⚠️ 为什么不只用 logcat：实测机型（Flyme）可能把 App 的 `Log.d` 过滤掉 / 缓冲被刷，
+    // `adb logcat -s HandleGlow` 一条都收不到 —— 于是"没日志"既可能是没触发、也可能是被吞。
+    // 所以探针**写文件**（`filesDir/glow_debug.txt`），用
+    // `adb shell run-as <pkg> cat files/glow_debug.txt` 直接读，不依赖 logcat。
+    //
+    // 为什么用 `snapshotFlow` 而不是 `LaunchedEffect(glowActive)`：三个输入都要能单独看出来
+    //（只观察 glowActive 的话，"pending 一直是 false"和"active 一直 true"分不清）。
+    // `distinctUntilChanged` 让它**只在三元组真的翻转时**写一行（这就是节流：平常一帧都不写）。
+    // 判定方式：
+    // - 全程只有 pending=false → 提醒/通知那条链没点亮 `hasPending`（状态问题，不是绘制问题）；
+    // - 出现 pending=true visible=true active=false（即 glowActive=true）却依然看不见
+    //   → 那就是纯绘制/对比度问题，往文件末尾那组 HANDLE_GLOW_* 上调。
     if (GLOW_DEBUG) {
-        LaunchedEffect(Unit) {
+        val probeContext = LocalContext.current.applicationContext
+        val probeFile = remember(probeContext) { File(probeContext.filesDir, GLOW_DEBUG_FILE) }
+        LaunchedEffect(probeContext) {
             snapshotFlow {
                 Triple(
                     StashReminderPendingState.hasPending.value,
@@ -133,11 +145,18 @@ fun HistoryFloatContent(
             }
                 .distinctUntilChanged()
                 .collect { (pending, visible, dragging) ->
-                    Log.d(
-                        GLOW_DEBUG_TAG,
-                        "inputs changed: hasPending=$pending handleVisible=$visible active=$dragging " +
-                            "=> glowActive=${pending && visible && !dragging}",
-                    )
+                    val activeNow = pending && visible && !dragging
+                    val line = buildString {
+                        append(LocalTime.now().format(GLOW_DEBUG_TIME_FORMAT))
+                        append(" hasPending=").append(pending)
+                        append(" handleVisible=").append(visible)
+                        append(" active=").append(dragging)
+                        append(" => glowActive=").append(activeNow)
+                        append(" ver=").append(probeContext.appVersionNameSafe())
+                    }
+                    Log.d(GLOW_DEBUG_TAG, line)
+                    // 失败绝不影响绘制（这是临时探针，磁盘满/权限异常都不该让把手挂掉）。
+                    runCatching { writeGlowProbeLine(probeFile, line) }
                 }
         }
     }
@@ -372,6 +391,12 @@ private fun HistoryFloatHandle(
                 // 而这一步没有任何收益（反正都是同一次 draw 里的两个 drawPath），不值得冒险。
                 val washColor = if (alert) scheme.onPrimary.copy(alpha = 0.10f) else scheme.onSurface.copy(alpha = 0.02f)
                 val barBaseColor = barColor.copy(alpha = barAlpha * barFillAlpha)
+                // 有光时条本体要往白里混的**目标色**（[HANDLE_GLOW_BAR_WHITEN]，≈14%）：让"整条在发光"，
+                // 而不是"蓝条上叠了一层看不见的光"。
+                // ⚠️ 这个混合**必须在绘制 lambda 里做**（`lerp(…, …, if (glowActive) W else 0f)`）：
+                //    `glowActive` 若在这个 `drawWithCache` 的 block 里读，就不会形成对它的依赖，
+                //    状态翻转时这一层不会失效 → 条体永远不亮（哪怕光已经该画了）。
+                val litWhiteWeight = if (glowActive) HANDLE_GLOW_BAR_WHITEN else 0f
                 // 光的颜色全从主题色 accent 推出来（不许新增颜色资源）。
                 val coreColor = glowCore(scheme.primary)
                 // 拖尾的渐变色也只算一次：`i` 决定色相漂移量，逐帧要变的只有位置/透明度。
@@ -389,9 +414,10 @@ private fun HistoryFloatHandle(
                     val barPath = Path().apply {
                         addRoundRect(RoundRect(barRect, CornerRadius(cornerPx, cornerPx)))
                     }
-                    // ① 条本体（原来的 Surface 背景 + 内层洗色，颜色/圆角/尺寸全不变）。
+                    // ① 条本体（原来的 Surface 背景 + 内层洗色，颜色/圆角/尺寸全不变；
+                    //    `litWhiteWeight` 由绘制阶段的 `glowActive` 决定，没光时权重为 0 → 与改动前一致）。
                     //    边框挪到**最后**画（见 ⑤），否则会被光盖住、条失去清晰轮廓。
-                    drawPath(barPath, barBaseColor)
+                    drawPath(barPath, lerp(barBaseColor, Color.White, litWhiteWeight))
                     drawPath(barPath, washColor)
                     // ② 光。`glowPhase == null` 就是"当前不该有光"（没提醒 / 在拖动 / 不可见）：
                     // 这时不但不建动画时钟，连一次 draw call 都不多发。
@@ -658,26 +684,44 @@ private const val HANDLE_BAR_HEIGHT_DP = 28
 private const val HANDLE_BAR_BORDER_DP = 1f
 
 /**
- * 主带（近白亮核）的亮度目标：accent 提亮到 0.95 左右。
+ * 主带（近白亮核）的色相/饱和度/亮度目标。
  *
- * §体验修正：原来 value 0.90 + 峰值 alpha 0.9 + 渐变两端透明（条内实际只有中间一段亮），
- * 叠在 alpha 0.72 的条本体上就被压成了"一条淡色带"。现在 near-white 0.95、
- * 峰值 alpha 1.0，并让主带**比条更宽**（[HANDLE_GLOW_CORE_HALF_SCALE]），
- * 让整条都被"灌亮"，而不是只有中间一个尖峰。
- * 仍留 ~0.75 的饱和度：纯白会把主题色彻底盖掉，看起来像"贴了一条白胶带"。
+ * §配色修正（关键）：条本体是**蓝色主题色**，而之前的流光主带也是 accent 的蓝
+ *（sat 0.75 / hue 跟着 accent 走）—— **蓝底扫蓝光，对比天然极低**，渲染完全正常也难看出来。
+ * 现在主带不再保留 accent 的色相，而是压成"白/极浅青"：
+ * - `sat 0.30`、`value 0.98` → 在蓝条上是明显的"过曝"亮核；
+ * - `[GLOW_CORE_HUE] = 0.50`（青，180°）留一点点冷色倾向，不做成纯白（纯白在 9dp 上像贴白胶带）。
  */
-private const val HANDLE_GLOW_CORE_SATURATION = 0.75f
-private const val HANDLE_GLOW_CORE_VALUE = 0.95f
+private const val HANDLE_GLOW_CORE_SATURATION = 0.30f
+private const val HANDLE_GLOW_CORE_VALUE = 0.98f
 
-/** 拖尾的亮度/饱和度：比主带低一档，于是"主带在过曝、余晖只是有色"。 */
-private const val HANDLE_GLOW_TRAIL_SATURATION = 0.92f
-private const val HANDLE_GLOW_TRAIL_VALUE = 0.80f
+/** 主带固定色相（0.50 = 青，180°）。**不再继承 accent** —— 理由见上面的"配色修正"。 */
+private const val GLOW_CORE_HUE = 0.50f
 
-/** 每条拖尾相对前一条的色相漂移（1.0 = 一整圈）。0.10 × 2 条 ≈ 青 → 蓝 → 紫。 */
-private const val GLOW_HUE_STEP = 0.10f
+/**
+ * 拖尾的渐变端点：**一端偏青、另一端偏品红/紫**，形成"溢彩"而不是同色系。
+ *
+ * 之前拖尾色相只在 0.51–0.71（青蓝→紫蓝）之间，全落在蓝色邻域 → 在蓝条上没法区分。
+ * 现在 i=0 取 [GLOW_TRAIL_HUE_CYAN]（0.46 ≈ 青），最后一条取 [GLOW_TRAIL_HUE_MAGENTA]（0.84 ≈ 品红/紫），
+ * 中间几条按比例插值 → 一条"青 → 蓝 → 紫 → 品红"的彩虹式余晖。
+ * 饱和度也随 i 递减（越远的余晖越"发白/发雾"，更像辉光）。
+ */
+private const val GLOW_TRAIL_HUE_CYAN = 0.46f
+private const val GLOW_TRAIL_HUE_MAGENTA = 0.84f
+private const val HANDLE_GLOW_TRAIL_SATURATION = 0.95f
+private const val HANDLE_GLOW_TRAIL_SATURATION_STEP = 0.06f
+private const val HANDLE_GLOW_TRAIL_VALUE = 0.86f
+private const val HANDLE_GLOW_TRAIL_VALUE_STEP = 0.07f
 
-/** 蓝色在 HSV 色相上的位置（0.66 = 240°）—— 色相漂移以它为基准，两端各自偏移。 */
-private const val GLOW_HUE_BASE = 0.66f
+/**
+ * `glowActive` 时把条本体往白里混的比例（0.14 ≈ 14%）。
+ *
+ * 为什么要动条本体：原实现里"光"只能叠在 9dp 的条上，而条本体在 alert 态是**不透明主题色** ——
+ * 光再亮也只是"蓝条上一条更亮的蓝"。掺一点白让**整条**都进入"通电"状态，
+ * 观感才是"这条在发光"，而不是"蓝条上有层看不见的光"。
+ * ⚠️ 只在有光时混：没提醒时这张条必须和改动前逐像素一致。
+ */
+private const val HANDLE_GLOW_BAR_WHITEN = 0.14f
 
 /** 呼吸包络的"拍"长（ms）。和 HANDLE_GLOW_PERIOD_MS **不同频**，见 glowBeat 的注释。 */
 private const val GLOW_BEAT_PERIOD = 1200f
@@ -725,34 +769,39 @@ private fun glowBeat(t: Float): Float {
 }
 
 /**
- * 过曝主带的颜色：把 accent（主题色）的亮度拉到 ~0.9。
- * **不引入任何新的颜色资源** —— 颜色全部在代码里从主题色算出来。
+ * 过曝主带的颜色：**固定成"白/极浅青"**，不再继承 accent 的色相。
  *
- * 为什么把 saturation 压到 0.8：9dp 的窄条上纯白会像"贴了一条白胶带"，
- * 留一点饱和度让色相（青/蓝/紫）还在，观感是"被点亮到快爆"而不是"白色"。
+ * §配色修正：条本体是蓝色主题色，主带若也走蓝色系（旧实现 sat 0.75 + accent 色相），
+ * 就是"蓝底扫蓝光"——对比极低。现在固定 [GLOW_CORE_HUE]（青）+ 低饱和 + 高亮度，
+ * 在蓝条上读起来是明确的"过曝白芯"。
+ * **仍然不引入任何颜色资源**：颜色还是在代码里算出来的（只是不再从 accent 取色相）。
  */
 private fun glowCore(accent: Color): Color = accent.lit(
     saturation = HANDLE_GLOW_CORE_SATURATION,
     value = HANDLE_GLOW_CORE_VALUE,
+    hueShift = GLOW_CORE_HUE,
 )
 
 /**
- * 第 [index] 条拖尾的颜色：在主带的基础上**降低亮度 + 漂移色相**（青 → 蓝 → 紫）。
+ * 第 [index] 条拖尾的颜色：**青 → 蓝 → 紫 → 品红** 的溢彩渐变（不再是同色系蓝）。
  *
- * 为什么在 HSV 里改而不是直接改 RGB：色相漂移是"平移色调"，
+ * 为什么在 HSV 里改而不是直接改 RGB：色相漂移就是"平移色调"，
  * 用 HSV 一个 `hue` 加法就能表达，也不需要额外的混色工具。
- * `index = 0` 时返回的就是主带颜色（所以主带/余晖共用一条颜色链）。
  *
- * 色相链：`base + 0.05 - index × 0.10` → 0.71 / 0.61 / 0.51
- * （≈ 紫蓝 → 蓝 → 青蓝），跨过蓝色向两端各偏一档。
+ * 色相在 [GLOW_TRAIL_HUE_CYAN] … [GLOW_TRAIL_HUE_MAGENTA] 之间按 `index / (条数-1)` 插值：
+ * 3 条时约 0.46 / 0.65 / 0.84（青 / 蓝紫 / 品红），条数变了也自动铺满整个区间。
+ * 饱和度与亮度随 i 递减 —— 越远的余晖越暗、越"发雾"，更像辉光。
  */
 private fun glowBand(accent: Color, index: Int): Color {
     val f = index.toFloat()
+    val span = (HANDLE_GLOW_BAND_COUNT - 1).coerceAtLeast(1).toFloat()
+    val t = (f / span).coerceIn(0f, 1f)
     return accent.lit(
-        // 饱和度也微微降一点：越远的余晖越"发白/发雾"，反而更像辉光。
-        saturation = (HANDLE_GLOW_TRAIL_SATURATION - f * 0.05f).coerceIn(0f, 1f),
-        value = (HANDLE_GLOW_TRAIL_VALUE - f * 0.10f).coerceIn(0f, 1f),
-        hueShift = GLOW_HUE_BASE + GLOW_HUE_STEP * 0.5f - f * GLOW_HUE_STEP,
+        saturation = (HANDLE_GLOW_TRAIL_SATURATION - f * HANDLE_GLOW_TRAIL_SATURATION_STEP)
+            .coerceIn(0f, 1f),
+        value = (HANDLE_GLOW_TRAIL_VALUE - f * HANDLE_GLOW_TRAIL_VALUE_STEP)
+            .coerceIn(0f, 1f),
+        hueShift = GLOW_TRAIL_HUE_CYAN + (GLOW_TRAIL_HUE_MAGENTA - GLOW_TRAIL_HUE_CYAN) * t,
     )
 }
 
@@ -819,12 +868,56 @@ private const val HANDLE_PULSE_SHIFT_DP = 3f
 // ───────────────── 流光可观测性（临时排查用，定位完可整段删） ─────────────────
 
 /**
- * 是否为流光打 debug 日志。
+ * 是否开启流光探针。
  *
  * ⚠️ 这是**临时**排查开关（起因：用户实测"看不到流光"，但无法判断是"没触发"还是"看不见"）。
- * 默认 true；定位完把这里改 false（或把上面那段 `if (GLOW_DEBUG) { … }` 连同这两个常量一起删）
- * 即可彻底零开销 —— 注意 `false` 时 `if` 里的 `LaunchedEffect` 连组合都不进，不留协程。
- * 日志 tag 固定用 [GLOW_DEBUG_TAG]，用户复现一次后 `adb logcat -s HandleGlow` 即可。
+ * 默认 true；定位完把这里改 false（或把 `HistoryFloatContent` 里那段 `if (GLOW_DEBUG) { … }`
+ * 连同本段这几个常量/函数一起删）即可彻底零开销 —— `false` 时那段连组合都不进，不留协程。
+ *
+ * 探针**同时**写 logcat 和文件：实测机型（Flyme）可能把 `Log.d` 过滤掉，
+ * 所以以文件为准（见 [GLOW_DEBUG_FILE]）。
  */
 private const val GLOW_DEBUG = true
 private const val GLOW_DEBUG_TAG = "HandleGlow"
+
+/** 探针文件（在 `filesDir` 下）。读取：`adb shell run-as <pkg> cat files/glow_debug.txt`。 */
+private const val GLOW_DEBUG_FILE = "glow_debug.txt"
+
+/** 探针每行的时间戳格式（和 `EdgeDiag` 用同一套 `java.time`，minSdk 31 无需 desugar）。 */
+private val GLOW_DEBUG_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
+
+/** 探针文件超过这么多行就整体重写（只保留最后 [GLOW_DEBUG_KEEP_LINES] 行），避免无限增长。 */
+private const val GLOW_DEBUG_MAX_LINES = 200
+private const val GLOW_DEBUG_KEEP_LINES = 40
+
+/**
+ * 往探针文件追加一行（原子覆盖写，不做流式追加）。
+ *
+ * 为什么用"读全部 → 拼 → 覆盖写"而不是 `File.appendText`：
+ * - 这个文件每次复现只会有几十行（只在状态翻转时写），几百字节，整读整写的代价可以忽略；
+ * - 覆盖写是原子的（不会像追加那样出现半行），`adb cat` 任何时候读到的都是完整内容；
+ * - 也顺便解决了"无限增长"：超过 [GLOW_DEBUG_MAX_LINES] 行就只保留最后 [GLOW_DEBUG_KEEP_LINES] 行。
+ *
+ * ⚠️ 调用方必须包 `runCatching`：磁盘满 / 权限异常 / 目录不存在都不该影响把手的绘制。
+ */
+private fun writeGlowProbeLine(file: File, line: String) {
+    val existing = if (file.exists()) {
+        runCatching { file.readLines() }.getOrDefault(emptyList())
+    } else {
+        emptyList()
+    }
+    val kept = if (existing.size >= GLOW_DEBUG_MAX_LINES) {
+        existing.takeLast(GLOW_DEBUG_KEEP_LINES)
+    } else {
+        existing
+    }
+    file.writeText((kept + line).joinToString(separator = "\n", postfix = "\n"))
+}
+
+/**
+ * 探针里带上版本名：用户那边"到底装的是哪版"一直是靠问的，写进文件就不用猜了。
+ * 读不到（极少见）就返回 `?`，绝不让探针因为版本读取失败而断掉。
+ */
+private fun Context.appVersionNameSafe(): String = runCatching {
+    packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+}.getOrDefault("?")

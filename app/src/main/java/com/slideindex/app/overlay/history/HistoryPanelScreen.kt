@@ -114,6 +114,32 @@ data class HistorySearchBootstrap(
 )
 
 /**
+ * 图片块里的路径 → **能解码的绝对路径**（§0.16.18）。
+ *
+ * 图片块的 `path` 有两种来源（见 [DraftBlock.Image] 的 KDoc），这个函数就是那个"唯一的分流点"：
+ * - **绝对路径**（新选的图：trampoline 落在 cache 里的临时文件）→ **原样返回**。
+ *   不要再去拼暂存夹目录：`File(imageDir, "/data/.../cache/x.jpg")` 会拼出一个不存在的路径，
+ *   于是 `BitmapFactory` 解不出来 → 块变空白、保存时图被跳过。**这就是用户报的"加图没成功"的根因。**
+ * - **文件名**（条目里已有的图：`ClipboardContentBlock.fileName`）→ 拼暂存夹目录。
+ *
+ * ⚠️ 为什么用 `existingImageFileNames`（集合成员）而不是 `startsWith("/")` 判绝对路径：
+ * 字符串判据在"路径风格变了 / 换了存储目录"时会静默失效，而误判的代价很具体 ——
+ * 把"新选的图"当"已有文件名"去拼目录，就又会解不出来。集合成员判断不依赖路径长什么样。
+ * （`isAbsolute` 那套只留给"这个路径该不该被删"的删除逻辑，见 `discardCurrent`。）
+ *
+ * @param repository 为 null（仓储还没起来）时退化成"原样返回"，至少不会拼出更坏的路径。
+ */
+private fun resolveEditBlockImagePath(
+    path: String,
+    existingImageFileNames: Set<String>,
+    repository: com.slideindex.app.stash.StashRepository?,
+): String = if (path in existingImageFileNames) {
+    repository?.imageFilePath(path) ?: path
+} else {
+    path
+}
+
+/**
  * 把编辑条的一份块序列转成"**只带文件名**"的落盘块序列（§0.16.17 撤销用）。
  *
  * 为什么需要这个转换：撤销要走 `StashRepository.replaceBlockFileNames`（按文件名重建、
@@ -123,9 +149,9 @@ data class HistorySearchBootstrap(
  * - **cache 绝对路径**（用户本次新选、还没落盘过的图）→ 没有文件名可还原，跳过
  *   （撤销后正文里不再有它；它的临时文件由调用方保存成功时删掉/由 `pruneOrphanImages` 收敛）。
  *
- * @param existingImageFileNames 条目**保存前**就有的图片文件名集合：用来判断一个路径
- *   到底是不是"已有文件"（比 `File(path).isAbsolute` 更准 —— 暂存夹里的名字永远不是绝对路径，
- *   但这里再按"确实在这条条目里"确认一次，避免撤销时凭空塞进一张不属于它的图）。
+ * @param existingImageFileNames 条目**保存前**就有的图片文件名集合：判据用**集合成员**而不是
+ *   "路径长得像不像绝对路径"（理由见 [resolveEditBlockImagePath] 的 KDoc）——
+ *   只有"确实在这条条目里"的名字才敢交给 `replaceBlockFileNames` 去引用。
  */
 private fun blockFileNamesOf(
     blocks: List<DraftBlock>,
@@ -780,11 +806,19 @@ internal fun HistoryPanelScreen(
                 }
             }
         }
+        // §0.16.18：**只要有一张图解不出来就整次不存**（文字也不存），并明确告诉用户。
+        //
+        // 为什么不做"跳过坏图、把剩下的存下"（老行为）：那正是用户报的"加图没成功"——
+        // 图被静默丢掉、条目还是建出来了，用户下次打开才发现图不见了，而且正文位置也乱了。
+        // 现在的行为是"要么按你看到的原样存下，要么什么都不动"：
+        // 草稿（含那块坏图）留在编辑区，块内显示「加载失败」占位，用户删掉它再存即可。
+        if (failedImages > 0) {
+            showPanelMessage(R.string.stash_save_failed)
+            return
+        }
         if (parts.isEmpty()) {
-            // "全是空块"和"图全解不出来"都落在这里：对用户来说都是"没有可存的内容"，
-            // 与老实现的 `stash_composer_empty` 提示一致（本仓库不许新增字符串 key）。
-            if (failedImages > 0) showPanelMessage(R.string.stash_save_failed)
-            else showPanelMessage(R.string.stash_composer_empty)
+            // 走到这里说明**没有**解码失败的图，那就是"全是空块"（没内容可存）。
+            showPanelMessage(R.string.stash_composer_empty)
             return
         }
         val summary = snapshot.filterIsInstance<DraftBlock.Text>()
@@ -1295,6 +1329,22 @@ internal fun HistoryPanelScreen(
                         text = draft?.text?.value ?: target.text,
                         tagNames = draft?.tags?.value?.toList() ?: target.tagNames,
                     )
+                    /**
+                     * 这条条目**原本就有**的图片文件名（§0.16.18）。
+                     *
+                     * ⚠️ **必须声明在这一层**（`editTarget?.let` 里，`HistoryPanelEditBar` 调用的外面）：
+                     * 它下面有三个读者 —— 保存链的 decode 分流、保存链的撤销还原、以及块编辑器的
+                     * `resolveImagePath` / `existingImageFileNames` 两个参数。声明在 `onSave` 回调**里面**
+                     * 只有回调自己能看见，外面那两个参数就"找不到符号"（这正是上次那一处编译错）。
+                     *
+                     * 取值 = 条目**当前**的图片文件名（`allImageFileNames()` 按 `contentBlocks` 顺序）。
+                     * 用户本次新选的图这时只是 cache 绝对路径、**不在**这个集合里 —— 这正是分流的依据。
+                     */
+                    val editEntryExistingImageNames = stashEntries
+                        .firstOrNull { it.id == target.entryId }
+                        ?.allImageFileNames()
+                        .orEmpty()
+                        .toSet()
                     HistoryPanelEditBar(
                         target = barTarget,
                         availableTags = availableTags,
@@ -1324,19 +1374,14 @@ internal fun HistoryPanelScreen(
                              */
                             val beforeBlocks = editBlocks.toList()
                             val beforeTags = stashMeta.tagsOf(target.entryId)
-                            /**
-                             * 这条条目**原本就有**的图片文件名（保存前的快照）。
-                             *
-                             * 用途只有一个：撤销时把块序列按**文件名**还原（`replaceBlockFileNames`
-                             * 只认文件名、不重新落盘）。用户本次新选的那几张图这时还没有文件名
-                             * （它们只是 cache 里的绝对路径），所以还原不了 —— 见下面的说明。
-                             */
-                            val editEntryExistingImageNames = stashEntries
-                                .firstOrNull { it.id == target.entryId }
-                                ?.allImageFileNames()
-                                .orEmpty()
-                                .toSet()
+                            // ⚠️ "哪些是已有图片文件名"不在这里算：它下面的**块编辑器参数**
+                            // （`resolveImagePath` / `existingImageFileNames`）也要用同一个值，
+                            // 所以声明在 `editTarget?.let` 那一层（见上面的 KDoc）。
                             scope.launch {
+                                // §0.16.18：图片解码失败要**明确失败**，不能静默把图丢掉。
+                                // 与弹窗那条链同一个判据：解不出来就整次不存，草稿（含那块坏图）留着，
+                                // 块内也会显示「加载失败」占位 —— 用户删掉它再存即可。
+                                var failedImages = 0
                                 val parts = withContext(Dispatchers.IO) {
                                     beforeBlocks.mapNotNull { block ->
                                         when (block) {
@@ -1345,18 +1390,33 @@ internal fun HistoryPanelScreen(
                                                 ?.let { StashRichPart.Text(it) }
 
                                             is DraftBlock.Image -> {
-                                                // 已有的图（暂存夹文件名）与本次新选的图（cache 绝对路径）
-                                                // 走**同一个** decode：对 BitmapFactory 来说都只是一个路径。
-                                                val path = stashRepo?.imageFilePath(block.path) ?: block.path
-                                                decodeStashImageFile(path)
-                                                    ?.let { StashRichPart.Image(it) }
+                                                // 已有的图（暂存夹**文件名**）与本次新选的图（cache **绝对路径**）
+                                                // 走同一套解析 + decode：解析规则在下面 `resolveImagePath` 里
+                                                // （绝对路径直通，文件名才拼暂存夹目录）。
+                                                val path = resolveEditBlockImagePath(
+                                                    path = block.path,
+                                                    existingImageFileNames = editEntryExistingImageNames,
+                                                    repository = stashRepo,
+                                                )
+                                                val bitmap = decodeStashImageFile(path)
+                                                if (bitmap == null) {
+                                                    failedImages++
+                                                    null
+                                                } else {
+                                                    StashRichPart.Image(bitmap)
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                if (parts.isEmpty()) {
-                                    // 一张图都没解出来、文字也全空：不谎称成功，草稿留着可重试。
+                                if (failedImages > 0) {
+                                    // 一张都没解出来、或者有坏图：不谎称成功，草稿留着可重试。
                                     showPanelMessage(R.string.stash_save_failed)
+                                    return@launch
+                                }
+                                if (parts.isEmpty()) {
+                                    // 没有坏图却一个块都没有 → 正文是空的，与弹窗同一条提示。
+                                    showPanelMessage(R.string.stash_composer_empty)
                                     return@launch
                                 }
                                 val beforeBlockFiles = blockFileNamesOf(
@@ -1448,15 +1508,26 @@ internal fun HistoryPanelScreen(
                         },
                         onRemoveNewImage = { path ->
                             // 块的增删由编辑条做完（这里是"删了之后要干什么"）：只删 **cache 临时文件**
-                            // —— 判据是绝对路径，正文里**已有**的图存的是暂存夹文件名，
-                            // 拿它去 delete 会删掉用户的原图。
+                            // —— 正文里**已有**的图存的是暂存夹文件名，拿它去 delete 会删掉用户的原图。
+                            //
+                            // ⚠️ 这里另有一道更可靠的闸：`DraftBlockEditorSurface` 只在
+                            // `path !in existingImageFileNames` 时才调本回调（§0.16.18），
+                            // 所以"已有图"根本到不了这里；`isAbsolute` 只是第二层保险。
                             if (File(path).isAbsolute) runCatching { File(path).delete() }
                         },
-                        resolveImagePath = { name ->
-                            // 已有图片块存的是**文件名**，得拼成暂存夹里的绝对路径才解得出图
-                            // （这就是"再次编辑能看到已有图片"的关键一步）。
-                            stashRepo?.imageFilePath(name) ?: name
+                        // §0.16.18：**同一个分流规则**给显示用（绝对路径直通 / 文件名拼暂存夹目录）。
+                        // 之前这里无条件过 `imageFilePath`，把新选图的绝对路径又拼了一次目录 →
+                        // 解不出图 → 块空白、保存时被跳过（用户报的"加图没成功"）。
+                        resolveImagePath = { path ->
+                            resolveEditBlockImagePath(
+                                path = path,
+                                existingImageFileNames = editEntryExistingImageNames,
+                                repository = stashRepo,
+                            )
                         },
+                        // §0.16.18：把"条目原本就有的图片文件名"递给块编辑器 ——
+                        // 它靠这个集合决定"删块时要不要顺手删文件"（已有图绝不能删）。
+                        existingImageFileNames = editEntryExistingImageNames,
                         onHeightChanged = { editBarHeight = it },
                         modifier = Modifier.fillMaxWidth(),
                     )
