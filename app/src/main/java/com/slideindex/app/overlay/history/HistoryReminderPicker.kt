@@ -442,8 +442,8 @@ private fun historyReminderDayLabels(count: Int): List<String> {
 /** 日期滚轮可选天数（两个月足够"自定义"，再多滚起来反而难找）。 */
 private const val HistoryReminderDayCount = 60
 
-/** 分钟滚轮的步进。 */
-private const val HistoryReminderMinuteStep = 5
+/** 分钟滚轮的步进（**1 分钟一档**：用户要求"5 分钟太粗"）。 */
+private const val HistoryReminderMinuteStep = 1
 
 /** 滚轮单行高度。 */
 private val HistoryWheelItemHeight = 34.dp

@@ -86,16 +86,22 @@ import com.slideindex.app.stash.StashAccess
 import com.slideindex.app.stash.StashCoordinator
 import com.slideindex.app.stash.StashEntryType
 import com.slideindex.app.stash.StashReminderScheduler
+import com.slideindex.app.stash.StashRichPart
+import com.slideindex.app.service.StashComposerImageTrampolineActivity
+import com.slideindex.app.service.decodeStashImageFile
 import com.slideindex.app.stash.allImageFileNames
 import com.slideindex.app.stash.combinedText
 import com.slideindex.app.ui.miuix.MiuixSearchField
 import com.slideindex.app.ui.miuix.MiuixTabRowContourHost
 import com.slideindex.app.ui.miuix.MiuixTabRowWithContour
 import com.slideindex.app.ui.miuix.consumeExpandableSearchBack
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -170,6 +176,11 @@ internal fun HistoryPanelScreen(
     var composerTags by remember { mutableStateOf<Set<String>>(emptySet()) }
     /** 加号弹窗里预设的提醒时间（null = 没设）；存下时写到新条目上（§0.16.9）。 */
     var composerReminderAt by remember { mutableStateOf<Long?>(null) }
+    /**
+     * 加号弹窗里已选的图片（trampoline 解码后落在 cache 的临时文件路径，§0.16.12）。
+     * 未存下之前只存在本地 state；存下时解码成 `StashRichPart.Image`，一次写成**一条多图条目**。
+     */
+    var composerImagePaths by remember { mutableStateOf<List<String>>(emptyList()) }
     /**
      * 提醒时间选择器为谁而开：`entryId = null` = 加号弹窗里"还没存下的那条"，
      * 非 null = 已经在编辑的某条。
@@ -563,52 +574,93 @@ internal fun HistoryPanelScreen(
     }
     // 存下：设计稿 `addFromComposer()` —— 空内容只提示；成功后清空输入、**清掉搜索与标签筛选**
     // （否则新条目可能被筛掉、看不见），并保持输入条打开以便连着记。
-    val submitComposer: () -> Unit = {
-        val value = composerText.trim()
-        if (value.isEmpty()) {
-            showPanelMessage(R.string.stash_composer_empty)
+    //
+    // §0.16.12：带图片时走 `addRich`（一条多图 —— 条目本身早就支持多图块）。
+    // 三个 lambda **先声明后引用**：Kotlin 的局部 lambda 不能向前引用。
+    val onComposerSaved: (String, String) -> Unit = { newEntryId, text ->
+        haptics.confirm()
+        // 快速选的标签落到新条目上（有选才写，避免无谓的元数据写入）。
+        if (composerTags.isNotEmpty()) {
+            val tagsToApply = composerTags.toList()
+            scope.launch { metaRepo?.setTags(newEntryId, tagsToApply) }
+        }
+        // §0.16.9：加号弹窗里预设的提醒，也在拿到新条目 id 之后落盘 + 排闹钟。
+        composerReminderAt?.let { at ->
+            scope.launch {
+                metaRepo?.setReminder(newEntryId, at)
+                StashReminderScheduler.schedule(
+                    context = appContext,
+                    entryId = newEntryId,
+                    atEpochMs = at,
+                    text = text,
+                )
+            }
+        }
+        showUndoMessage(R.string.stash_saved) {
+            scope.launch { stashRepo?.delete(newEntryId) }
+        }
+    }
+    val onComposerDone: (Boolean) -> Unit = { success ->
+        if (success) {
+            composerText = ""
+            composerTags = emptySet()
+            composerReminderAt = null
+            // 设计稿 `addFromComposer()` 里 `filter = null; query = ''`：
+            // 不清筛选的话新条目可能正好落在筛选之外，用户会以为没存上。
+            //
+            // ⚠️ 这里**只清查询、不收起搜索框** —— 收起会触发搜索框自己的
+            // `focusManager.clearFocus()`，把刚拿到焦点的输入条连输入法一起踢掉。
+            viewModel.setStashSearchQuery("")
+            viewModel.setSelectedTag(null)
         } else {
-            StashCoordinator.addText(
-                value,
-                onSaved = { newEntryId ->
-                    haptics.confirm()
-                    // 快速选的标签落到新条目上（有选才写，避免无谓的元数据写入）。
-                    if (composerTags.isNotEmpty()) {
-                        val tagsToApply = composerTags.toList()
-                        scope.launch { metaRepo?.setTags(newEntryId, tagsToApply) }
+            showPanelMessage(R.string.stash_save_failed)
+        }
+    }
+    val submitComposerText: (String) -> Unit = { value ->
+        StashCoordinator.addText(
+            value,
+            onSaved = { newEntryId -> onComposerSaved(newEntryId, value) },
+            onDone = onComposerDone,
+        )
+    }
+    val submitComposerRich: (String, List<String>) -> Unit = { value, images ->
+        scope.launch {
+            // 解码离开主线程：一张长边 2048 的图解码不便宜。
+            val parts = withContext(Dispatchers.IO) {
+                buildList<StashRichPart> {
+                    if (value.isNotEmpty()) add(StashRichPart.Text(value))
+                    images.forEach { path ->
+                        decodeStashImageFile(path)?.let { add(StashRichPart.Image(it)) }
                     }
-                    // §0.16.9：加号弹窗里预设的提醒，也在拿到新条目 id 之后落盘 + 排闹钟。
-                    composerReminderAt?.let { at ->
-                        scope.launch {
-                            metaRepo?.setReminder(newEntryId, at)
-                            StashReminderScheduler.schedule(
-                                context = appContext,
-                                entryId = newEntryId,
-                                atEpochMs = at,
-                                text = value,
-                            )
-                        }
-                    }
-                    showUndoMessage(R.string.stash_saved) {
-                        scope.launch { stashRepo?.delete(newEntryId) }
-                    }
-                },
-            ) { success ->
-                if (success) {
-                    composerText = ""
-                    composerTags = emptySet()
-                    composerReminderAt = null
-                    // 设计稿 `addFromComposer()` 里 `filter = null; query = ''`：
-                    // 不清筛选的话新条目可能正好落在筛选之外，用户会以为没存上。
-                    //
-                    // ⚠️ 这里**只清查询、不收起搜索框** —— 收起会触发搜索框自己的
-                    // `focusManager.clearFocus()`，把刚拿到焦点的输入条连输入法一起踢掉。
-                    viewModel.setStashSearchQuery("")
-                    viewModel.setSelectedTag(null)
-                } else {
-                    showPanelMessage(R.string.stash_save_failed)
                 }
             }
+            if (parts.isEmpty()) {
+                showPanelMessage(R.string.stash_save_failed)
+                return@launch
+            }
+            StashCoordinator.addRich(
+                parts = parts,
+                onSaved = { newEntryId -> onComposerSaved(newEntryId, value) },
+                onDone = { success ->
+                    onComposerDone(success)
+                    if (success) {
+                        composerImagePaths = emptyList()
+                        // 图已经拷进仓库了，cache 里这份临时文件可以删。
+                        images.forEach { path -> runCatching { File(path).delete() } }
+                    }
+                },
+            )
+        }
+    }
+    val submitComposer: () -> Unit = {
+        val value = composerText.trim()
+        val images = composerImagePaths
+        when {
+            value.isEmpty() && images.isEmpty() -> {
+                showPanelMessage(R.string.stash_composer_empty)
+            }
+            images.isEmpty() -> submitComposerText(value)
+            else -> submitComposerRich(value, images)
         }
     }
     // 进程/设备重启后 AlarmManager 里的提醒会丢：进面板时按当前有效的条目补排一次
@@ -898,6 +950,9 @@ internal fun HistoryPanelScreen(
                         if (!it) {
                             composerTags = emptySet()
                             composerReminderAt = null
+                            // 关掉弹窗时把没存下的临时图一起删掉（cache 里不留垃圾）。
+                            composerImagePaths.forEach { path -> runCatching { File(path).delete() } }
+                            composerImagePaths = emptyList()
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomEnd),
@@ -967,6 +1022,19 @@ internal fun HistoryPanelScreen(
                         entryId = null,
                         initialAtMs = composerReminderAt,
                     )
+                },
+                imagePaths = composerImagePaths,
+                onAddImage = {
+                    // §0.16.12：overlay 里不能直接拉系统选图，走中转 Activity（回来的是本地文件路径）。
+                    StashComposerImageTrampolineActivity.launch(appContext) { picked ->
+                        if (picked.isNotEmpty()) {
+                            composerImagePaths = (composerImagePaths + picked).distinct()
+                        }
+                    }
+                },
+                onRemoveImage = { path ->
+                    composerImagePaths = composerImagePaths - path
+                    runCatching { File(path).delete() }
                 },
                 imeBottom = overlayImeBottom,
                 focusRequester = composerFocusRequester,

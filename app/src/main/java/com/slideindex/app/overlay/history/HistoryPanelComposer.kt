@@ -10,6 +10,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,6 +33,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,7 +46,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -107,6 +112,11 @@ internal fun HistoryComposerModal(
     reminderAtMs: Long? = null,
     /** 点那枚 ⏰ 胶囊：打开提醒时间选择器（§0.16.9）。 */
     onReminderClick: () -> Unit = {},
+    /** 已选图片的本地路径（trampoline 落下来的，见 §0.16.12）。 */
+    imagePaths: List<String> = emptyList(),
+    /** 点「＋ 图片」：走中转 Activity 选图（overlay 里不能直接拉系统选择器）。 */
+    onAddImage: () -> Unit = {},
+    onRemoveImage: (String) -> Unit = {},
     imeBottom: Dp,
     focusRequester: FocusRequester,
     onBarHeightChanged: (Dp) -> Unit = {},
@@ -189,6 +199,25 @@ internal fun HistoryComposerModal(
                         .focusRequester(focusRequester),
                 )
             }
+            // 加图片（§0.16.12）：一枚「＋ 图片」胶囊 + 已选缩略图（每张右上角可删）。
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                HistoryChip(
+                    label = stringResource(R.string.stash_composer_image_add),
+                    dotColor = null,
+                    selected = false,
+                    onClick = onAddImage,
+                )
+                imagePaths.forEach { path ->
+                    HistoryComposerThumbnail(
+                        path = path,
+                        onRemove = { onRemoveImage(path) },
+                    )
+                }
+            }
             // ⏰ 提醒胶囊**永远**在（标签可以为空），按用户建议塞在标签行的行尾、不新起一行（§0.16.9）。
             androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
@@ -232,6 +261,68 @@ internal fun HistoryComposerModal(
 
 /** 与 `MiuixExpandableSearch` 的 `ExpandableSearchFocusDelayMs` 同值。 */
 private const val HistoryComposerFocusDelayMs = 180L
+
+/** 加号弹窗里图片缩略图的边长。 */
+private val HistoryComposerThumbnailSize = 64.dp
+
+/**
+ * 加号弹窗里的一张已选图片（§0.16.12）。
+ *
+ * 图是 trampoline 解码后落在 cache 里的临时文件，所以这里只用**很小的采样**读缩略图
+ * （目标 160px，`remember(path)` 缓存），避免每帧重解码。右上角那枚 ✕ 负责移除。
+ */
+@Composable
+private fun HistoryComposerThumbnail(path: String, onRemove: () -> Unit) {
+    val theme = historyTheme()
+    val shape = RoundedCornerShape(HistoryRadii.sm)
+    val thumbnail = remember(path) { decodeComposerThumbnail(path) }
+    Box(modifier = Modifier.size(HistoryComposerThumbnailSize)) {
+        if (thumbnail != null) {
+            Image(
+                bitmap = thumbnail.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize().clip(shape),
+            )
+        } else {
+            Box(modifier = Modifier.matchParentSize().clip(shape).background(theme.fieldBg))
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(theme.text.copy(alpha = 0.55f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onRemove,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.stash_tag_delete),
+                tint = Color.White,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
+}
+
+/** 缩略图解码：只求"看得清是哪张"，长边采样到 160px 以内。 */
+private fun decodeComposerThumbnail(path: String): android.graphics.Bitmap? = runCatching {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeFile(path, bounds)
+    var sample = 1
+    while (bounds.outWidth / sample > 160 || bounds.outHeight / sample > 160) {
+        sample *= 2
+    }
+    android.graphics.BitmapFactory.decodeFile(
+        path,
+        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+    )
+}.getOrNull()
 
 /** FAB 距面板底边的距离（见 `HistoryComposerFab` 里的说明）。 */
 private val HistoryComposerFabBottomPadding = 32.dp

@@ -3047,7 +3047,8 @@
     <string name="stash_remind_custom">وقت مخصّص…</string>
     <string name="stash_remind_presets">خيارات جاهزة</string>
     <string name="stash_remind_confirm">تأكيد</string>
-    <string name="stash_remind_custom_hint">مرّر العجلات لاختيار التاريخ والوقت (الدقائق بخطوة 5).</string>
+    <string name="stash_remind_custom_hint">مرّر العجلات لاختيار التاريخ والوقت.</string>
+    <string name="stash_composer_image_add">＋ صورة</string>
     <string name="stash_remind_current">الحالي: %1$s</string>
     <string name="stash_remind_set">تم ضبط التذكير</string>
     <string name="stash_remind_cleared">تم إلغاء التذكير</string>

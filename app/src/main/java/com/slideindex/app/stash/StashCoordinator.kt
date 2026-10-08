@@ -98,7 +98,9 @@ object StashCoordinator {
         parts: List<StashRichPart>,
         htmlText: String? = null,
         source: String? = null,
-        onDone: (Boolean) -> Unit = {}
+        onDone: (Boolean) -> Unit = {},
+        /** 拿到新条目 id 时回调（加号弹窗的多图条目要用它挂标签 / 提醒 / 撤销）。 */
+        onSaved: (String) -> Unit = {},
     ) {
         val repo = StashAccess.repository
         if (repo == null) {
@@ -124,6 +126,7 @@ object StashCoordinator {
             rememberSource(entry?.id, source)
             if (entry != null) {
                 notifySaved(copied.filterIsInstance<StashRichPart.Text>().joinToString("\n") { it.text })
+                onSaved(entry.id)
             }
             onDone(entry != null)
         }

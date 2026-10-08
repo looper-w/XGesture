@@ -3067,7 +3067,8 @@
     <string name="stash_remind_custom">日時を指定…</string>
     <string name="stash_remind_presets">プリセット</string>
     <string name="stash_remind_confirm">決定</string>
-    <string name="stash_remind_custom_hint">ホイールを回して日時を選びます（分は 5 分刻み）。</string>
+    <string name="stash_remind_custom_hint">ホイールを回して日時を選びます。</string>
+    <string name="stash_composer_image_add">＋ 画像</string>
     <string name="stash_remind_current">現在：%1$s</string>
     <string name="stash_remind_set">リマインドを設定しました</string>
     <string name="stash_remind_cleared">リマインドを解除しました</string>

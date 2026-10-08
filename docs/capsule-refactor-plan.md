@@ -1234,3 +1234,37 @@ class 属性 → 失败），改成"等空档再编译"；随后 `compileFullDeb
 4. 拿不到读图权限时按现有 `StashClipboardSettingsScreen` 的媒体权限流程提示（别静默失败）。
 
 **顺序**：先把本轮（自定义时间）验完提交，再做这条 —— 它要新 Activity + 清单 + 回传通道，改动面比提醒大得多。
+
+---
+
+### 0.16.12 已完成：分钟滚轮改 1 分钟一档 + 加号弹窗「加图片（多张）」
+
+**① 分钟滚轮 1 分钟一档**（用户："5 分钟一个档位 666"）：`HistoryReminderMinuteStep` 5 → 1（60 档），
+提示文案去掉"5 分钟一档"（4 语言）。
+
+**② 加号弹窗加图片、且多张**（§0.16.11 的方案，已落地）：
+
+- 新增 `StashComposerImageTrampolineActivity`：`PickMultipleVisualMedia`（最多 9 张，**系统相册多选、不需要读图权限**，
+  没有照片选择器时自动回退 `ACTION_OPEN_DOCUMENT`）。overlay 侧用不了 `rememberLauncherForActivityResult`
+  （Compose 树里没有 `ActivityResultRegistryOwner`）—— **全 App 是单进程**（清单里没有任何 `android:process`），
+  所以直接复用现成的 `TrampolineResultPort`（token 注册回调 + `deliver`）回传。
+- ⚠️ **在 trampoline 里就把图解码（长边 ≤2048）落成 App cache 里的 JPEG，只回传路径**：相册选择器给的 URI
+  读权限绑在发起 Activity 的生命周期上，`finish()` 后再读可能 EACCES；这样做也绕开"Bundle 塞不下大图"。
+- UI：加号弹窗里在标签行**上面**多一排「＋ 图片」胶囊 + 已选缩略图（64dp，右上角 ✕ 逐张删；
+  缩略图 160px 采样 + `remember(path)` 缓存）。存下走 `addRich`（**一条多图** —— `StashRepository.addRich`
+  早就支持多图块，命名 `id_0.png`/`id_1.png`），文字非空时作为第一块 `StashRichPart.Text`；
+  标签 / 提醒 / 撤销沿用同一条路径（给 `StashCoordinator.addRich` 补了 `onSaved` 回调拿新条目 id）。
+  成功后清空 state + 删 cache 临时图；关弹窗不存也删。
+- **真机已验证**：胶囊 → 系统相册**多选**（有选择圈、底部「添加 N 项」）→ 选中 2 张 → 添加 →
+  **`cache/stash_composer_images` 里确实落了 2 张 jpg（52KB / 45KB）** ✔。
+- ⚠️ **没走完的一段（接手先看）**：缩略图渲染 + "一条多图入库"没在真机上看完 —— 从 adb 拉起选择器之后，
+  面板/overlay 没能回来（焦点停在桌面 / MainActivity），草稿状态随之丢了。**需要用户手点一次**：
+  面板 → ＋图片 → 选 2 张 → 添加 → 看缩略图 → 存下。
+  如果真机上"从选择器回来草稿也没了"，那就得把草稿（`composerImagePaths` / `composerText` 等 Compose state）
+  提到 ViewModel 或静态量 —— **这一条要专门确认**。
+- 新字符串 `stash_composer_image_add`（＋ 图片）4 语言。
+
+**同类坑（这轮踩到的）**：KDoc 里写了 `ui/**` —— `/**` 在 KDoc 内会**再开一层块注释**导致
+`Syntax error: Unclosed comment`（和之前 `image/*` 那次同一个病）。**注释里别写带 `/*` 的 glob**。
+
+**构建**：`assembleFullDebug` 一次过（上一次是上面那个注释坑），单测 **108 套 / 615 条 / 0 失败**。
