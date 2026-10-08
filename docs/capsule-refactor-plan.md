@@ -914,3 +914,64 @@ demo 是**浅色默认**（你要求的）。App 必须跟随系统。需要把 
   `LazyListState` 提到 `HistoryPanelScreen`，等真有人觉得现在这套别扭再动。
 - **收起时"条数"跟着一起藏了**（真机核对时发现）：条数与搜索框同行，想让它在滚动时也看得见，
   把它挪到页签行右端、和收起态的 `✕` 并排即可（小改）。
+
+---
+
+### 0.16.6 已完成（本轮）：三件收尾 —— 卡片分隔线 / FAB 位置 / 返回键 / 标签拖拽
+
+用户看完 §0.16.4–0.16.5 的问答后拍板"全做"，于是把攒下的四件事一次做完（轮 1+2 一次编译验完，轮 3 单独一轮）。
+
+**本轮结果**：`:app:testFullDebugUnitTest` → **108 套 / 614 条 / 0 失败**（本轮无新增单测：轮 1 是替换、
+轮 2 是窗口 flag、轮 3 的手势只能真机验；`moveTag` 的 4 条用例在 §0.16.5 已加）。
+APK 已构建并装机，`crashes` 最新仍是 `crash_20261007_170028.txt`、crash buffer 为空。
+
+**交互验证（真机核对）待补**：装机那一刻用户正在用手机（前台是 QQ），**没有在他人的应用上乱点** ——
+返回键 / 拖拽 / FAB 三项的截图核对留到设备空出来时补做，结果追加在本节末尾。
+
+#### 轮 1：两处观感/手感小修 + 一次清理
+
+1. **删掉剪贴板卡片正文与操作行之间那条浅横线**（`theme.hair` 的发丝线）。
+   - 它是 `HistoryEntryCardShell` 的 `showActionDivider`（默认 `true`）；闪念卡片早就显式传 `false` 并注释"设计稿的卡片里没有它"，剪贴板卡片却一直用默认值 —— 同一套 shell 两种观感。
+   - 核过 demo：`clipItemHtml` 与 `itemHtml` 都没有这条线，`.acts` 只有 `margin-top:2px`（整份 HTML 里唯一带上下分隔线的是 `.editbar .acts`，那是就地编辑条）。
+   - 改法：**把参数整个删掉**（只有 2 个调用点），杜绝以后再分叉。去掉后操作行与正文只隔 2dp —— 真机觉得挤的话，加的是**操作行上间距**，不是把线加回来。
+2. **FAB 不再贴屏幕底边**：`HistoryComposerFab` 原先只有 `padding(end = 16.dp)`、底部偏移是 0，
+   截图里能看到它**贴着屏幕底边、右下角被裁**，一半压在系统 home 手势区里（设计稿 `.fab` 是 `right:16px; bottom:92px`）。
+   现在给 `bottom = 32.dp` —— 不照抄 92px，那是"底部输入条"时代的坐标（输入条现在已是屏幕居中浮窗）。
+   同时把闪念列表尾部留白 `HistoryListFooterPadding` 64 → **96dp**（54 FAB + 32 偏移 + 10 余量），
+   否则最后一张卡的 ⋮ 会被 FAB 压住。剪贴板页**没有 FAB**（`composerVisible` 只在闪念页为真，真机截图核对过），不用改。
+3. **删掉死代码 `HistoryTagFilterRow.kt`**（第一版标签行，被 `HistoryPanelChipRows.kt` 取代后全仓库无人引用）。
+
+#### 轮 2：面板响应返回键 / 手势返回（功能性缺陷）
+
+- **病因**（真机验了两遍）：浏览态下面板窗是 `FLAG_NOT_FOCUSABLE`（`ensurePanelNonFocusable()` 的注释写着"不抢底层 App 焦点/输入法"），
+  **而 NOT_FOCUSABLE 的窗口收不到系统返回派发** → 返回落到下面那个 App 上（"面板还在、底下的界面退了"）；
+  只有浮窗/输入法把窗口临时切成可聚焦时，`handlePanelBack()` 才吃得到返回。宿主逻辑本身没问题
+  （`handlePanelBack` = 先问浮窗拦截器 → clipboard 输入态 → `dismiss()`），manifest 也开了 `enableOnBackInvokedCallback`。
+- **改法**：浏览态改成**可聚焦 + `FLAG_ALT_FOCUSABLE_IM`** —— 这个 flag 的语义正是"可聚焦，但不与输入法交互"：
+  我们收得到返回，**但不把输入法抢过来**。要打字时仍走原来的 `activatePanelInputFocus()`（清掉该 flag、把输入法指向面板）。
+  函数 `ensurePanelNonFocusable()` → `ensurePanelBrowsingInput()`，调用点两处（面板显示、剪贴板输入态收尾）；
+  返回处理器改为 `attach(requestViewFocus = true)` 并在窗口变可聚焦后 `refresh()` 重新注册。
+- **回退预案**：真机若出现"打开面板就弹输入法 / 点面板外不再穿透 / 打字输入法不对"，立即把这一处改回 NOT_FOCUSABLE，
+  并在本节记下原因（这属于 §0.16.3 被用户打回过的窗口结构区，不能硬来）。
+- 设备是 **Android 16（SDK 36）**：`OverlayViewBackHandler` 在"predictive back 开启"时走 `OnBackInvokedCallback`，
+  否则走旧版 `OnUnhandledKeyEventListener`（两条路**都要求窗口可聚焦**，所以这个改动对两条路都有效）。
+
+#### 轮 3：标签长按拖拽排序（数据层 §0.16.5 已就绪）
+
+- 标签列表 `Column + verticalScroll` → **`LazyColumn`**（`key = 标签名`），加 `detectDragGesturesAfterLongPress`。
+- **本地实时换位**：越过半行就把本地顺序换一格、同时把手指位移反着补回半行（行跟着手指走），
+  落下时把最终下标交给 `moveTag` —— 它的语义（移除后插到第 N 位）与拖拽过程每一步一致，
+  所以"看着落在哪"就是"落盘落在哪"。
+- 两个坑按计划绕开：
+  - **行高必须统一**（落点是按行高算的）：把「待办」只读提示从行内挪到**列表下方一行脚注**；
+    改色色板也从行内挪到**列表下方**（带"改色：<标签名>"标题）—— 顺带行内不再有高度突变。
+  - **状态用 holder 装**（`HistoryTagDragState`，`remember` 出来的稳定对象）：`pointerInput` 的 lambda 只在 key 变化时重建，
+    捕获普通 local var 会读到旧实例；holder 里另存一份**拖拽开始时的顺序快照**用来判断"到底动没动"。
+- 已知小瑕疵（有意留着、写在这儿）：拖到列表最上/最下时把位移**夹在半行以内**（否则那一行会被 LazyColumn 裁掉）；
+  标签超过 6 行（列表可滚）时**拖到边缘不会自动滚动**。
+- 验证手段：`adb shell input draganddrop`（或 `input motionevent` 手动序列）拖完截图核对顺序，并确认 `stash_meta.json` 的 order 真的重排。
+
+#### 本轮遗留
+
+- 标签拖拽没有边缘自动滚动（>6 个标签时）。
+- 面板"点面板外关窗"与输入法在轮 2 的可聚焦改动后需要真机再确认一遍（见回退预案）。
