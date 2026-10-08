@@ -424,8 +424,6 @@ internal fun HistoryStashEntryCard(
         done = done,
         // 闪念的时间画在卡片外的左侧时间轴槽里（`HistoryTimelineEntryRow`）。
         showTimestamp = false,
-        // 设计稿的卡片里没有正文/操作行之间的分隔线。
-        showActionDivider = false,
         // 头部原来那两个图标（取词 / 星标）都搬走了：星标成为操作行的主状态动作，
         // 取词进 ⋮ 菜单 —— 于是头部整行不再存在（设计稿正是如此）。
         flash = flash,

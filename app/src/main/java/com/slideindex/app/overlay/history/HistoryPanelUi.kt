@@ -65,7 +65,13 @@ internal fun Modifier.historyPanelListScrollEffects(): Modifier = this
 internal fun Modifier.historyPanelListBackdrop(backdrop: LayerBackdrop?): Modifier =
     historyPanelListScrollEffects().then(backdrop?.let { Modifier.layerBackdrop(it) } ?: Modifier)
 
-internal val HistoryListFooterPadding = 64.dp
+/**
+ * 列表尾部留给右下角 FAB 的空白（只有闪念页签有 FAB）。
+ *
+ * 54dp（FAB 本体）+ 32dp（它现在的底边偏移）+ 10dp 余量 = 96dp —— 之前是 64dp，
+ * 那是 FAB 还贴着屏幕底边时定的，结果最后一张卡的 ⋮ 会被 FAB 压住。
+ */
+internal val HistoryListFooterPadding = 96.dp
 
 /**
  * （已废弃）面板宽度 = 可用宽度 × 78%。

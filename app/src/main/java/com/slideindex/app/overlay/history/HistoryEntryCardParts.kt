@@ -279,8 +279,6 @@ internal fun HistoryEntryCardShell(
      * `clipItemHtml` 里 `when` 就在 `.box` 内）。
      */
     showTimestamp: Boolean = true,
-    /** 正文与操作行之间那条分隔线。设计稿的卡片里没有它（闪念传 `false`）。 */
-    showActionDivider: Boolean = true,
     /** 头部右侧内容。为 null 且不显示时间时，整个头部行都不出现。 */
     headerTrailing: (@Composable () -> Unit)? = null,
     /** 刚存下的那条：播一次高亮环（设计稿 `.item.flash`）。 */
@@ -402,9 +400,10 @@ internal fun HistoryEntryCardShell(
                 }
             }
             content()
-            if (showActionDivider) {
-                HorizontalDivider(color = theme.hair)
-            }
+            // ⚠️ 这里**不画**"正文 / 操作行"之间的分隔线：设计稿两张卡（`itemHtml` / `clipItemHtml`）
+            // 都没有它，`.acts` 只有 `margin-top:2px`（整份 demo 里唯一带上下分隔线的是 `.editbar .acts`，
+            // 那是就地编辑条）。之前剪贴板卡片这里画了一条 `theme.hair` 的发丝线，闪念卡片又显式关掉了，
+            // 同一套 shell 两种观感 —— 用户看图后确认删掉（§0.16.6）。
             Row(
                 // `.acts { margin-top: 2px }`；左侧那 13dp 的负 margin 由行首图标各自
                 // `offset(x = -HistoryActsOffsetX)` 实现（padding 不收负值，见 token 注释）。

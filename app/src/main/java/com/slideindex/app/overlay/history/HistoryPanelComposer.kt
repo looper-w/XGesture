@@ -218,6 +218,9 @@ internal fun HistoryComposerModal(
 /** 与 `MiuixExpandableSearch` 的 `ExpandableSearchFocusDelayMs` 同值。 */
 private const val HistoryComposerFocusDelayMs = 180L
 
+/** FAB 距面板底边的距离（见 `HistoryComposerFab` 里的说明）。 */
+private val HistoryComposerFabBottomPadding = 32.dp
+
 /** 设计稿 `.fab`：54dp、圆角 19、主题色底 + 白加号；打开后变玻璃底 + 加号转 45°（成了 ×）。 */
 @Composable
 internal fun HistoryComposerFab(
@@ -244,7 +247,11 @@ internal fun HistoryComposerFab(
     )
     Box(
         modifier = Modifier
-            .padding(end = 16.dp)
+            // 设计稿 `.fab { right:16px; bottom:92px }`：92px 是当年"底部输入条"时代的坐标
+            // （输入条现在是屏幕居中模态），但**底边偏移不能是 0** —— 之前只有 `end = 16.dp`，
+            // FAB 直接贴住屏幕底边：一半压在系统 home 手势区里、右下角还被裁掉。
+            // 32dp 是"离开手势区、又不飘到列表中间"的值（提示条那边用的是 104dp，属于更保守的一档）。
+            .padding(end = 16.dp, bottom = HistoryComposerFabBottomPadding)
             .size(54.dp)
             .shadow(if (open) 10.dp else 18.dp, shape)
             .clip(shape)
