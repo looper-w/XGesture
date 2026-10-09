@@ -578,4 +578,34 @@ class QuickWheelCodecTest {
             QuickWheelCodec.decodeSlot(explicit)!!.third.tapLaunchMode,
         )
     }
+
+    @Test
+    fun decode_dropsOutOfRangeSlotIndexesInsteadOfAllocatingThem() {
+        // 回归：`0:2000000000` 曾在 decode 里按索引补位（二十亿个容器 → OOM），
+        // `0:-1` 会让 primary[-1] 抛 IndexOutOfBounds。两者只可能来自被改坏的存档或
+        // 导入的备份，但 decode 每次读快照都会跑，一旦落盘就是"打开设置即崩"，所以必须丢弃。
+        val prefs = mutablePreferencesOf()
+        QuickWheelCodec.writeToPreferences(
+            listOf(QuickWheelCodec.newWheel(id = "w", ordinal = 1, order = 0)),
+            prefs,
+        )
+        prefs[SettingsPreferenceKeys.QUICK_WHEEL_SLOTS] = setOf(
+            QuickWheelCodec.encodeSlot(
+                "w",
+                QuickWheelCodec.primaryPath(1),
+                QuickWheelSlot(name = "保留"),
+            ),
+            QuickWheelCodec.encodeSlot("w", "0:2000000000", QuickWheelSlot(name = "越界")),
+            QuickWheelCodec.encodeSlot("w", "0:-1", QuickWheelSlot(name = "负数")),
+            QuickWheelCodec.encodeSlot("w", "0:0>1:-1", QuickWheelSlot(name = "二级负数")),
+        )
+
+        val wheel = QuickWheelCodec.decode(prefs).single()
+
+        // 只剩 index=1 那条真实记录（index=0 是按索引补出来的空位），越界记录全部丢弃。
+        assertEquals(2, wheel.slots.size)
+        assertTrue(wheel.slots[0].isEmpty)
+        assertEquals("保留", wheel.slots[1].name)
+        assertTrue(wheel.slots[0].subSlots.isEmpty())
+    }
 }

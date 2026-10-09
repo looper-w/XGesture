@@ -805,13 +805,22 @@ object QuickWheelCodec {
                     isSecondaryPath(path) -> {
                         val parent = parseSecondaryParent(path)
                         val subIndex = parseSecondaryIndex(path)
-                        if (parent != null && subIndex != null) {
+                        // 越界 / 负数一律丢弃：这里是把持久化数据摊成内存结构的唯一入口，
+                        // 旧版本或损坏的备份里出现 `0:0>1:-1` 之类不能按原样收下。
+                        if (parent != null && parent in 0 until QuickWheel.MAX_SLOTS &&
+                            subIndex != null && subIndex >= 0
+                        ) {
                             secondary.getOrPut(parent) { mutableListOf() } += subIndex to slot
                         }
                     }
 
                     else -> {
                         val index = parsePrimaryIndex(path) ?: return@forEach
+                        // ⚠️ 必须先判范围再按索引补位：`0:2000000000` 会在这里分配二十亿个容器
+                        //（OOM），`0:-1` 会让 primary[-1] 抛 IndexOutOfBounds。两者都只来自
+                        // 被改坏的存档 / 导入的备份，但 decode 每次读快照都会跑，一旦落盘就是
+                        // 「打开设置即崩」的死循环，所以宁可丢弃也不放大。
+                        if (index !in 0 until QuickWheel.MAX_SLOTS) return@forEach
                         while (primary.size <= index) primary += QuickWheelSlot()
                         primary[index] = slot
                     }
