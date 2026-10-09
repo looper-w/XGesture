@@ -71,6 +71,20 @@ class GestureActionNormalizedTest {
     }
 
     @Test
+    fun gestureActionType_idsAreStableAndUnique() {
+        // id 是持久化 ABI：GestureRuleCodec 存的就是 type.id，ShakeSettingsMutator 亦然。
+        // 所以既不允许重复，也不允许给已经发布过的动作改号。
+        // 93 = 强行停止当前应用（main 上已发布）；94 = 快捷轮盘（PR #18 合入时顺延）。
+        // 合 PR #18 时两边都写了 93，fromId(93) 只会命中先声明的那个，后果是用户存的
+        // 「快捷轮盘」手势被解析成「强行停止当前应用」（真杀前台进程）——这条测试守住它。
+        assertEquals(GestureActionType.FORCE_STOP_CURRENT_APP, GestureActionType.fromId(93))
+        assertEquals(GestureActionType.QUICK_WHEEL, GestureActionType.fromId(94))
+
+        val ids = GestureActionType.entries.map { it.id }
+        assertEquals(ids.size, ids.toSet().size)
+    }
+
+    @Test
     fun gestureRuleCodec_decodeAll_migratesLegacyRemindActions() {
         val rule = GestureRule.slot(
             side = com.slideindex.app.overlay.PanelSide.LEFT,
