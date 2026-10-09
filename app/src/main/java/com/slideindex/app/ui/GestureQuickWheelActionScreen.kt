@@ -124,6 +124,10 @@ fun GestureQuickWheelActionScreen(
         overlayMode = overlayMode,
         actions = {
             IconButton(
+                // ⚠️ 没有轮盘可选时必须禁用确认：wheels 为空时 selectedWheelId 会是空串，
+                // 点确认会落库成 GestureAction.QuickWheel(wheelId = "")，
+                // 这个绑定运行时永远找不到轮盘、静默什么都不做（界面上看着像"设了没反应"）。
+                enabled = selectedWheelId.isNotBlank(),
                 onClick = {
                     onConfirm(
                         selectedWheelId,
