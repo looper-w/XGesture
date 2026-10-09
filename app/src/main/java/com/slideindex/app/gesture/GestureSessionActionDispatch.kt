@@ -124,6 +124,29 @@ internal fun GestureSession.trackContinuousGesture(
             }
         }
 
+        is GestureAction.QuickWheel -> {
+            if (!sessionContinuousPick.quickWheel) {
+                val shown = com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.show(
+                    context = sessionActionExecutor.context,
+                    settings = sessionSettings,
+                    wheelId = action.wheelId,
+                    anchorRawX = rawX,
+                    anchorRawY = rawY,
+                    actionExecutor = sessionActionExecutor,
+                    externalTracking = true,
+                    shape = action.shape,
+                    manualSectorMask = action.manualSectorMask,
+                    anchorMode = action.anchorMode
+                )
+                if (shown) {
+                    sessionContinuousPick.quickWheel = true
+                    sessionCallbacks.hapticConfirmLaunch()
+                }
+            } else {
+                com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.onExternalMove(rawX, rawY)
+            }
+        }
+
         GestureAction.FingertipRing -> {
             if (!sessionContinuousPick.fingertipRing) {
                 val shown = sessionCallbacks.onShowFingertipRing(
@@ -447,6 +470,7 @@ internal fun GestureSession.handleClassifiedGesture(
         is GestureAction.SimulatePointerSwipe,
         is GestureAction.ExecuteShellCommand,
         is GestureAction.OpenLink,
+        is GestureAction.QuickWheel,
         -> {
             sessionCallbacks.hapticConfirmLaunch()
             sessionActionExecutor.execute(

@@ -123,6 +123,10 @@ internal object SettingsPreferenceKeys {
     val QUICK_LAUNCHER_LEFT = stringSetPreferencesKey("quick_launcher_left")
     val QUICK_LAUNCHER_RIGHT = stringSetPreferencesKey("quick_launcher_right")
     val HONEYCOMB_LAUNCHER = stringSetPreferencesKey("honeycomb_launcher")
+    /** 快速启动轮盘：轮盘元数据（id / 形态 / 外观 / 名称）。 */
+    val QUICK_WHEEL_ENTRIES = stringSetPreferencesKey("quick_wheel_entries")
+    /** 快速启动轮盘：各容器（槽位）配置与单击 / 长按动作。 */
+    val QUICK_WHEEL_SLOTS = stringSetPreferencesKey("quick_wheel_slots")
     val HONEYCOMB_MODE = intPreferencesKey("honeycomb_mode")
     val HONEYCOMB_ICON_SIZE_DP = intPreferencesKey("honeycomb_icon_size_dp")
     val HONEYCOMB_SPACING_DP = intPreferencesKey("honeycomb_spacing_dp")

@@ -47,6 +47,7 @@ fun NavEntryBuilder.extensionHubNavEntries(ctx: MainNavContext) {
             bottomNavReselectCount = ctx.bottomNavReselectCount,
             onOpenLayoutSettings = { ctx.navigate(AppNavKey.HomeLayout) },
             onOpenQuickLauncher = { ctx.navigate(AppNavKey.QuickLauncher) },
+            onOpenQuickWheel = { ctx.navigate(AppNavKey.QuickWheelList) },
             onOpenHoneycombLauncher = { ctx.navigate(AppNavKey.HoneycombLauncher) },
             onOpenRingLauncher = { ctx.navigate(AppNavKey.RingLauncherSettings) },
             onOpenHolographicLauncher = { ctx.navigate(AppNavKey.HolographicLauncherSettings) },

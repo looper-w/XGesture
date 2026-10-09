@@ -127,6 +127,58 @@ internal object ThinActionIcons {
         }
     }
 
+    /**
+     * 快捷轮盘：中心一个大圆 + 外围四个小圆（对应轮盘"中心盘 + 一圈容器"的结构）。
+     *
+     * 与「指尖环」等区分：中心圆明显更大，小圆只在四个正方向，整体是一个"环形阵列"的读法。
+     */
+    val QuickWheel: ImageVector by lazy {
+        createThinIcon("ThinQuickWheel") {
+            path(
+                stroke = strokeBrush,
+                strokeLineWidth = STROKE_WIDTH,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // 中心大圆：圆心 (12,12)、半径 3.0
+                moveTo(12f, 9f)
+                curveTo(13.66f, 9f, 15f, 10.34f, 15f, 12f)
+                curveTo(15f, 13.66f, 13.66f, 15f, 12f, 15f)
+                curveTo(10.34f, 15f, 9f, 13.66f, 9f, 12f)
+                curveTo(9f, 10.34f, 10.34f, 9f, 12f, 9f)
+                close()
+                // 上：圆心 (12,4.9)、半径 1.8
+                moveTo(12f, 3.1f)
+                curveTo(12.99f, 3.1f, 13.8f, 3.91f, 13.8f, 4.9f)
+                curveTo(13.8f, 5.89f, 12.99f, 6.7f, 12f, 6.7f)
+                curveTo(11.01f, 6.7f, 10.2f, 5.89f, 10.2f, 4.9f)
+                curveTo(10.2f, 3.91f, 11.01f, 3.1f, 12f, 3.1f)
+                close()
+                // 下：圆心 (12,19.1)
+                moveTo(12f, 17.3f)
+                curveTo(12.99f, 17.3f, 13.8f, 18.11f, 13.8f, 19.1f)
+                curveTo(13.8f, 20.09f, 12.99f, 20.9f, 12f, 20.9f)
+                curveTo(11.01f, 20.9f, 10.2f, 20.09f, 10.2f, 19.1f)
+                curveTo(10.2f, 18.11f, 11.01f, 17.3f, 12f, 17.3f)
+                close()
+                // 左：圆心 (4.9,12)
+                moveTo(4.9f, 10.2f)
+                curveTo(5.89f, 10.2f, 6.7f, 11.01f, 6.7f, 12f)
+                curveTo(6.7f, 12.99f, 5.89f, 13.8f, 4.9f, 13.8f)
+                curveTo(3.91f, 13.8f, 3.1f, 12.99f, 3.1f, 12f)
+                curveTo(3.1f, 11.01f, 3.91f, 10.2f, 4.9f, 10.2f)
+                close()
+                // 右：圆心 (19.1,12)
+                moveTo(19.1f, 10.2f)
+                curveTo(20.09f, 10.2f, 20.9f, 11.01f, 20.9f, 12f)
+                curveTo(20.9f, 12.99f, 20.09f, 13.8f, 19.1f, 13.8f)
+                curveTo(18.11f, 13.8f, 17.3f, 12.99f, 17.3f, 12f)
+                curveTo(17.3f, 11.01f, 18.11f, 10.2f, 19.1f, 10.2f)
+                close()
+            }
+        }
+    }
+
   /** 3D 球 / 全息启动器 */
     val Globe: ImageVector by lazy {
         createThinIcon("ThinGlobe") {

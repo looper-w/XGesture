@@ -196,6 +196,7 @@ internal class EdgeGestureSessionCoordinator(
         RingLauncherOverlayWindow.onGestureSessionEnd()
         com.slideindex.app.overlay.fingertip.FingertipRingOverlayWindow.onGestureSessionEnd()
         com.slideindex.app.overlay.carousel.AppCarouselSwitcherOverlay.onGestureSessionEnd()
+        com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.onGestureSessionEnd()
         layoutCoordinator.notifyOverlayLayoutIfNeeded()
         notifyPresentationTouchRequirementChanged()
         notifyAccessibilityStructure()

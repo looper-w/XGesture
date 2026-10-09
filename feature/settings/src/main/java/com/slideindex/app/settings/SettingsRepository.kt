@@ -438,6 +438,8 @@ class SettingsRepository @Inject constructor(
     suspend fun setHoneycombLauncherItems(items: List<com.slideindex.app.launcher.QuickLauncherItem>) =
         overlay.setHoneycombLauncherItems(items)
 
+    suspend fun setQuickWheels(wheels: List<QuickWheel>) = overlay.setQuickWheels(wheels)
+
     suspend fun setFvRingLauncherSettings(
         axis: FvRingLauncherAxis,
         settings: FvRingLauncherSettings,

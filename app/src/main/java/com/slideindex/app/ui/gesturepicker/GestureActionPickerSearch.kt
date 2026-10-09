@@ -329,6 +329,7 @@ fun gestureActionLabelText(context: Context, action: GestureAction): String = wh
         GestureActionType.CORNER_INNER_PIN_WHEEL -> context.getString(R.string.gesture_action_corner_inner_pin_wheel)
         GestureActionType.LAUNCH_APP -> context.getString(R.string.gesture_action_launch_app)
         GestureActionType.LAUNCH_SHORTCUT -> context.getString(R.string.gesture_action_launch_shortcut)
+        GestureActionType.QUICK_WHEEL -> context.getString(R.string.gesture_action_quick_wheel)
     }
 }
 
@@ -479,6 +480,7 @@ fun gestureActionLabel(action: GestureAction, settings: AppSettings? = null): St
         GestureActionType.CORNER_INNER_PIN_WHEEL -> stringResource(R.string.gesture_action_corner_inner_pin_wheel)
         GestureActionType.LAUNCH_APP -> stringResource(R.string.gesture_action_launch_app)
         GestureActionType.LAUNCH_SHORTCUT -> stringResource(R.string.gesture_action_launch_shortcut)
+        GestureActionType.QUICK_WHEEL -> stringResource(R.string.gesture_action_quick_wheel)
     }
     }
 }
@@ -501,6 +503,7 @@ fun gestureActionSettingSubtitle(action: GestureAction): String {
             val name = if (action.keyName.isNotBlank()) action.keyName else com.slideindex.app.gesture.KeyEventPresets.getDisplayName(context, action.keyCode)
             stringResource(R.string.gesture_action_simulate_key_event_named, name)
         }
+        // 快捷轮盘不再暴露"哪个轮盘 / 形态方案"：摘要里只要知道"这个动作是调用轮盘"。
         else -> gestureActionLabel(action)
     }
 }

@@ -253,6 +253,7 @@ internal object SettingsSnapshotReader {
             ),
             honeycombDisplay = HoneycombDisplaySettings.fromPreferences(prefs),
             appCarouselSwitcher = AppCarouselSwitcherSettings.fromPreferences(prefs),
+            quickWheels = QuickWheelCodec.decode(prefs),
             fvRingLauncherVertical = FvRingLauncherSettings.fromPreferences(prefs, FvRingLauncherAxis.VERTICAL),
             fvRingLauncherHorizontal = FvRingLauncherSettings.fromPreferences(prefs, FvRingLauncherAxis.HORIZONTAL),
             fvRingLauncherLinkAppearanceAxes = FvRingLauncherSettings.linkFlagsFromPreferences(prefs).linkAppearanceAxes,

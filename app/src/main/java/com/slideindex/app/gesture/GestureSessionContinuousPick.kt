@@ -5,9 +5,14 @@ internal class GestureSessionContinuousPick {
     var quickLauncher = false
     var shell = false
     var honeycomb = false
+
+    /** 圆环启动器（上游由 AppSwitcher 改名而来）。 */
     var ringLauncher = false
     var appCarouselSwitcher = false
     var fingertipRing = false
+
+    /** 快捷轮盘（本次新增）。 */
+    var quickWheel = false
 
     fun taskSwitcherActive(): Boolean = taskSwitcher
 
@@ -22,6 +27,8 @@ internal class GestureSessionContinuousPick {
     fun appCarouselSwitcherActive(): Boolean = appCarouselSwitcher
 
     fun fingertipRingActive(): Boolean = fingertipRing
+
+    fun quickWheelActive(): Boolean = quickWheel
 
     fun clearQuickLauncher() {
         quickLauncher = false
@@ -47,6 +54,10 @@ internal class GestureSessionContinuousPick {
         fingertipRing = false
     }
 
+    fun clearQuickWheel() {
+        quickWheel = false
+    }
+
     fun reset() {
         taskSwitcher = false
         quickLauncher = false
@@ -55,5 +66,6 @@ internal class GestureSessionContinuousPick {
         ringLauncher = false
         appCarouselSwitcher = false
         fingertipRing = false
+        quickWheel = false
     }
 }

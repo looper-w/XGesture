@@ -27,6 +27,7 @@ import com.slideindex.app.clipboard.ClipboardFocusReader
 import com.slideindex.app.overlay.HoneycombAppPickerOverlayWindow
 import com.slideindex.app.overlay.ringlauncher.RingLauncherOverlayWindow
 import com.slideindex.app.overlay.holographic.HolographicLauncherOverlayWindow
+import com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow
 import com.slideindex.app.overlay.OhoQuickToolsOverlayWindow
 import com.slideindex.app.overlay.PanelSide
 import com.slideindex.app.overlay.WidgetPopupOverlayWindow
@@ -241,6 +242,22 @@ class ActionExecutor(
                         context = context,
                         settings = settings,
                         actionExecutor = this
+                    )
+                }
+            is GestureAction.QuickWheel ->
+                overlayPanels.showStandaloneOverlay(anchorRawY) { y ->
+                    val x = anchorRawX ?: (context.resources.displayMetrics.widthPixels / 2f)
+                    QuickWheelOverlayWindow.show(
+                        context = context,
+                        settings = settings,
+                        wheelId = action.wheelId,
+                        anchorRawX = x,
+                        anchorRawY = y,
+                        actionExecutor = this,
+                        externalTracking = continueTouch,
+                        shape = action.shape,
+                        manualSectorMask = action.manualSectorMask,
+                        anchorMode = action.anchorMode,
                     )
                 }
             GestureAction.WidgetPopupOverlay ->

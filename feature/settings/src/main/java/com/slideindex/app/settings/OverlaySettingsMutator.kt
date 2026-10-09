@@ -582,6 +582,10 @@ class OverlaySettingsMutator @Inject constructor(
         prefs[SettingsPreferenceKeys.HONEYCOMB_LAUNCHER] = QuickLauncherItemCodec.encodeAll(items)
     }
 
+    suspend fun setQuickWheels(wheels: List<QuickWheel>) = editor.edit { prefs ->
+        QuickWheelCodec.writeToPreferences(wheels, prefs)
+    }
+
     suspend fun setFvRingLauncherSettings(
         axis: FvRingLauncherAxis,
         settings: FvRingLauncherSettings,

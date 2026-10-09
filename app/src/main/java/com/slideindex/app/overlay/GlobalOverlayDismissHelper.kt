@@ -49,6 +49,7 @@ object GlobalOverlayDismissHelper {
         runCatching { RingLauncherOverlayWindow.dismiss() }
         runCatching { com.slideindex.app.overlay.fingertip.FingertipRingOverlayWindow.dismiss() }
         runCatching { com.slideindex.app.overlay.carousel.AppCarouselSwitcherOverlay.dismiss() }
+        runCatching { com.slideindex.app.overlay.quickwheel.QuickWheelOverlayWindow.dismiss() }
         runCatching { FloatBallImageSearchPanel.dismiss() }
         runCatching { FloatBallStashPanel.dismiss() }
         runCatching { FreezerOverlayWindow.dismiss() }

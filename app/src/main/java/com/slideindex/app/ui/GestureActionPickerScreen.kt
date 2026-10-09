@@ -27,6 +27,8 @@ import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.ActionPickerCatalogPolicy
 import com.slideindex.app.gesture.GestureTriggerType
 import com.slideindex.app.gesture.LaunchWindowMode
+import com.slideindex.app.gesture.QuickWheelAnchorMode
+import com.slideindex.app.gesture.QuickWheelLaunchShape
 import com.slideindex.app.gesture.launchShortcutFromCreated
 import com.slideindex.app.ui.compose.rememberAppRepository
 import com.slideindex.app.ui.gesturepicker.ActionPickerTab
@@ -97,6 +99,18 @@ fun GestureActionPickerScreen(
         link?.url.orEmpty() to link?.label.orEmpty()
     }
     var openLinkConfigVisible by remember { mutableStateOf(false) }
+    val quickWheelInitial = remember(current) {
+        val wheelAction = current as? GestureAction.QuickWheel
+        Triple(
+            wheelAction?.wheelId.orEmpty(),
+            wheelAction?.shape ?: QuickWheelLaunchShape.DEFAULT,
+            wheelAction?.manualSectorMask,
+        )
+    }
+    var quickWheelConfigVisible by remember { mutableStateOf(false) }
+    val quickWheelInitialAnchorMode = remember(current) {
+        (current as? GestureAction.QuickWheel)?.anchorMode ?: QuickWheelAnchorMode.FOLLOW_FINGER
+    }
     var pendingLaunchApp by remember { mutableStateOf<AppInfo?>(null) }
 
     LaunchedEffect(Unit) {
@@ -193,7 +207,8 @@ fun GestureActionPickerScreen(
                             onOpenSimulateKeyEvent(
                                 current as? GestureAction.SimulateKeyEvent ?: GestureAction.SimulateKeyEvent()
                             )
-                        }
+                        },
+                        onOpenQuickWheel = { quickWheelConfigVisible = true }
                     )
                 }
                 ActionPickerTab.APPS -> {
@@ -248,6 +263,34 @@ fun GestureActionPickerScreen(
                     onConfirm = { url, label ->
                         openLinkConfigVisible = false
                         safeSelect(GestureAction.OpenLink(url = url, label = label))
+                    },
+                    overlayMode = true,
+                )
+            }
+        }
+
+        if (quickWheelConfigVisible) {
+            Dialog(
+                onDismissRequest = { quickWheelConfigVisible = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                GestureQuickWheelActionScreen(
+                    wheels = appSettings.launcher.quickWheels,
+                    initialWheelId = quickWheelInitial.first,
+                    initialShape = quickWheelInitial.second,
+                    initialSectorMask = quickWheelInitial.third,
+                    initialAnchorMode = quickWheelInitialAnchorMode,
+                    onBack = { quickWheelConfigVisible = false },
+                    onConfirm = { wheelId, shape, manualSectorMask, anchorMode ->
+                        quickWheelConfigVisible = false
+                        safeSelect(
+                            GestureAction.QuickWheel(
+                                wheelId = wheelId,
+                                shape = shape,
+                                manualSectorMask = manualSectorMask,
+                                anchorMode = anchorMode,
+                            ),
+                        )
                     },
                     overlayMode = true,
                 )
