@@ -98,14 +98,6 @@ fun ExtensionHubScreen(
                     }
                 )
                 add(
-                    settingsCardScopeItem("quick-wheel") {
-                        QuickWheelEntryCard(
-                            outlinedLeadingIcons = true,
-                            onClick = onOpenQuickWheel,
-                        )
-                    }
-                )
-                add(
                     settingsCardScopeItem("honeycomb-launcher") {
                         HoneycombLauncherEntryCard(
                             settings = settings,
@@ -142,6 +134,15 @@ fun ExtensionHubScreen(
                             enabled = gestureActive,
                             outlinedLeadingIcons = true,
                             onClick = onOpenWidgetPanel
+                        )
+                    }
+                )
+                // 快捷轮盘刻意排在「启动与面板」这一组的最下面。
+                add(
+                    settingsCardScopeItem("quick-wheel") {
+                        QuickWheelEntryCard(
+                            outlinedLeadingIcons = true,
+                            onClick = onOpenQuickWheel,
                         )
                     }
                 )
