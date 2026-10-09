@@ -45,6 +45,14 @@ class StashRepository @Inject constructor(
     private val appContext = context.applicationContext
     private val stashDir = File(appContext.filesDir, STASH_DIR_NAME).apply { mkdirs() }
     private val imageDir = File(stashDir, IMAGE_DIR_NAME).apply { mkdirs() }
+
+    /**
+     * 语音块的文件目录（§0.16.21）。
+     *
+     * ⚠️ **与图片分目录、不混放**：孤儿清理是"列目录 → 按引用集合删"，
+     * 混在一起的话图片的引用集合会把音频文件当孤儿删掉（反之亦然）。分目录是最省心的隔离。
+     */
+    private val audioDir = File(stashDir, AUDIO_DIR_NAME).apply { mkdirs() }
     private val indexFile = File(stashDir, INDEX_FILE_NAME)
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
@@ -95,9 +103,9 @@ class StashRepository @Inject constructor(
             writeToDisk(trimmed)
         }
         _entries.value = trimmed
-        // 启动时收敛图片文件：`delete` 为了支持撤销不再立刻删图，孤儿统一在这里清。
+        // 启动时收敛媒体文件：`delete` 为了支持撤销不再立刻删图/删录音，孤儿统一在这里清。
         if (!indexUnreadable) {
-            pruneOrphanImages(trimmed)
+            pruneOrphanMedia(trimmed)
         }
         StashAccess.repository = this
     }
@@ -156,10 +164,13 @@ class StashRepository @Inject constructor(
             withCrossProcessWrite {
                 val id = UUID.randomUUID().toString()
                 val imageTotal = parts.count { it is StashRichPart.Image }
+                val audioTotal = parts.count { it is StashRichPart.Audio }
                 var imageIndex = 0
+                var audioIndex = 0
                 val contentBlocks = mutableListOf<ClipboardContentBlock>()
                 val textParts = mutableListOf<String>()
-                val savedFiles = mutableListOf<String>()
+                /** 本次**新建**的文件（图片 + 复制进来的音频）：失败回滚时删掉它们。 */
+                val createdFiles = mutableListOf<File>()
 
                 for (part in parts) {
                     when (part) {
@@ -177,14 +188,27 @@ class StashRepository @Inject constructor(
                             }
                             val saved = saveImage(fileName, part.bitmap)
                             if (saved == null) continue
-                            savedFiles += saved
+                            createdFiles += File(imageDir, saved)
                             contentBlocks += ClipboardContentBlock.image(saved)
+                        }
+                        is StashRichPart.Audio -> {
+                            val preferred = if (audioTotal <= 1) {
+                                "$id.m4a"
+                            } else {
+                                "${id}_${audioIndex++}.m4a"
+                            }
+                            val persisted = persistAudio(part.sourcePath, preferred) ?: continue
+                            if (persisted.created) createdFiles += File(audioDir, persisted.fileName)
+                            contentBlocks += ClipboardContentBlock.audio(
+                                fileName = persisted.fileName,
+                                durationMs = part.durationMs,
+                            )
                         }
                     }
                 }
 
                 if (contentBlocks.isEmpty()) {
-                    savedFiles.forEach { File(imageDir, it).delete() }
+                    createdFiles.forEach { it.delete() }
                     return@withCrossProcessWrite null
                 }
 
@@ -200,7 +224,13 @@ class StashRepository @Inject constructor(
                     createdAtEpochMs = System.currentTimeMillis()
                 )
                 val next = trimToMax(listOf(entry) + readFromDisk())
-                writeToDisk(next)
+                try {
+                    writeToDisk(next)
+                } catch (t: Throwable) {
+                    createdFiles.forEach { it.delete() }
+                    Log.w(TAG, "addRich: index write failed, rolled back", t)
+                    return@withCrossProcessWrite null
+                }
                 _entries.value = next
                 entry
             }
@@ -379,6 +409,14 @@ class StashRepository @Inject constructor(
                         ClipboardBlockKind.IMAGE -> block.fileName.takeIf { it.isNotBlank() }
                             ?.takeIf { File(imageDir, it).exists() }
                             ?.let { ClipboardContentBlock.image(it) }
+
+                        // §0.16.21：语音块同样"只按文件名重建、不重新落盘"（撤销要用回原来那一段录音）。
+                        ClipboardBlockKind.AUDIO -> block.fileName.takeIf { it.isNotBlank() }
+                            ?.takeIf { File(audioDir, it).exists() }
+                            ?.let { ClipboardContentBlock.audio(it, block.durationMs) }
+
+                        // 未知块：本版本连它是什么都不知道，**不能**写回（写回等于把它固化下来）。
+                        ClipboardBlockKind.UNKNOWN -> null
                     }
                 }
                 if (rebuilt.isEmpty()) return@withCrossProcessWrite false
@@ -414,9 +452,11 @@ class StashRepository @Inject constructor(
         parts: List<StashRichPart>,
         keptText: String?,
     ): Boolean {
-        val savedFiles = mutableListOf<String>()
+        /** 本次**新建**的文件（图片 + 复制进来的音频）：失败回滚时删掉它们。 */
+        val createdFiles = mutableListOf<File>()
         val contentBlocks = mutableListOf<ClipboardContentBlock>()
         var imageIndex = 0
+        var audioIndex = 0
         for (part in parts) {
             when (part) {
                 is StashRichPart.Text -> {
@@ -430,17 +470,32 @@ class StashRepository @Inject constructor(
                     val saved = saveImage(fileName, part.bitmap)
                     if (saved == null) {
                         // 半路失败：把这一批已经落盘的文件收回，索引保持原样（要么全成、要么不改）。
-                        savedFiles.forEach { File(imageDir, it).delete() }
-                        Log.w(TAG, "replaceBlocks: saveImage failed, rolled back ${savedFiles.size} file(s)")
+                        createdFiles.forEach { it.delete() }
+                        Log.w(TAG, "replaceBlocks: saveImage failed, rolled back ${createdFiles.size} file(s)")
                         return false
                     }
-                    savedFiles += saved
+                    createdFiles += File(imageDir, saved)
                     contentBlocks += ClipboardContentBlock.image(saved)
+                }
+
+                is StashRichPart.Audio -> {
+                    // ⚠️ 与图片不同：音频**不重新编码**（没有这种事）。
+                    // 已经在本仓库里的（编辑条回填的文件名）直接复用 —— 复用不算"本次新建"，
+                    // 所以不进 createdFiles：回滚时绝不能删用户原来的那段录音。
+                    val persisted = persistAudio(
+                        sourcePath = part.sourcePath,
+                        preferredFileName = nextEditAudioFileName(entry.id, audioIndex++),
+                    ) ?: continue
+                    if (persisted.created) createdFiles += File(audioDir, persisted.fileName)
+                    contentBlocks += ClipboardContentBlock.audio(
+                        fileName = persisted.fileName,
+                        durationMs = part.durationMs,
+                    )
                 }
             }
         }
         if (contentBlocks.isEmpty()) {
-            savedFiles.forEach { File(imageDir, it).delete() }
+            createdFiles.forEach { it.delete() }
             return false
         }
         val firstImage = contentBlocks.firstOrNull { it.kind == ClipboardBlockKind.IMAGE }?.fileName
@@ -457,7 +512,7 @@ class StashRepository @Inject constructor(
         try {
             writeToDisk(next)
         } catch (t: Throwable) {
-            savedFiles.forEach { File(imageDir, it).delete() }
+            createdFiles.forEach { it.delete() }
             Log.w(TAG, "replaceBlocks: index write failed, rolled back", t)
             return false
         }
@@ -480,6 +535,84 @@ class StashRepository @Inject constructor(
         }
     }
 
+    /** 整体替换时新录音的文件名：`"${entryId}_voice_${序号}.m4a"`，**绝不覆盖**已有文件。 */
+    private fun nextEditAudioFileName(entryId: String, startIndex: Int): String {
+        var index = startIndex.coerceAtLeast(0)
+        while (true) {
+            val candidate = "${entryId}_voice_$index.m4a"
+            if (!File(audioDir, candidate).exists()) return candidate
+            index++
+        }
+    }
+
+    /** [persistAudio] 的结果：`fileName` 是音频目录里的文件名；`created` = 这个文件是**本次新建**的。 */
+    private data class PersistedAudio(val fileName: String, val created: Boolean)
+
+    /**
+     * 把 [sourcePath] 变成"音频目录里的一个文件"（§0.16.21）。
+     *
+     * 三条路，按"先看它是不是已经在仓库里"排序（**绝不覆盖、绝不重复复制**）：
+     * ① [sourcePath] 本身就是音频目录下的绝对路径（编辑条里若传了绝对路径）→ 直接用文件名；
+     * ② [sourcePath] 是音频目录里的**文件名**（编辑条回填的那种）→ 直接复用；
+     * ③ 其它（cache 里刚录完的临时文件）→ **复制**进音频目录，名字用 [preferredFileName]
+     *    或它的第一个空闲变体（[nextFreeAudioFileName]）。
+     *
+     * 返回 null = 源文件不可读（没录成 / 已被删）→ 调用方**跳过这一块**，不让整次保存失败。
+     */
+    private fun persistAudio(sourcePath: String, preferredFileName: String): PersistedAudio? {
+        if (sourcePath.isBlank()) return null
+        val source = File(sourcePath)
+        if (source.parentFile?.absolutePath == audioDir.absolutePath && source.exists()) {
+            return PersistedAudio(source.name, created = false)
+        }
+        val byName = File(audioDir, sourcePath)
+        if (byName.exists() && byName.isFile && byName.length() > 0L) {
+            return PersistedAudio(sourcePath, created = false)
+        }
+        if (!source.exists() || !source.isFile || source.length() <= 0L) return null
+        val targetName = nextFreeAudioFileName(preferredFileName)
+        val target = File(audioDir, targetName)
+        val copied = runCatching {
+            source.inputStream().use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            target.length() > 0L
+        }.getOrElse { error ->
+            Log.w(TAG, "persistAudio: copy failed from $sourcePath", error)
+            false
+        }
+        if (!copied) {
+            runCatching { target.delete() }
+            return null
+        }
+        return PersistedAudio(targetName, created = true)
+    }
+
+    /** 音频目录里第一个没被占用的名字（`x.m4a` → `x_1.m4a` → `x_2.m4a` …）。 */
+    private fun nextFreeAudioFileName(preferred: String): String {
+        if (preferred.isBlank()) return "${UUID.randomUUID()}.m4a"
+        if (!File(audioDir, preferred).exists()) return preferred
+        val base = preferred.substringBeforeLast('.', preferred)
+        val extension = preferred.substringAfterLast('.', "")
+        var index = 1
+        while (true) {
+            val candidate = if (extension.isEmpty()) "${base}_$index" else "${base}_$index.$extension"
+            if (!File(audioDir, candidate).exists()) return candidate
+            index++
+        }
+    }
+
+    /**
+     * 暂存夹里某段语音的**绝对路径**（§0.16.21）—— 与 [imageFilePath] 同一套理由：
+     * 音频目录是仓储的实现细节，UI 不该自己拼。`MediaPlayer` 要的就是一个能读的路径。
+     *
+     * ⚠️ 同样**不**检查文件是否存在：调用方按"播不了"兜底，IO 不该在组合里做。
+     */
+    fun audioFilePath(fileName: String?): String? {
+        val name = fileName?.takeIf { it.isNotBlank() } ?: return null
+        return File(audioDir, name).absolutePath
+    }
+
     suspend fun delete(id: String) {
         withContext(Dispatchers.IO) {
             withCrossProcessWrite {
@@ -489,7 +622,7 @@ class StashRepository @Inject constructor(
                 writeToDisk(next)
                 _entries.value = next
                 // ⚠️ 这里**故意不删图片文件**：撤销（[restore]）还要用它。
-                // 孤儿文件由 [pruneOrphanImages] 在下次启动时按"还有没有条目引用"统一清掉。
+                // 孤儿文件由 [pruneOrphanMedia] 在下次启动时按"还有没有条目引用"统一清掉。
                 //
                 // 顺手把它的元数据（标签 / 完成态 / 追加 / 来源）一起清掉。
                 // 另有一层兜底：`StashMetaRepository.pruneOrphans`（面板打开时按有效 id 收敛）。
@@ -524,7 +657,7 @@ class StashRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             withCrossProcessWrite {
                 val current = readFromDisk()
-                current.forEach { deleteEntryImages(it) }
+                current.forEach { deleteEntryMedia(it) }
                 writeToDisk(emptyList())
                 _entries.value = emptyList()
                 current.forEach { forgetMeta(it.id) }
@@ -533,18 +666,26 @@ class StashRepository @Inject constructor(
     }
 
     /**
-     * 删掉没有被任何条目引用的图片文件。
+     * 删掉没有被任何条目引用的**媒体文件**（图片 + 语音，§0.16.21 起语音也纳入同一套）。
      *
-     * 存在的意义：`delete` 不再立刻删图片（撤销要用），于是需要一个**统一的**收敛点；
-     * 顺带也清掉崩溃/异常路径留下的孤儿文件。只在启动时跑一次，成本是列一次目录。
+     * 存在的意义：`delete` 不再立刻删图片/录音（撤销要用），于是需要一个**统一的**收敛点；
+     * 顺带也清掉崩溃/异常路径留下的孤儿文件。只在启动时跑一次，成本是列两次目录。
+     *
+     * ⚠️ 两个目录**各清各的**：图片的引用集合绝不能拿去和音频目录比对（那会把所有录音删光）。
      */
-    private fun pruneOrphanImages(entries: List<StashEntry>) {
-        val referenced = entries.flatMapTo(HashSet()) { it.allImageFileNames() }
+    private fun pruneOrphanMedia(entries: List<StashEntry>) {
         runCatching {
+            val referencedImages = entries.flatMapTo(HashSet()) { it.allImageFileNames() }
             imageDir.listFiles()?.forEach { file ->
-                if (file.name !in referenced) file.delete()
+                if (file.name !in referencedImages) file.delete()
             }
-        }.onFailure { Log.w(TAG, "pruneOrphanImages failed", it) }
+        }.onFailure { Log.w(TAG, "pruneOrphanMedia(images) failed", it) }
+        runCatching {
+            val referencedAudio = entries.flatMapTo(HashSet()) { it.allAudioFileNames() }
+            audioDir.listFiles()?.forEach { file ->
+                if (file.name !in referencedAudio) file.delete()
+            }
+        }.onFailure { Log.w(TAG, "pruneOrphanMedia(audio) failed", it) }
     }
 
     /**
@@ -649,8 +790,10 @@ class StashRepository @Inject constructor(
         }
     }
 
-    private fun deleteEntryImages(entry: StashEntry) {
+    /** 删一条条目的全部媒体文件（图片 + 语音）。只在"确定不要了"的路径上用（清空 / 截断列表）。 */
+    private fun deleteEntryMedia(entry: StashEntry) {
         entry.allImageFileNames().forEach { File(imageDir, it).delete() }
+        entry.allAudioFileNames().forEach { File(audioDir, it).delete() }
     }
 
     fun loadImageThumbnailForCard(
@@ -837,7 +980,7 @@ class StashRepository @Inject constructor(
 
     private fun trimToMax(entries: List<StashEntry>): List<StashEntry> {
         if (entries.size <= MAX_ENTRIES) return entries
-        entries.drop(MAX_ENTRIES).forEach { deleteEntryImages(it) }
+        entries.drop(MAX_ENTRIES).forEach { deleteEntryMedia(it) }
         return entries.take(MAX_ENTRIES)
     }
 
@@ -845,6 +988,8 @@ class StashRepository @Inject constructor(
         const val TAG = "StashRepository"
         const val STASH_DIR_NAME = "stash"
         const val IMAGE_DIR_NAME = "images"
+        /** 语音块的文件目录（与图片**分开**，理由见 `audioDir` 的注释）。 */
+        const val AUDIO_DIR_NAME = "audio"
         const val INDEX_FILE_NAME = "index.json"
         const val STASH_PREVIEW_MAX_SIDE_PX = 720
         const val MAX_ENTRIES = 200

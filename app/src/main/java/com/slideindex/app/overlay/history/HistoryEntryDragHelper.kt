@@ -22,7 +22,7 @@ import com.slideindex.app.clipboard.resolvedContentBlocks
 import com.slideindex.app.stash.StashEntry
 import com.slideindex.app.stash.StashEntryType
 import com.slideindex.app.stash.StashRepository
-import com.slideindex.app.stash.combinedText
+import com.slideindex.app.stash.exportText
 import com.slideindex.app.stash.resolvedContentBlocks
 
 internal data class HistoryDragPreview(
@@ -71,7 +71,8 @@ internal object HistoryEntryDragHelper {
     ): HistoryDragPreview {
         val text = when (entry.type) {
             StashEntryType.TEXT -> entry.text.orEmpty()
-            StashEntryType.RICH -> entry.combinedText()
+            // §0.16.21：用 exportText（含 `[语音 0:12]`）—— 只录了音的条目用 combinedText 会是空标签。
+            StashEntryType.RICH -> entry.exportText()
             else -> ""
         }
         val bitmap = when (entry.type) {

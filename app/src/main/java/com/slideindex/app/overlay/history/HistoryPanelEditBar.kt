@@ -126,6 +126,11 @@ internal fun HistoryPanelEditBar(
     /** 删掉一个**新选**的图片块（✕ 或退格）：调用方要把 cache 里那份临时文件也删掉。 */
     onRemoveNewImage: (String) -> Unit = {},
     /**
+     * 删掉一段**刚录完**的语音（✕ 或退格，§0.16.21）：调用方要把 cache 里那份临时 m4a 也删掉。
+     * 与 [onRemoveNewImage] 完全对称。
+     */
+    onRemoveNewAudio: (String) -> Unit = {},
+    /**
      * 块里的路径 → 能解码的路径。
      *
      * ⚠️ 必须有：已有图片块存的是**文件名**（`ClipboardContentBlock.fileName`），
@@ -145,6 +150,12 @@ internal fun HistoryPanelEditBar(
      * 已有文件（用户的原图）绝不能删。判据是**集合成员**，不是"路径长得像什么"。
      */
     existingImageFileNames: Set<String> = emptySet(),
+    /**
+     * 语音块里的路径 → **能播的绝对路径**（§0.16.21，与 [resolveImagePath] 同一套分流）。
+     */
+    resolveAudioPath: (String) -> String = { it },
+    /** 条目**原本就有**的语音文件名（§0.16.21）：判据与 [existingImageFileNames] 同理。 */
+    existingAudioFileNames: Set<String> = emptySet(),
     onHeightChanged: (Dp) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -230,6 +241,7 @@ internal fun HistoryPanelEditBar(
             onBlocksChange = onBlocksChange,
             onAddImage = onAddImage,
             onRemoveNewImage = onRemoveNewImage,
+            onRemoveNewAudio = onRemoveNewAudio,
             onVoiceError = onVoiceError,
             onSubmitKey = null,
             hint = null,
@@ -239,6 +251,8 @@ internal fun HistoryPanelEditBar(
             showVoiceButton = true,
             onTextInsertedAtCursor = { updated -> onBlocksChange { updated } },
             existingImageFileNames = existingImageFileNames,
+            resolveAudioPath = resolveAudioPath,
+            existingAudioFileNames = existingAudioFileNames,
         )
         FlowRow(
             modifier = Modifier

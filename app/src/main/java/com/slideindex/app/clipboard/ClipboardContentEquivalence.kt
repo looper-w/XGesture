@@ -98,6 +98,9 @@ object ClipboardContentEquivalence {
             when (block.kind) {
                 ClipboardBlockKind.TEXT -> "T"
                 ClipboardBlockKind.IMAGE -> if (imageIdentity.isNotBlank()) "I:$imageIdentity" else "I"
+                // 见 `ClipboardContentKey.structuralKey` 的同类分支说明。
+                ClipboardBlockKind.AUDIO -> "A"
+                ClipboardBlockKind.UNKNOWN -> "U"
             }
         }
         val imageCount = blocks.count { it.kind == ClipboardBlockKind.IMAGE }

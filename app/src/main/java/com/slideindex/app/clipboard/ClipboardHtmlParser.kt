@@ -53,6 +53,14 @@ internal object ClipboardHtmlParser {
                         val src = imageSrcForFile(block.fileName) ?: return@forEach
                         append(buildImgTag(src, imageSizeForFile(block.fileName)))
                     }
+                    // 音频块在 HTML 里没有可嵌入的东西（我们**不**把音频塞进剪贴板），
+                    // 给一段可读的纯文本占位 —— 关键是"别产出空 HTML / 坏 HTML"。
+                    ClipboardBlockKind.AUDIO -> append("<p>")
+                        .append(escapePlainText(block.audioText()))
+                        .append("</p>")
+                    ClipboardBlockKind.UNKNOWN -> append("<p>")
+                        .append(escapePlainText(ClipboardUnsupportedBlockText))
+                        .append("</p>")
                 }
             }
         }

@@ -332,6 +332,10 @@ object ScreenPinManager {
                     if (copy !== loaded) loaded.recycle()
                     PinDisplayBlock.Image(copy)
                 }
+                // 语音块与未知块钉不到屏上（钉图只画文字与位图）→ 跳过这一块，其余内容照旧。
+                ClipboardBlockKind.AUDIO,
+                ClipboardBlockKind.UNKNOWN,
+                -> null
             }
         }
         if (pinBlocks.isEmpty()) return
@@ -392,6 +396,10 @@ object ScreenPinManager {
                         ?: return@mapNotNull null
                     PinDisplayBlock.Image(copy)
                 }
+                // 见 `pinClipboardEntry` 的同类分支说明。
+                ClipboardBlockKind.AUDIO,
+                ClipboardBlockKind.UNKNOWN,
+                -> null
             }
         }
         if (pinBlocks.isEmpty()) return
@@ -454,6 +462,10 @@ object ScreenPinManager {
                                     ?: return@mapNotNull null
                                 PinDisplayBlock.Image(copy)
                             }
+                            // 语音 / 未知块在钉屏上画不出来 → 跳过（其余内容照常恢复）。
+                            ClipboardBlockKind.AUDIO,
+                            ClipboardBlockKind.UNKNOWN,
+                            -> null
                         }
                     }
                     if (blocks.isEmpty()) {

@@ -50,6 +50,7 @@ import com.slideindex.app.stash.StashMetaRepository
 import com.slideindex.app.stash.StashMetaStore
 import com.slideindex.app.stash.allImageFileNames
 import com.slideindex.app.stash.combinedText
+import com.slideindex.app.stash.exportText
 import com.slideindex.app.stash.resolvedContentBlocks
 import com.slideindex.app.stash.shouldOfferExpand
 import top.yukonga.miuix.kmp.basic.Icon as MiuixIcon
@@ -339,6 +340,13 @@ internal fun HistoryStashEntryCard(
     val richImageFileNames = remember(entry.id, entry.contentBlocks, entry.imageFileName) {
         entry.allImageFileNames()
     }
+    /**
+     * 分享用的纯文本（§0.16.21）：比 [summaryText] 多一样东西 —— **语音块**。
+     *
+     * `summaryText` 走 `combinedText()`（正文语义，也是搜索语料），里面没有"语音 0:12"；
+     * 一条只录了音的闪念用它分享出去会是空的。`exportText()` 才是"导出"该有的语义。
+     */
+    val exportText = remember(entry.id, entry.type, entry.text, richBlocks) { entry.exportText() }
     val singleThumb = rememberLoadedSingleThumb(
         entryId = entry.id,
         loadKey = listOf(previewWidthPx, previewHeightPx, entry.type),
@@ -383,8 +391,8 @@ internal fun HistoryStashEntryCard(
             entry.type == StashEntryType.RICH && !expanded && richHasImages && richSelectedBitmap != null -> {
                 FloatBallTextPick.shareScreenshot(context, richSelectedBitmap)
             }
-            entry.type == StashEntryType.RICH && !expanded && summaryText.isNotBlank() -> {
-                FloatBallTextPick.shareText(context, summaryText)
+            entry.type == StashEntryType.RICH && !expanded && exportText.isNotBlank() -> {
+                FloatBallTextPick.shareText(context, exportText)
             }
             else -> onShare()
         }

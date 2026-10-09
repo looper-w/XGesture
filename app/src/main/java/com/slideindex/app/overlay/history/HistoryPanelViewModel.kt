@@ -1,5 +1,6 @@
 package com.slideindex.app.overlay.history
 
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -50,9 +51,30 @@ class HistoryPanelViewModel(
     val selectedTab: StateFlow<HistoryPanelTab> =
         savedStateHandle.getStateFlow(KEY_SELECTED_TAB, HistoryPanelTab.Stash)
 
-    /** 标签筛选：null = 「全部」。 */
-    val selectedTag: StateFlow<String?> =
-        savedStateHandle.getStateFlow<String?>(KEY_SELECTED_TAG, null)
+    /**
+     * 标签筛选的**选中集合**（多选；空集 = 「全部」，与老的单选 `null` 同义）。
+     *
+     * ⚠️ 真身**不在** ViewModel 里，而在进程级单例 [StashTagFilterState]（与草稿
+     * [StashComposerDraft] 同一套做法）：面板是 overlay 窗，关掉 / 被系统摘掉之后下次打开是
+     * **全新的 ViewModelStore + 全新的 ViewModel** —— 状态放在这里会跟着没（用户感受就是
+     * "关掉再打开，我选的标签没了"）。这里只是把它桥成 Flow，喂给 [filteredStashEntries]。
+     */
+    val selectedTags: StateFlow<Set<String>> =
+        snapshotFlow { StashTagFilterState.selectedTags.value }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                StashTagFilterState.selectedTags.value,
+            )
+
+    /** 多标签匹配方式：true = 同时含全部（AND，默认），false = 含任一（OR）。同样活在单例里。 */
+    val tagMatchAll: StateFlow<Boolean> =
+        snapshotFlow { StashTagFilterState.matchAll.value }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                StashTagFilterState.matchAll.value,
+            )
 
     /** 元数据（标签定义 / 标签绑定 / 完成态 / 追加内容 / 来源）。见 `StashMetaRepository`。 */
     private val metaStore: StateFlow<StashMetaStore> =
@@ -75,18 +97,27 @@ class HistoryPanelViewModel(
     val filteredStashEntries: StateFlow<List<StashEntry>> = combine(
         stashEntries,
         _debouncedStashSearchQuery,
-        selectedTag,
+        selectedTags,
+        tagMatchAll,
         metaStore,
-    ) { entries, query, tag, meta ->
+    ) { entries, query, tags, matchAll, meta ->
         val trimmed = query.trim()
         if (trimmed.isEmpty()) {
-            // 没在搜索：标签筛选生效（null = 「全部」）。
-            if (tag == null) entries else entries.filter { tag in meta.tagsOf(it.id) }
+            // 没在搜索：标签筛选生效（空集 = 「全部」，谓词退化成"恒真"，与改动前一字不差）。
+            entries.filter { it.matchesTagFilter(tags, matchAll, meta) }
         } else {
-            // 搜索时**忽略标签筛选**（计划 §2 与设计稿 `visible()` 同款）：
-            // 搜索是"就近找到那条"，再叠加标签只会让人搜不到自己刚存的东西。
-            // 标签名照样参与命中（`matchesQuery` 的 tagNames 形参）。
-            entries.filter { it.matchesQuery(trimmed, meta.tagsOf(it.id)) }
+            // 搜索 **∧** 标签筛选（两者都生效，都是 AND）：搜索框负责文字 / 标签名命中，
+            // 标签再叠一层。
+            //
+            // ⚠️ 这是**刻意的设计（用户已确认）**，不要再改回"搜索时忽略标签筛选"：
+            // `docs/capsule-refactor-plan.md` §0.2 / §2 一度按设计稿 `visible()` 把这条改成
+            // "搜索时忽略标签筛选"，本轮明确要求恢复叠加（`docs/capsule-feature-prompt.md` 的
+            // P0 验收标准原本也写着"标签筛选与搜索条件叠加"）。配套文案见
+            // `R.string.stash_empty_search_hint`（四套 locale 都写的是"搜索会与标签筛选同时生效"）。
+            entries.filter {
+                it.matchesQuery(trimmed, meta.tagsOf(it.id)) &&
+                    it.matchesTagFilter(tags, matchAll, meta)
+            }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -225,8 +256,19 @@ class HistoryPanelViewModel(
         savedStateHandle[KEY_SELECTED_TAB] = tab
     }
 
-    fun setSelectedTag(tag: String?) {
-        savedStateHandle[KEY_SELECTED_TAG] = tag
+    /** 点标签 = 切换选中（可多选）；再点已选中的 = 取消。状态落在进程级单例 [StashTagFilterState]。 */
+    fun toggleTagFilter(tag: String) {
+        StashTagFilterState.toggleTag(tag)
+    }
+
+    /** 清空选中（回到「全部」）。「全部」胶囊 / 「清除」胶囊 / 存下新条目后的收尾都走它。 */
+    fun clearTagFilter() {
+        StashTagFilterState.clear()
+    }
+
+    /** 「全部 / 任一」开关：true = 同时含全部（AND，默认），false = 含任一（OR）。 */
+    fun setTagMatchAll(matchAll: Boolean) {
+        StashTagFilterState.setMatchAll(matchAll)
     }
 
     fun setClipboardFilter(filter: ClipboardHistoryFilter) {
@@ -398,9 +440,27 @@ class HistoryPanelViewModel(
         private const val KEY_EXPANDED_IDS = "expanded_entry_ids"
         private const val KEY_IMAGE_INDICES = "selected_image_indices"
         private const val KEY_SELECTED_TAB = "selected_tab"
-        private const val KEY_SELECTED_TAG = "selected_tag"
         private const val KEY_CLIPBOARD_FILTER = "clipboard_filter"
         /** 侧栏入场动画 + chrome z-order 抬升后再刷新剪贴板，避免与 WM/DB 并发。 */
         private const val CLIPBOARD_TAB_ACTIVATE_DELAY_MS = 450L
     }
+}
+
+/**
+ * 标签筛选谓词（多选）。
+ *
+ * - [selected] 为空 = 没筛标签 → **恒真**（一条不过滤，行为与改动前的"「全部」"完全相同）；
+ * - [matchAll] = true → AND：条目必须**同时含全部**选中标签（默认，需求 2）；
+ * - [matchAll] = false → OR：含**任一**选中标签即可（需求 3 的「任一」）。
+ *
+ * 只选一个标签时 AND / OR 退化成同一个谓词 —— 这正是"单选时代的行为不用重学"的根据。
+ */
+private fun StashEntry.matchesTagFilter(
+    selected: Set<String>,
+    matchAll: Boolean,
+    meta: StashMetaStore,
+): Boolean {
+    if (selected.isEmpty()) return true
+    val names = meta.tagsOf(id)
+    return if (matchAll) selected.all { it in names } else selected.any { it in names }
 }

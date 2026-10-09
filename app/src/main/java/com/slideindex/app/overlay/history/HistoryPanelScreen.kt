@@ -90,7 +90,9 @@ import com.slideindex.app.stash.StashRichPart
 import com.slideindex.app.service.StashComposerImageTrampolineActivity
 import com.slideindex.app.service.decodeStashImageFile
 import com.slideindex.app.stash.allImageFileNames
+import com.slideindex.app.stash.allAudioFileNames
 import com.slideindex.app.stash.combinedText
+import com.slideindex.app.stash.exportText
 import com.slideindex.app.ui.miuix.MiuixSearchField
 import com.slideindex.app.ui.miuix.MiuixTabRowContourHost
 import com.slideindex.app.ui.miuix.MiuixTabRowWithContour
@@ -140,6 +142,22 @@ private fun resolveEditBlockImagePath(
 }
 
 /**
+ * 语音块里的路径 → **能播的绝对路径**（§0.16.21）—— 与 [resolveEditBlockImagePath] 逐字同构。
+ *
+ * 为什么不合并成一个函数：两个集合的语义不同（图片文件名 vs 音频文件名），
+ * 合成一个就得同时传两个集合并按"哪个集合命中"猜类型，那是把歧义藏进参数里。
+ */
+private fun resolveEditBlockAudioPath(
+    path: String,
+    existingAudioFileNames: Set<String>,
+    repository: com.slideindex.app.stash.StashRepository?,
+): String = if (path in existingAudioFileNames) {
+    repository?.audioFilePath(path) ?: path
+} else {
+    path
+}
+
+/**
  * 把编辑条的一份块序列转成"**只带文件名**"的落盘块序列（§0.16.17 撤销用）。
  *
  * 为什么需要这个转换：撤销要走 `StashRepository.replaceBlockFileNames`（按文件名重建、
@@ -147,7 +165,7 @@ private fun resolveEditBlockImagePath(
  * 而草稿里的图片块有两种路径（见 [DraftBlock.Image] 的 KDoc）：
  * - **暂存夹文件名**（条目里原本就有的图）→ 能按名字还原，收进结果；
  * - **cache 绝对路径**（用户本次新选、还没落盘过的图）→ 没有文件名可还原，跳过
- *   （撤销后正文里不再有它；它的临时文件由调用方保存成功时删掉/由 `pruneOrphanImages` 收敛）。
+ *   （撤销后正文里不再有它；它的临时文件由调用方保存成功时删掉/由 `pruneOrphanMedia` 收敛）。
  *
  * @param existingImageFileNames 条目**保存前**就有的图片文件名集合：判据用**集合成员**而不是
  *   "路径长得像不像绝对路径"（理由见 [resolveEditBlockImagePath] 的 KDoc）——
@@ -156,6 +174,7 @@ private fun resolveEditBlockImagePath(
 private fun blockFileNamesOf(
     blocks: List<DraftBlock>,
     existingImageFileNames: Set<String>,
+    existingAudioFileNames: Set<String> = emptySet(),
 ): List<com.slideindex.app.clipboard.ClipboardContentBlock> =
     blocks.mapNotNull { block ->
         when (block) {
@@ -164,6 +183,11 @@ private fun blockFileNamesOf(
 
             is DraftBlock.Image -> block.path.takeIf { it in existingImageFileNames }
                 ?.let { com.slideindex.app.clipboard.ClipboardContentBlock.image(it) }
+
+            // §0.16.21：与图片同一条规则 —— 只有"条目里原本就有的语音文件名"能按名字还原；
+            // 本次新录的（cache 绝对路径）没有文件名可还原，撤销后正文里不再有它。
+            is DraftBlock.Audio -> block.path.takeIf { it in existingAudioFileNames }
+                ?.let { com.slideindex.app.clipboard.ClipboardContentBlock.audio(it, block.durationMs) }
         }
     }
 
@@ -203,7 +227,8 @@ internal fun HistoryPanelScreen(
     val clipboardListLoading by viewModel.clipboardListLoading.collectAsStateWithLifecycle()
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
-    val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
+    val selectedTags by viewModel.selectedTags.collectAsStateWithLifecycle()
+    val tagMatchAll by viewModel.tagMatchAll.collectAsStateWithLifecycle()
     val stashMeta by viewModel.stashMeta.collectAsStateWithLifecycle()
     // 标签名 -> 颜色：卡片底部的标签 chip 与筛选行用的是同一份定义。
     val tagColors = remember(availableTags) { availableTags.associate { it.name to it.colorArgb } }
@@ -269,6 +294,13 @@ internal fun HistoryPanelScreen(
      */
     var composerImagePaths by StashComposerDraft.imagePaths
     /**
+     * 加号弹窗里已录语音（cache 临时文件路径，§0.16.21）。
+     *
+     * 与 [composerImagePaths] 完全同一套：它是 [composerBlocks] 里语音块的只读投影，
+     * 读它最顺的地方是"关窗时把临时音频删掉"。
+     */
+    var composerAudioPaths by StashComposerDraft.audioPaths
+    /**
      * 提醒时间选择器为谁而开：`entryId = null` = 加号弹窗里"还没存下的那条"，
      * 非 null = 已经在编辑的某条。
      */
@@ -314,6 +346,16 @@ internal fun HistoryPanelScreen(
     val composerFocusRequester = remember { FocusRequester() }
     // overlay 窗里 WindowInsets.ime 常常是 0，必须用这个（设计稿里的 IME 说明也点了名）。
     val overlayImeBottom = com.slideindex.app.overlay.rememberOverlayImeBottomHeight()
+    /**
+     * 关面板 / 面板被系统摘掉 → **自动停止语音播放**（§0.16.21）。
+     *
+     * 单例播放器活得比组合长（这是它能被外部统一叫停的前提），但这也意味着
+     * "窗没了"时没人替它收尾 —— 所以在这里补一刀。音频块自己那条 `DisposableEffect`
+     * 管的是"切条目 / 收起展开"，这一条管的是"整块面板都没了"。
+     */
+    DisposableEffect(Unit) {
+        onDispose { HistoryAudioPlayback.stop() }
+    }
     // 只在闪念页签有 FAB（设计稿 `canAdd = ptab === 'stream'`）；编辑条开着时让位给它。
     val composerVisible = selectedTab == HistoryPanelTab.Stash && editTarget == null
     LaunchedEffect(selectedTab) {
@@ -357,7 +399,7 @@ internal fun HistoryPanelScreen(
             val todayCount = stashEntries.count {
                 historyDayGroupOf(it.createdAtEpochMs, System.currentTimeMillis()) == HistoryDayGroup.Today
             }
-            if (stashSearchQuery.isBlank() && selectedTag == null) {
+            if (stashSearchQuery.isBlank() && selectedTags.isEmpty()) {
                 stringResource(R.string.stash_count_today, stashEntries.size, todayCount)
             } else {
                 stringResource(R.string.stash_count, filteredStashEntries.size)
@@ -754,7 +796,7 @@ internal fun HistoryPanelScreen(
             // ⚠️ 这里**只清查询、不收起搜索框** —— 收起会触发搜索框自己的
             // `focusManager.clearFocus()`，把刚拿到焦点的输入条连输入法一起踢掉。
             viewModel.setStashSearchQuery("")
-            viewModel.setSelectedTag(null)
+            viewModel.clearTagFilter()
         } else {
             showPanelMessage(R.string.stash_save_failed)
         }
@@ -802,6 +844,10 @@ internal fun HistoryPanelScreen(
                             val bitmap = decodeStashImageFile(block.path)
                             if (bitmap == null) failedImages++ else add(StashRichPart.Image(bitmap))
                         }
+
+                        // §0.16.21：语音**不做解码**（也解不了），只把 cache 里的绝对路径交出去，
+                        // 由仓储复制进闪念的音频目录（`persistAudio` 负责唯一文件名 + 不覆盖 + 回滚）。
+                        is DraftBlock.Audio -> add(StashRichPart.Audio(block.path, block.durationMs))
                     }
                 }
             }
@@ -831,21 +877,23 @@ internal fun HistoryPanelScreen(
             onDone = { success ->
                 onComposerDone(success)
                 if (success) {
-                    // 图已经拷进仓库了，cache 里这份临时文件可以删（块的清空在 onComposerDone 里）。
+                    // 图/录音已经拷进仓库了，cache 里这份临时文件可以删（块的清空在 onComposerDone 里）。
                     snapshot.filterIsInstance<DraftBlock.Image>()
                         .forEach { image -> runCatching { File(image.path).delete() } }
+                    snapshot.filterIsInstance<DraftBlock.Audio>()
+                        .forEach { audio -> runCatching { File(audio.path).delete() } }
                 }
             },
         )
     }
     val submitComposer: () -> Unit = {
-        // §0.16.16：判空按**块序列**来 —— 有图块就算有内容（老实现是 `composerImagePaths.isEmpty()`）。
-        val hasImage = composerBlocks.any { it is DraftBlock.Image }
+        // §0.16.16：判空按**块序列**来 —— 有图块/语音块就算有内容（老实现是 `composerImagePaths.isEmpty()`）。
+        val hasMedia = composerBlocks.any { it is DraftBlock.Image || it is DraftBlock.Audio }
         val plainText = composerText.trim()
         when {
-            plainText.isEmpty() && !hasImage -> showPanelMessage(R.string.stash_composer_empty)
-            // 没有图块：走老的单文本落库路径（`addText`），正文语义与以前完全一致。
-            !hasImage -> submitComposerText(plainText)
+            plainText.isEmpty() && !hasMedia -> showPanelMessage(R.string.stash_composer_empty)
+            // 没有媒体块：走老的单文本落库路径（`addText`），正文语义与以前完全一致。
+            !hasMedia -> submitComposerText(plainText)
             else -> scope.launch { submitComposerBlocks() }
         }
     }
@@ -1104,8 +1152,11 @@ internal fun HistoryPanelScreen(
                         when (selectedTab) {
                             HistoryPanelTab.Stash -> HistoryTagChips(
                                 tags = availableTags,
-                                selectedTag = selectedTag,
-                                onTagSelected = viewModel::setSelectedTag,
+                                selectedTags = selectedTags,
+                                matchAll = tagMatchAll,
+                                onTagToggled = viewModel::toggleTagFilter,
+                                onMatchAllChange = viewModel::setTagMatchAll,
+                                onClearSelection = viewModel::clearTagFilter,
                                 onManageTags = openTagManager,
                             )
                             HistoryPanelTab.Clipboard -> HistoryClipboardFilterChips(
@@ -1141,7 +1192,8 @@ internal fun HistoryPanelScreen(
                                 allEntries = stashEntries,
                                 filteredEntries = filteredStashEntries,
                                 searchQuery = stashSearchQuery,
-                                selectedTag = selectedTag,
+                                selectedTags = selectedTags,
+                                tagMatchAll = tagMatchAll,
                                 meta = stashMeta,
                                 nowMs = reminderClockMs,
                                 tagColors = tagColors,
@@ -1159,7 +1211,7 @@ internal fun HistoryPanelScreen(
                                 onDeleteEntry = deleteEntry,
                                 onEditEntry = openEdit,
                                 onClearSearch = { viewModel.setStashSearchQuery("") },
-                                onClearTagFilter = { viewModel.setSelectedTag(null) },
+                                onClearTagFilter = viewModel::clearTagFilter,
                                 onShowMessage = showPanelMessage,
                                 onListScrolledChange = { listScrolled = it },
                             )
@@ -1207,9 +1259,10 @@ internal fun HistoryPanelScreen(
                             // 临时图先删文件（cache 里不留垃圾），再经 `updateBlocks` 把块序列
                             // 与镜像（composerText / composerImagePaths）一起归零。
                             //
-                            // ⚠️ 顺序不能反：`composerImagePaths` 是 `composerBlocks` 的投影，
-                            // 先清块就再也拿不到那批路径，文件会留在 cache 里。
+                            // ⚠️ 顺序不能反：`composerImagePaths` / `composerAudioPaths` 是 `composerBlocks`
+                            // 的投影，先清块就再也拿不到那批路径，文件会留在 cache 里。
                             composerImagePaths.forEach { path -> runCatching { File(path).delete() } }
+                            composerAudioPaths.forEach { path -> runCatching { File(path).delete() } }
                             resetComposerBlocks()
                         }
                     },
@@ -1303,6 +1356,11 @@ internal fun HistoryPanelScreen(
                     // 那份临时文件删掉，别留垃圾。`composerImagePaths` 是块的投影，不用再手动减。
                     runCatching { File(path).delete() }
                 },
+                onRemoveAudio = { path ->
+                    // §0.16.21：与删图同一条 —— 弹窗里语音块存的永远是 cache 临时文件的绝对路径
+                    // （条目里已有的语音只会出现在编辑条那条路上），所以这里直接删。
+                    runCatching { File(path).delete() }
+                },
                 imeBottom = overlayImeBottom,
                 focusRequester = composerFocusRequester,
                 onBarHeightChanged = { composerBarHeight = it },
@@ -1343,6 +1401,16 @@ internal fun HistoryPanelScreen(
                     val editEntryExistingImageNames = stashEntries
                         .firstOrNull { it.id == target.entryId }
                         ?.allImageFileNames()
+                        .orEmpty()
+                        .toSet()
+                    /**
+                     * 这条条目**原本就有**的语音文件名（§0.16.21）—— 与
+                     * [editEntryExistingImageNames] 逐字同构：用户本次新录的语音这时只是
+                     * cache 绝对路径、**不在**这个集合里，这正是"删块时要不要删文件"的分流依据。
+                     */
+                    val editEntryExistingAudioNames = stashEntries
+                        .firstOrNull { it.id == target.entryId }
+                        ?.allAudioFileNames()
                         .orEmpty()
                         .toSet()
                     HistoryPanelEditBar(
@@ -1406,6 +1474,13 @@ internal fun HistoryPanelScreen(
                                                     StashRichPart.Image(bitmap)
                                                 }
                                             }
+
+                                            // §0.16.21：语音不做解码，只交路径 —— 已有的传**文件名**
+                                            // （仓储按名字复用、不复制），新录的传 cache 绝对路径
+                                            // （仓储复制进音频目录）。
+                                            is DraftBlock.Audio ->
+                                                block.path.takeIf { it.isNotBlank() }
+                                                    ?.let { StashRichPart.Audio(it, block.durationMs) }
                                         }
                                     }
                                 }
@@ -1422,6 +1497,7 @@ internal fun HistoryPanelScreen(
                                 val beforeBlockFiles = blockFileNamesOf(
                                     beforeBlocks,
                                     existingImageFileNames = editEntryExistingImageNames,
+                                    existingAudioFileNames = editEntryExistingAudioNames,
                                 )
                                 StashCoordinator.replaceBlocks(target.entryId, parts) { ok ->
                                     if (ok) {
@@ -1437,9 +1513,16 @@ internal fun HistoryPanelScreen(
                                         scope.launch { metaRepo?.setTags(target.entryId, tags) }
                                         editTarget = null
                                         haptics.confirm()
-                                        // 图已经拷进仓库了：cache 里那批新选的临时文件可以删，草稿整份清掉。
+                                        // 图/录音已经拷进仓库了：cache 里那批新选的临时文件可以删，草稿整份清掉。
                                         EditSessionDraft.clear()
                                         newImagePaths.forEach { path -> runCatching { File(path).delete() } }
+                                        // §0.16.21：本次**新录**的语音（cache 绝对路径）同样删掉。
+                                        // 判据用 `isAbsolute`（与 `EditSessionDraft.discardCurrent` 一致）：
+                                        // 已有语音在块里存的是文件名，绝不能拿去 delete。
+                                        beforeBlocks.filterIsInstance<DraftBlock.Audio>()
+                                            .map { it.path }
+                                            .filter { File(it).isAbsolute }
+                                            .forEach { path -> runCatching { File(path).delete() } }
                                         showUndoMessage(R.string.stash_edit_saved) {
                                             scope.launch {
                                                 // 撤销：把**保存前**的块序列放回去。
@@ -1447,9 +1530,9 @@ internal fun HistoryPanelScreen(
                                                 // ⚠️ 走 `replaceBlockFileNames`（只按文件名重建、**不**重新落盘）
                                                 // 而不是 `replaceBlocks`：后者会把那几张图重新编码成一批新文件，
                                                 // 撤销一次就多一堆孤儿文件，而且原来的文件还留着。
-                                                // 代价是"保存前刚**新选**、还没落盘过"的图没有文件名可还原 ——
-                                                // 那种块在 `blockFileNamesOf` 里被跳过（撤销后那几张图不在正文里了，
-                                                // 但仍是正常的暂存夹文件，由启动时的 `pruneOrphanImages` 收敛）。
+                                                // 代价是"保存前刚**新选**、还没落盘过"的图/录音没有文件名可还原 ——
+                                                // 那种块在 `blockFileNamesOf` 里被跳过（撤销后它们不在正文里了，
+                                                // 但仍是正常的仓库文件，由启动时的 `pruneOrphanMedia` 收敛）。
                                                 stashRepo?.replaceBlockFileNames(
                                                     target.entryId,
                                                     beforeBlockFiles,
@@ -1515,6 +1598,11 @@ internal fun HistoryPanelScreen(
                             // 所以"已有图"根本到不了这里；`isAbsolute` 只是第二层保险。
                             if (File(path).isAbsolute) runCatching { File(path).delete() }
                         },
+                        // §0.16.21：语音与图片同一套 —— 同样只删 cache 临时文件，
+                        // 同样有"已有的不在 existingAudioFileNames 里才回调"那道闸。
+                        onRemoveNewAudio = { path ->
+                            if (File(path).isAbsolute) runCatching { File(path).delete() }
+                        },
                         // §0.16.18：**同一个分流规则**给显示用（绝对路径直通 / 文件名拼暂存夹目录）。
                         // 之前这里无条件过 `imageFilePath`，把新选图的绝对路径又拼了一次目录 →
                         // 解不出图 → 块空白、保存时被跳过（用户报的"加图没成功"）。
@@ -1525,9 +1613,18 @@ internal fun HistoryPanelScreen(
                                 repository = stashRepo,
                             )
                         },
+                        // §0.16.21：语音的显示/播放走同构的分流（新录的直通、已有的拼音频目录）。
+                        resolveAudioPath = { path ->
+                            resolveEditBlockAudioPath(
+                                path = path,
+                                existingAudioFileNames = editEntryExistingAudioNames,
+                                repository = stashRepo,
+                            )
+                        },
                         // §0.16.18：把"条目原本就有的图片文件名"递给块编辑器 ——
                         // 它靠这个集合决定"删块时要不要顺手删文件"（已有图绝不能删）。
                         existingImageFileNames = editEntryExistingImageNames,
+                        existingAudioFileNames = editEntryExistingAudioNames,
                         onHeightChanged = { editBarHeight = it },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -1604,7 +1701,10 @@ private fun HistoryStashTabBody(
     allEntries: List<com.slideindex.app.stash.StashEntry>,
     filteredEntries: List<com.slideindex.app.stash.StashEntry>,
     searchQuery: String,
-    selectedTag: String?,
+    /** 标签筛选的选中集合（多选；空集 = 「全部」）。 */
+    selectedTags: Set<String>,
+    /** 多标签匹配方式：true = 同时含全部（AND，默认），false = 含任一（OR）。 */
+    tagMatchAll: Boolean,
     meta: com.slideindex.app.stash.StashMetaStore,
     /**
      * 卡片那行 ⏰ 的"现在"（§0.16.15）。由宿主每 2 秒推进一次（只在"还有未来提醒"时），
@@ -1701,8 +1801,32 @@ private fun HistoryStashTabBody(
                     onAction = onClearSearch,
                     modifier = emptyModifier,
                 )
-                selectedTag != null -> HistoryEmptyState(
-                    title = stringResource(R.string.stash_empty_tag_title, selectedTag),
+                selectedTags.size >= 2 -> HistoryEmptyState(
+                    // 多标签筛不出东西（需求 6）：AND 说"**同时**含这些标签"，这才是用户
+                    // 真正需要看到的那句 —— 他可能以为选两个标签是"或"。
+                    // OR 模式下不能这么说（那会是"没有含任一"却写成"没有同时含"），
+                    // 所以沿用旧的单标签文案 key，把选中的几个标签名连起来。
+                    //
+                    // ⚠️ 连接符 " / " 是**硬编码分隔符，不是本地化资源** —— 这是有意接受的取舍：
+                    // 只为"OR 且多标签且筛不出东西"这一种边角成因新增一条 `%1$s+%2$s` 式 key
+                    // 不划算（四套 locale 都要为一句极罕见的提示再译一遍），而 `" / "` 在四种
+                    // 语言里都读得通。**别把它当 bug 修**。
+                    title = if (tagMatchAll) {
+                        stringResource(R.string.stash_tag_filter_empty)
+                    } else {
+                        stringResource(
+                            R.string.stash_empty_tag_title,
+                            selectedTags.joinToString(" / "),
+                        )
+                    },
+                    hint = stringResource(R.string.stash_empty_tag_hint),
+                    actionLabel = stringResource(R.string.stash_tag_filter_clear),
+                    onAction = onClearTagFilter,
+                    modifier = emptyModifier,
+                )
+                // 只选中一个：标题 / 说明 / 出口**逐字沿用老的单选实现**（向后兼容）。
+                selectedTags.isNotEmpty() -> HistoryEmptyState(
+                    title = stringResource(R.string.stash_empty_tag_title, selectedTags.first()),
                     hint = stringResource(R.string.stash_empty_tag_hint),
                     actionLabel = stringResource(R.string.stash_empty_tag_action),
                     onAction = onClearTagFilter,
@@ -1807,7 +1931,10 @@ private fun HistoryStashTabBody(
                                                 FloatBallTextPick.shareScreenshot(context, bitmap)
                                             }
                                             StashEntryType.RICH -> {
-                                                val combined = entry.combinedText()
+                                                // §0.16.21：用 `exportText()` 而不是 `combinedText()` ——
+                                                // 后者是**正文**（也是搜索语料），语音块不在里面；
+                                                // 一条只录了音的闪念用 combinedText 分享出去会是空的。
+                                                val combined = entry.exportText()
                                                 if (combined.isNotBlank()) {
                                                     FloatBallTextPick.shareText(context, combined)
                                                 } else {

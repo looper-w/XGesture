@@ -67,6 +67,9 @@ object ClipboardContentKey {
             when (block.kind) {
                 ClipboardBlockKind.TEXT -> "t:${block.text.trim()}"
                 ClipboardBlockKind.IMAGE -> if (imageIdentity.isNotBlank()) "i:$imageIdentity" else "i:${imageIndex++}"
+                // 音频 / 未知块不会从剪贴板来（它们只由本仓库的闪念产出），但枚举多了一档就得给答案。
+                ClipboardBlockKind.AUDIO -> "a:${block.fileName}"
+                ClipboardBlockKind.UNKNOWN -> "u:${block.fileName}"
             }
         }
     }

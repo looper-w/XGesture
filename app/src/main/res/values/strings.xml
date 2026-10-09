@@ -3080,6 +3080,10 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="floating_panel_title">Collection panel</string>
     <string name="stash_panel_tab">Flashes</string>
     <string name="stash_tag_filter_all">All</string>
+    <string name="stash_tag_filter_any">Any</string>
+    <string name="stash_tag_filter_match_all">Match all</string>
+    <string name="stash_tag_filter_clear">Clear</string>
+    <string name="stash_tag_filter_empty">Nothing has all of these tags</string>
     <string name="stash_tag_manage_title">Tags</string>
     <string name="stash_tag_add">New tag</string>
     <string name="stash_tag_name_hint">Tag name</string>
@@ -3105,7 +3109,7 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_empty_all_title">Nothing recorded yet</string>
     <string name="stash_empty_all_hint">Long-press the handle on the right edge to jot something down</string>
     <string name="stash_empty_search_title">Nothing matching “%1$s”</string>
-    <string name="stash_empty_search_hint">Search covers the whole Flashes tab and ignores the tag filter</string>
+    <string name="stash_empty_search_hint">Search applies within the selected tags</string>
     <string name="stash_empty_search_action">Clear search</string>
     <string name="stash_empty_tag_title">Nothing tagged “%1$s”</string>
     <string name="stash_empty_tag_hint">Try another tag, or view all</string>
@@ -3159,6 +3163,15 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_voice_error_network">Speech recognition needs a network connection</string>
     <string name="stash_voice_error_permission">Microphone permission is required</string>
     <string name="stash_voice_error_generic">Voice input failed</string>
+    <!-- 语音块（§0.16.21）：把「记一条」里的麦克风改成录音，转文字挪到长按 -->
+    <string name="stash_audio_channel_name">Voice recording</string>
+    <string name="stash_audio_notification_title">Recording…</string>
+    <string name="stash_audio_notification_body">Tap cancel to discard this recording</string>
+    <string name="stash_audio_play">Play</string>
+    <string name="stash_audio_pause">Pause</string>
+    <string name="stash_audio_playback_failed">Cannot play this recording</string>
+    <string name="stash_audio_record_failed">Recording failed</string>
+    <string name="stash_audio_permission_denied">Microphone permission is required for recording</string>
     <string name="clipboard_panel_tab">Clipboard</string>
     <string name="clipboard_empty">No clipboard history yet</string>
     <string name="clipboard_search_hint">Search clipboard…</string>

@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -71,6 +73,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.slideindex.app.R
+import com.slideindex.app.clipboard.formatAudioDuration
+import com.slideindex.app.voice.StashAudioRecordSession
+import com.slideindex.app.voice.StashAudioRecorderController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
@@ -160,6 +165,12 @@ internal fun HistoryComposerModal(
     onAddImage: (onPicked: (List<String>) -> Unit) -> Unit = { },
     /** 删掉一张图（✕ 或退格）：调用方要把 cache 里那份临时文件也删掉，别留垃圾。 */
     onRemoveImage: (String) -> Unit = {},
+    /**
+     * 删掉一段语音（✕ 或退格，§0.16.21）：与 [onRemoveImage] 同一件事 ——
+     * 把 cache 里那份**刚录完还没落盘**的临时 m4a 删掉。已有文件的判据在
+     * [DraftBlockEditorSurface] 的 `existingAudioFileNames` 里（弹窗这条路上它恒为空集）。
+     */
+    onRemoveAudio: (String) -> Unit = {},
     imeBottom: Dp,
     focusRequester: FocusRequester,
     onBarHeightChanged: (Dp) -> Unit = {},
@@ -208,6 +219,7 @@ internal fun HistoryComposerModal(
                 onBlocksChange = onBlocksChange,
                 onAddImage = onAddImage,
                 onRemoveNewImage = onRemoveImage,
+                onRemoveNewAudio = onRemoveAudio,
                 onVoiceError = onVoiceError,
                 // §0.16.19（用户明确要求）：**弹窗也改成回车换行**，提交只走「存下」按钮。
                 //
@@ -317,6 +329,25 @@ internal fun DraftBlockEditorSurface(
      * 默认空集 = 没有任何"已有文件名"（弹窗里本来就全是新选的图）。
      */
     existingImageFileNames: Set<String> = emptySet(),
+    /**
+     * 删掉一段**刚录完、还没落盘**的语音（§0.16.21）：调用方负责删 cache 里的临时 m4a。
+     *
+     * 与 [onRemoveNewImage] 完全对称 —— 判据也是"这个路径在不在
+     * [existingAudioFileNames] 里"，不在才调本回调。
+     */
+    onRemoveNewAudio: (String) -> Unit = {},
+    /**
+     * 把语音块里的路径解析成"**能播的绝对路径**"（与 [resolveImagePath] 同一套分流）。
+     *
+     * 默认恒等：弹窗里本来就全是 cache 绝对路径。编辑条那边已有语音存的是**文件名**，
+     * 由调用方拼成闪念音频目录下的路径。
+     */
+    resolveAudioPath: (String) -> String = { it },
+    /**
+     * 条目**原本就有**的语音文件名（§0.16.21）—— 与 [existingImageFileNames] 同一套理由：
+     * 只用来回答"删掉这个语音块时要不要顺手删文件"（已有文件绝不能删）。
+     */
+    existingAudioFileNames: Set<String> = emptySet(),
 ) {
     /**
      * 图片块解码的采样目标（§0.16.19）。
@@ -410,41 +441,46 @@ internal fun DraftBlockEditorSurface(
         }
     }
 
-    /** 把 [paths] 里的图**按顺序**插到当前光标处（取消选图 = 空列表 = 什么都不做）。 */
-    fun insertImagesAtCursor(paths: List<String>) {
-        if (paths.isEmpty()) return
+    /**
+     * 把 [factory] 造出来的一批**新块**按顺序插到当前光标处（图 / 语音共用）。
+     *
+     * 为什么传的是"造块的 lambda"而不是现成的块：id 必须**在 transform 内部**发出来
+     * （图片那条老注释说的"复用同一份实例会让两块撞 id"）。取消（空列表）时什么都不做。
+     *
+     * ⚠️ 它必须声明在 [insertImagesAtCursor] / [insertAudioAtCursor] **之前**：
+     * Kotlin 的**局部函数不支持前向引用**（编译报 Unresolved reference）——
+     * 与"局部 lambda 不能向前引用"是同一条规则。
+     */
+    fun insertBlocksAtCursor(factory: () -> List<DraftBlock>) {
         val targetId = targetTextBlockId()
         // ⚠️ `onBlocksChange` 的 transform 是在快照之外跑的纯函数，所以在**这里**（当帧）读
         // 光标与块顺序，别在 transform 里再读一次外层快照。
         val cursor = targetId?.let { latestValues[it]?.selection?.start } ?: 0
         onBlocksChange { list ->
-            // 图片块在**每次** transform 里新建：id 必须由 `newDraftBlockId()` 单调发出来，
-            // 复用同一份 `DraftBlock.Image` 实例会让两块撞 id（Compose 的 `key` 会当成同一块）。
-            val images = paths.map { path ->
-                DraftBlock.Image(id = newDraftBlockId(), path = path)
-            }
+            val newBlocks = factory()
+            if (newBlocks.isEmpty()) return@onBlocksChange list
             // 落点的**块下标**在这里现算一次：外面那一帧读到的顺序可能已经被另一次改动
             // （比如刚删了一张图）挪过位置。
             val index = list.indexOfFirst { it.id == targetId }
             val block = list.getOrNull(index) as? DraftBlock.Text
-            // 光标还给"图后面那段文字的开头"，用户可以接着写。
+            // 光标还给"新块后面那段文字的开头"，用户可以接着写。
             var cursorTargetId: String? = null
             val next = list.toMutableList().apply {
                 if (block != null) {
-                    // 光标处切块：前段留在原块、后段进新块、图夹在中间 ——
+                    // 光标处切块：前段留在原块、后段进新块、新块夹在中间 ——
                     // 这正就是"插到正文里的光标处"。光标在开头得到 [空文字, 图, 后段]，
                     // 在结尾得到 [前段, 图, 空文字]。
                     val cut = cursor.coerceIn(0, block.value.length)
                     val head = block.copy(value = block.value.substring(0, cut))
                     val tail = newEmptyDraftTextBlock().copy(value = block.value.substring(cut))
                     set(index, head)
-                    addAll(index + 1, images)
-                    add(index + 1 + images.size, tail)
+                    addAll(index + 1, newBlocks)
+                    add(index + 1 + newBlocks.size, tail)
                     cursorTargetId = tail.id
                 } else {
-                    // 兜底：没有文字块可切（理论上不可能，见空块不变式）→ 图追加到最后，
-                    // 并在**图后面**补一个空文字块当落点，否则用户会发现图下面打不了字。
-                    addAll(images)
+                    // 兜底：没有文字块可切（理论上不可能，见空块不变式）→ 新块追加到最后，
+                    // 并在**新块后面**补一个空文字块当落点，否则用户会发现图下面打不了字。
+                    addAll(newBlocks)
                     if (lastOrNull() !is DraftBlock.Text) {
                         val tail = newEmptyDraftTextBlock()
                         add(tail)
@@ -452,13 +488,85 @@ internal fun DraftBlockEditorSurface(
                     }
                 }
                 if (cursorTargetId == null) {
-                    // 现在图后面的那一块（有后段就是它；兜底路径里就是刚补的空文字块）。
-                    val after = getOrNull(index + images.size)
+                    // 现在新块后面的那一块（有后段就是它；兜底路径里就是刚补的空文字块）。
+                    val after = getOrNull(index + newBlocks.size)
                     if (after is DraftBlock.Text) cursorTargetId = after.id
                 }
             }
             cursorTargetId?.let { id -> pendingCursor[id] = 0 }
             next
+        }
+    }
+
+    /** 把 [paths] 里的图**按顺序**插到当前光标处（取消选图 = 空列表 = 什么都不做）。 */
+    fun insertImagesAtCursor(paths: List<String>) {
+        if (paths.isEmpty()) return
+        // 图片块在**每次** transform 里新建：id 必须由 `newDraftBlockId()` 单调发出来，
+        // 复用同一份 `DraftBlock.Image` 实例会让两块撞 id（Compose 的 `key` 会当成同一块）。
+        insertBlocksAtCursor { paths.map { path -> DraftBlock.Image(id = newDraftBlockId(), path = path) } }
+    }
+
+    /** 把一段刚录完的语音插到当前光标处（§0.16.21）。 */
+    fun insertAudioAtCursor(path: String, durationMs: Long) {
+        if (path.isBlank()) return
+        insertBlocksAtCursor {
+            listOf(DraftBlock.Audio(id = newDraftBlockId(), path = path, durationMs = durationMs))
+        }
+    }
+
+    /**
+     * 删掉一个图片块（✕ 或退格）：块的增删 + "要不要顺手删文件"收在**一处**。
+     *
+     * 判据是**集合成员**（[existingImageFileNames]）而不是"路径长得像什么"：
+     * 只有"确实不是这条条目原有的文件"才删（§0.16.18）。
+     */
+    fun removeImageBlock(block: DraftBlock.Image) {
+        onBlocksChange { list -> list.filterNot { it.id == block.id } }
+        if (block.path !in existingImageFileNames) onRemoveNewImage(block.path)
+    }
+
+    /** 删掉一个语音块：与 [removeImageBlock] 完全对称（§0.16.21）。 */
+    fun removeAudioBlock(block: DraftBlock.Audio) {
+        if (HistoryAudioPlayback.isPlaying(resolveAudioPath(block.path))) HistoryAudioPlayback.stop()
+        onBlocksChange { list -> list.filterNot { it.id == block.id } }
+        if (block.path !in existingAudioFileNames) onRemoveNewAudio(block.path)
+    }
+
+    /* ---------------- 录音（§0.16.21） ---------------- */
+
+    val context = LocalContext.current
+    val recordState = StashAudioRecordSession.state
+    val recordedPath = StashAudioRecordSession.finishedPath
+    val recordErrorResId = StashAudioRecordSession.errorResId
+    /**
+     * 哪一层的块编辑器发起了录音，就由哪一层取结果（与 [HistoryVoiceMicButton] 认领识别结果
+     * 是同一个套路）：只有"之后真的开了新会话"才认领，避免两个编辑入口互相抢。
+     */
+    var claimedRecordSessionId by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(claimedRecordSessionId, recordedPath, recordErrorResId) {
+        if (claimedRecordSessionId < 0) return@LaunchedEffect
+        if (StashAudioRecordSession.sessionId <= claimedRecordSessionId) return@LaunchedEffect
+        if (recordedPath.isNotBlank()) {
+            claimedRecordSessionId = -1
+            insertAudioAtCursor(recordedPath, StashAudioRecordSession.finishedDurationMs)
+            StashAudioRecordSession.consumeResult()
+        } else if (recordErrorResId != 0) {
+            claimedRecordSessionId = -1
+            onVoiceError(recordErrorResId)
+            StashAudioRecordSession.consumeResult()
+        }
+    }
+    /** 录音计时用的"现在"：只在录音期间每 200ms 推进一次（不录音时一次都不写状态）。 */
+    var recordElapsedMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(recordState) {
+        if (recordState != StashAudioRecordSession.State.Recording) {
+            recordElapsedMs = 0L
+            return@LaunchedEffect
+        }
+        while (true) {
+            recordElapsedMs = (System.currentTimeMillis() - StashAudioRecordSession.startedAtMs)
+                .coerceAtLeast(0L)
+            delay(200)
         }
     }
 
@@ -518,12 +626,33 @@ internal fun DraftBlockEditorSurface(
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 if (showVoiceButton) {
-                    // 语音：识别结果插到**当前光标处**（插入只有本层算得准，所以按钮也留在本层）。
+                    // §0.16.21：块编辑器里的麦克风是**录音**（点按）/ 语音识别（长按）。
+                    // 识别结果插到**当前光标处**（插入只有本层算得准，所以按钮也留在本层）。
+                    if (recordState == StashAudioRecordSession.State.Recording) {
+                        Text(
+                            text = "⏺ " + formatAudioDuration(recordElapsedMs),
+                            style = androidx.compose.ui.text.TextStyle(fontSize = HistoryFontSizes.meta),
+                            color = MiuixTheme.colorScheme.error,
+                            maxLines = 1,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                    }
                     HistoryVoiceMicButton(
                         onResult = { recognized -> insertVoiceAtCursor(recognized) },
                         onError = onVoiceError,
                         size = 34.dp,
                         iconSize = 16.dp,
+                        onTapRecord = {
+                            if (StashAudioRecordSession.state == StashAudioRecordSession.State.Recording) {
+                                StashAudioRecorderController.stop(context)
+                            } else {
+                                // 先认领"这一轮"，再开录：结果回来时才知道该由哪一层插块。
+                                claimedRecordSessionId = StashAudioRecordSession.sessionId
+                                // 互斥的另一半：录音期间不许有播放（播放器是单例，这里直接叫停）。
+                                HistoryAudioPlayback.stop()
+                                StashAudioRecorderController.start(context)
+                            }
+                        },
                     )
                 }
             }
@@ -566,13 +695,15 @@ internal fun DraftBlockEditorSurface(
                             },
                             onFocusChanged = { focused -> if (focused) lastFocusedBlockId = block.id },
                             onBackspaceOnLeadingEdge = {
-                                // 位置 0 的退格 = 想删掉**前一个块**；只有前一个块是图时才需要这套
-                                // 特殊处理（文字块之间的退格交给 IME 自己）。
-                                val previous = blocks.getOrNull(index - 1) as? DraftBlock.Image
-                                if (previous != null) {
-                                    onBlocksChange { list -> list.filterNot { it.id == previous.id } }
-                                    // 删的是"哪一类图"由调用方决定清哪里：新选的图要删 cache 临时文件。
-                                    onRemoveNewImage(previous.path)
+                                // 位置 0 的退格 = 想删掉**前一个块**；只有前一个块是媒体块（图 / 语音）时
+                                // 才需要这套特殊处理（文字块之间的退格交给 IME 自己）。
+                                val previous = blocks.getOrNull(index - 1)
+                                if (previous is DraftBlock.Image || previous is DraftBlock.Audio) {
+                                    when (previous) {
+                                        is DraftBlock.Image -> removeImageBlock(previous)
+                                        is DraftBlock.Audio -> removeAudioBlock(previous)
+                                        else -> Unit
+                                    }
                                     // 焦点回到前一个文字块末尾（那块就是光标左边那段文字）。
                                     val before = blocks.getOrNull(index - 2) as? DraftBlock.Text
                                     if (before != null) pendingCursor[before.id] = before.value.length
@@ -594,17 +725,22 @@ internal fun DraftBlockEditorSurface(
                     is DraftBlock.Image -> key(block.id) {
                         DraftBlockEditorImage(
                             path = resolveImagePath(block.path),
-                            onRemove = {
-                                onBlocksChange { list -> list.filterNot { it.id == block.id } }
-                                // §0.16.18：只删**新选的** cache 临时文件；已落盘的图（文件名在
-                                // [existingImageFileNames] 里）绝不能删 —— 那是用户的原图。
-                                if (block.path !in existingImageFileNames) onRemoveNewImage(block.path)
-                            },
+                            onRemove = { removeImageBlock(block) },
                             // §0.16.18：图片块也要上报 y（插图后目标块常常就是刚补的空文字块，
                             // 但图片本身很高，用户想看到的往往是图本身）。
                             onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
                             // §0.16.19：按显示宽度解码（原来固定 480px，整宽渲染时糊）。
                             imageTargetPx = imageTargetPx,
+                        )
+                    }
+
+                    // §0.16.21：语音块 —— 整宽胶囊、点了就地播、右侧 ✕ 删（与图片块平级）。
+                    is DraftBlock.Audio -> key(block.id) {
+                        DraftBlockEditorAudio(
+                            path = resolveAudioPath(block.path),
+                            durationMs = block.durationMs,
+                            onRemove = { removeAudioBlock(block) },
+                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
                         )
                     }
                 }

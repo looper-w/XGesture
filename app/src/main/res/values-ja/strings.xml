@@ -3015,6 +3015,10 @@
     <string name="floating_panel_title">コレクションパネル</string>
     <string name="stash_panel_tab">ひらめき</string>
     <string name="stash_tag_filter_all">すべて</string>
+    <string name="stash_tag_filter_any">いずれか</string>
+    <string name="stash_tag_filter_match_all">同時</string>
+    <string name="stash_tag_filter_clear">クリア</string>
+    <string name="stash_tag_filter_empty">これらのタグをすべて含む項目はありません</string>
     <string name="stash_tag_manage_title">タグ</string>
     <string name="stash_tag_add">新しいタグ</string>
     <string name="stash_tag_name_hint">タグ名</string>
@@ -3039,7 +3043,7 @@
     <string name="stash_empty_all_title">まだ何も記録していません</string>
     <string name="stash_empty_all_hint">右端のハンドルを長押しすると、いつでも記録できます</string>
     <string name="stash_empty_search_title">「%1$s」を含む項目はありません</string>
-    <string name="stash_empty_search_hint">検索は「ひらめき」タブ全体を対象にし、タグの絞り込みは無視します</string>
+    <string name="stash_empty_search_hint">検索は選択中のタグの範囲で行われます</string>
     <string name="stash_empty_search_action">検索をクリア</string>
     <string name="stash_empty_tag_title">「%1$s」タグの項目はありません</string>
     <string name="stash_empty_tag_hint">別のタグを選ぶか、すべて表示してください</string>
@@ -3093,6 +3097,15 @@
     <string name="stash_voice_error_network">音声認識にはネットワーク接続が必要です</string>
     <string name="stash_voice_error_permission">マイクの権限が必要です</string>
     <string name="stash_voice_error_generic">音声入力に失敗しました</string>
+    <!-- 音声ブロック（§0.16.21）：メモのマイクを録音に変更し、文字起こしは長押しへ -->
+    <string name="stash_audio_channel_name">音声録音</string>
+    <string name="stash_audio_notification_title">録音中…</string>
+    <string name="stash_audio_notification_body">「キャンセル」でこの録音を破棄</string>
+    <string name="stash_audio_play">再生</string>
+    <string name="stash_audio_pause">一時停止</string>
+    <string name="stash_audio_playback_failed">この録音を再生できません</string>
+    <string name="stash_audio_record_failed">録音に失敗しました</string>
+    <string name="stash_audio_permission_denied">録音にはマイクの権限が必要です</string>
     <string name="clipboard_panel_tab">クリップボード</string>
     <string name="clipboard_empty">クリップボード履歴はまだありません</string>
     <string name="clipboard_search_hint">クリップボードを検索…</string>

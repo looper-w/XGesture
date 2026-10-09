@@ -79,6 +79,15 @@ internal object EditSessionDraft {
     val imagePaths = mutableStateOf<List<String>>(emptyList())
 
     /**
+     * 正文里的语音块路径（§0.16.21），由 [updateBlocks] 同步。
+     *
+     * 与 [imagePaths] 同一套：里面混着 **cache 临时文件绝对路径**（刚录完的）与
+     * 音频目录里的**文件名**（条目里已有的）。区分方式不靠猜 —— 见 [discardCurrent]
+     * 里那条"只删绝对路径"的判据。
+     */
+    val audioPaths = mutableStateOf<List<String>>(emptyList())
+
+    /**
      * 标签草稿；每次勾选/取消都会更新（见类注释）。
      *
      * `null` = 用户没动过标签（用条目当前绑定的标签）。
@@ -120,7 +129,10 @@ internal object EditSessionDraft {
     fun seedFromEntry(entry: StashEntry) {
         if (entryId.value != entry.id) return
         // 已经有块了（用户改过）：保持不动。空块序列只在"刚开始编辑这条"时出现。
-        if (blocks.any { it is DraftBlock.Image } || blocks.any { it is DraftBlock.Text && it.value.isNotEmpty() }) {
+        if (blocks.any { it is DraftBlock.Image } ||
+            blocks.any { it is DraftBlock.Audio } ||
+            blocks.any { it is DraftBlock.Text && it.value.isNotEmpty() }
+        ) {
             return
         }
         val seeded = entry.resolvedContentBlocks().mapNotNull { block ->
@@ -132,6 +144,21 @@ internal object EditSessionDraft {
 
                 ClipboardBlockKind.IMAGE -> block.fileName.takeIf { it.isNotBlank() }
                     ?.let { DraftBlock.Image(id = newDraftBlockId(), path = it) }
+
+                // §0.16.21：语音块**存文件名**（与图片同一套），播/存时由调用方拼成路径；
+                // 时长跟着块走（不重算）。
+                ClipboardBlockKind.AUDIO -> block.fileName.takeIf { it.isNotBlank() }
+                    ?.let {
+                        DraftBlock.Audio(
+                            id = newDraftBlockId(),
+                            path = it,
+                            durationMs = block.durationMs,
+                        )
+                    }
+
+                // 未知块**不铺进编辑器**：本版本连它是什么都不知道，铺进来再存回去
+                // 就等于把"不支持的内容"降级成"空"（数据损坏）。它在卡片上是只读的占位。
+                ClipboardBlockKind.UNKNOWN -> null
             }
         }
         replaceBlocksInternal(seeded)
@@ -153,25 +180,29 @@ internal object EditSessionDraft {
 
     /** [updateBlocks] / [seedFromEntry] 共用的落库步骤。 */
     private fun replaceBlocksInternal(next: List<DraftBlock>) {
-        val normalized = syncDraftMirrors(next, text, imagePaths)
+        val normalized = syncDraftMirrors(next, text, imagePaths, audioPaths)
         blocks.clear()
         blocks.addAll(normalized)
     }
 
-    /** 丢弃当前草稿的全部内容（含 cache 临时图），但不改变谁在编辑 —— [begin] 内部也用它。 */
+    /** 丢弃当前草稿的全部内容（含 cache 临时图 / 临时音频），但不改变谁在编辑 —— [begin] 内部也用它。 */
     private fun discardCurrent() {
-        // 先删图再清空列表：反过来的话路径就找不回来了（cache 里会留垃圾）。
-        // ⚠️ 只删 **cache 临时文件**：正文里的图片块存的是暂存夹里的**文件名**，
-        // 拿它去 `File(...).delete()` 会删掉用户的原图 —— 这是最危险的一步，判据必须可靠。
+        // 先删文件再清空列表：反过来的话路径就找不回来了（cache 里会留垃圾）。
+        // ⚠️ 只删 **cache 临时文件**：正文里的图片/语音块存的是闪念目录里的**文件名**，
+        // 拿它去 `File(...).delete()` 会删掉用户的原图/原录音 —— 这是最危险的一步，判据必须可靠。
         // 判据 = **绝对路径**：trampoline 回来的是绝对路径（`/data/.../cache/xxx.jpg`），
-        // 暂存夹里的图片块存的是纯文件名（`<uuid>.png`），永远不是绝对路径。
+        // 闪念目录里的块存的是纯文件名（`<uuid>.png` / `<uuid>.m4a`），永远不是绝对路径。
         imagePaths.value.filter { File(it).isAbsolute }.forEach { path ->
+            runCatching { File(path).delete() }
+        }
+        audioPaths.value.filter { File(it).isAbsolute }.forEach { path ->
             runCatching { File(path).delete() }
         }
         entryId.value = null
         text.value = ""
         tags.value = null
         imagePaths.value = emptyList()
+        audioPaths.value = emptyList()
         blocks.clear()
         blocks.add(newEmptyDraftTextBlock())
     }

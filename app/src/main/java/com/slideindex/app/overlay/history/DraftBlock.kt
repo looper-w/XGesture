@@ -42,6 +42,21 @@ internal sealed interface DraftBlock {
 
     /** 一张图，见接口 KDoc 里"`path` 的两种含义"。 */
     data class Image(override val id: String, val path: String) : DraftBlock
+
+    /**
+     * 一段语音（§0.16.21）。
+     *
+     * [path] 与 [Image.path] 完全同一套"两种含义"：
+     * - **刚录完的**：`cacheDir/stash_composer_audio/<uuid>.m4a` 的**绝对路径**；
+     * - **条目里已有的**：闪念音频目录里的**文件名**（`ClipboardContentBlock.fileName`）。
+     *
+     * 显示/播放前要把它拼成可读路径 —— 分流规则与图片共用一个入口
+     * （`HistoryPanelScreen` 的 `resolveEditBlockImagePath` 那套"集合成员判断"）。
+     *
+     * [durationMs] 在草稿里就带着（录音时用墙钟量出来的）：保存时直接写进块的 `durationMs`，
+     * 不用等落盘后再去读文件（那样又得引入 `MediaMetadataRetriever`）。
+     */
+    data class Audio(override val id: String, val path: String, val durationMs: Long) : DraftBlock
 }
 
 /**
@@ -68,8 +83,8 @@ internal fun newEmptyDraftTextBlock(): DraftBlock.Text =
  *
  * 收尾只保证一件事：**至少有一个文字块**（见 [normalizeDraftBlocks]）。
  *
- * 镜像用 `MutableState` 装（[textMirror] / [imagePathsMirror]）：它们在组合里被读，
- * 必须各自是一个可观察对象；`SnapshotStateList` 装不了"派生字符串"。
+ * 镜像用 `MutableState` 装（[textMirror] / [imagePathsMirror] / [audioPathsMirror]）：
+ * 它们在组合里被读，必须各自是一个可观察对象；`SnapshotStateList` 装不了"派生字符串"。
  *
  * @param blocks 收尾之后的块序列（调用方负责写回自己的 `SnapshotStateList`）。
  */
@@ -77,6 +92,13 @@ internal fun syncDraftMirrors(
     blocks: List<DraftBlock>,
     textMirror: androidx.compose.runtime.MutableState<String>,
     imagePathsMirror: androidx.compose.runtime.MutableState<List<String>>,
+    /**
+     * 语音块路径的只读投影（§0.16.21）。
+     *
+     * 加它而不是让调用方自己从 `blocks` 现算：关窗/换条目时"要删掉哪些 cache 临时音频"
+     * 与图片是同一时刻、同一批路径 —— 分两处算迟早会出现"块清了、文件还在 cache 里"。
+     */
+    audioPathsMirror: androidx.compose.runtime.MutableState<List<String>>,
 ): List<DraftBlock> {
     val next = normalizeDraftBlocks(blocks)
     textMirror.value = next.filterIsInstance<DraftBlock.Text>()
@@ -84,6 +106,7 @@ internal fun syncDraftMirrors(
         .filter { it.isNotBlank() }
         .joinToString("\n")
     imagePathsMirror.value = next.filterIsInstance<DraftBlock.Image>().map { it.path }
+    audioPathsMirror.value = next.filterIsInstance<DraftBlock.Audio>().map { it.path }
     return next
 }
 
@@ -107,6 +130,10 @@ internal fun draftTextOf(blocks: List<DraftBlock>): String =
 /** 供 [SnapshotStateList] 之外的调用方（保存前的快照）一次性拿到两条投影。 */
 internal fun draftImagePathsOf(blocks: List<DraftBlock>): List<String> =
     blocks.filterIsInstance<DraftBlock.Image>().map { it.path }
+
+/** 语音块路径的投影（关窗/换条目时"要删掉哪些 cache 临时音频"用）。 */
+internal fun draftAudioPathsOf(blocks: List<DraftBlock>): List<String> =
+    blocks.filterIsInstance<DraftBlock.Audio>().map { it.path }
 
 /** 空的只读镜像（给"没有草稿"的调用方当默认值用，省得到处 `mutableStateOf(emptyList())`）。 */
 internal fun emptyDraftImagePathsMirror(): androidx.compose.runtime.MutableState<List<String>> =

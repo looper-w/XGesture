@@ -26,7 +26,9 @@ import com.slideindex.app.R
 import com.slideindex.app.clipboard.ClipboardBlockKind
 import com.slideindex.app.clipboard.ClipboardContentBlock
 import com.slideindex.app.clipboard.ClipboardThumbnailCache
+import com.slideindex.app.clipboard.ClipboardUnsupportedBlockText
 import com.slideindex.app.stash.StashAccess
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -147,6 +149,40 @@ internal fun HistoryContentBlockView(
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
+        }
+        ClipboardBlockKind.AUDIO -> {
+            // §0.16.21：语音块在卡片里**点了就播**（与编辑器里的胶囊是同一个组件）。
+            //
+            // ⚠️ 只有闪念那边有音频目录：剪贴板条目里的 `fileName` 是剪贴板图片目录的文件名，
+            // 拿它去音频目录拼路径只会拼出一个不存在的文件 —— 所以按来源分流，不猜。
+            val path = if (imageSource == HistoryImageSource.Stash) {
+                StashAccess.repository?.audioFilePath(block.fileName)
+            } else {
+                null
+            }
+            if (path.isNullOrBlank() || !File(path).exists()) {
+                Text(
+                    text = stringResource(R.string.stash_audio_playback_failed),
+                    style = HistoryPanelTypography.hint(),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            } else {
+                HistoryAudioBlockCapsule(
+                    path = path,
+                    durationMs = block.durationMs,
+                    onRemove = null,
+                )
+            }
+        }
+
+        // 「别的设备 / 新版本写进来的块」：**显示成不支持的内容**，不崩、也不假装它不存在
+        // （假装不存在 = 用户以为这条数据丢了；抛异常 = 旧版本整份 index.json 读不出来）。
+        ClipboardBlockKind.UNKNOWN -> {
+            Text(
+                text = ClipboardUnsupportedBlockText,
+                style = HistoryPanelTypography.hint(),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
         }
     }
 }

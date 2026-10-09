@@ -98,7 +98,11 @@ internal object ClipboardBlockParser {
                         merged += block
                     }
                 }
-                ClipboardBlockKind.IMAGE -> merged += block
+                // 语音块（本仓库的闪念才会产出）与未知块都不是文字，原样保留顺序即可。
+                ClipboardBlockKind.IMAGE,
+                ClipboardBlockKind.AUDIO,
+                ClipboardBlockKind.UNKNOWN,
+                -> merged += block
             }
         }
         return merged

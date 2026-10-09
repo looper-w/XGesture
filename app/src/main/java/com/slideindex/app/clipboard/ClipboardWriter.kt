@@ -199,11 +199,19 @@ object ClipboardWriter {
             return buildPureImageClip(mimeType, imageUris)
         }
 
-        val plainText = blocks.filter { it.kind == ClipboardBlockKind.TEXT }
-            .joinToString("\n") { it.text.trim() }
+        val plainText = blocks
+            .filter { it.kind == ClipboardBlockKind.TEXT || it.kind == ClipboardBlockKind.AUDIO }
+            .joinToString("\n") { block ->
+                // 语音块给 `[语音 0:12]`：音频本身不进剪贴板（没法嵌），但纯文本里必须留得下痕迹，
+                // 否则"只录了一段话"的条目复制出去是**空**的。
+                if (block.kind == ClipboardBlockKind.AUDIO) block.audioText() else block.text.trim()
+            }
             .trim()
 
-        if (blocks.all { it.kind == ClipboardBlockKind.TEXT } && htmlText.isNullOrBlank()) {
+        if (
+            blocks.all { it.kind == ClipboardBlockKind.TEXT || it.kind == ClipboardBlockKind.AUDIO } &&
+            htmlText.isNullOrBlank()
+        ) {
             return ClipData.newPlainText("clipboard", plainText)
         }
 

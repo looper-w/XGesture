@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.slideindex.app.clipboard.ClipboardBlockKind
 import com.slideindex.app.clipboard.ClipboardContentBlock
 import com.slideindex.app.stash.StashEntryType
 import com.slideindex.app.ui.miuix.CardSegment
@@ -254,6 +255,34 @@ internal fun HistoryExpandableContentSection(
             }
         } else {
             collapsedContent()
+            // §0.16.21：**折叠态也要看得见、点得到**语音块与"不支持的内容"块。
+            //
+            // 为什么不能只在展开态画：折叠时显示的是 `collapsedContent()`（正文摘要 / 图片轮播），
+            // 而一条**只有一段录音**的闪念摘要永远是空的 —— 用户看到一张空白卡片，
+            // 根本不知道里面有没有内容，更别说点开播放。
+            val inlineBlocks = contentBlocks.filter {
+                it.kind == ClipboardBlockKind.AUDIO || it.kind == ClipboardBlockKind.UNKNOWN
+            }
+            if (inlineBlocks.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    inlineBlocks.forEach { block ->
+                        HistoryContentBlockView(
+                            block = block,
+                            imageSource = imageSource,
+                            entryId = entryId,
+                            context = context,
+                            previewWidthPx = previewWidthPx,
+                            previewHeightPx = previewHeightPx,
+                            expanded = false,
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -115,6 +115,9 @@ object StashCoordinator {
                         ?: return@mapNotNull null
                     StashRichPart.Image(copy)
                 }
+                // 音频不需要"先拷一份"（不像 Bitmap 会被调用方回收）：它只是一个路径字符串，
+                // 真正的复制/落盘在仓储里做（见 `StashRepository.persistAudio`）。
+                is StashRichPart.Audio -> part
             }
         }
         if (copied.isEmpty()) {
@@ -182,11 +185,12 @@ object StashCoordinator {
                         ?: return@mapNotNull null
                     StashRichPart.Image(copy)
                 }
+                is StashRichPart.Audio -> part
             }
         }
-        if (copied.none { it is StashRichPart.Image } && copied.none {
-                it is StashRichPart.Text && it.text.isNotBlank()
-            }
+        if (copied.none { it is StashRichPart.Image } &&
+            copied.none { it is StashRichPart.Audio } &&
+            copied.none { it is StashRichPart.Text && it.text.isNotBlank() }
         ) {
             onDone(false)
             return
@@ -296,6 +300,9 @@ object StashCoordinator {
                     when (block.kind) {
                         ClipboardBlockKind.TEXT -> block.text.isNotBlank()
                         ClipboardBlockKind.IMAGE -> block.fileName.isNotBlank()
+                        // 剪贴板里不会有语音块；这里给答案只是为了让枚举穷尽（真来了就当没有）。
+                        ClipboardBlockKind.AUDIO -> false
+                        ClipboardBlockKind.UNKNOWN -> false
                     }
                 }
                 when {
@@ -308,6 +315,9 @@ object StashCoordinator {
                                         ?: return@mapNotNull null
                                     StashRichPart.Image(bitmap)
                                 }
+                                ClipboardBlockKind.AUDIO,
+                                ClipboardBlockKind.UNKNOWN,
+                                -> null
                             }
                         }
                         parts.takeIf { it.isNotEmpty() }?.let { repo.addRich(it, entry.htmlText) }
@@ -320,6 +330,9 @@ object StashCoordinator {
                                 val bitmap = ClipboardImageStore.loadBitmap(context, only.fileName)
                                 bitmap?.let { repo.addImage(it) }
                             }
+                            ClipboardBlockKind.AUDIO,
+                            ClipboardBlockKind.UNKNOWN,
+                            -> null
                         }
                     }
                     else -> {

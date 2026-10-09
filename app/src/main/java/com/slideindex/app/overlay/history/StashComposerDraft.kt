@@ -93,6 +93,14 @@ internal object StashComposerDraft {
     val imagePaths = mutableStateOf<List<String>>(emptyList())
 
     /**
+     * 已选语音的**只读投影**（所有语音块的路径，按正文顺序），由 [updateBlocks] 同步（§0.16.21）。
+     *
+     * 与 [imagePaths] 同一套：弹窗里的语音块只装 **cache 临时文件绝对路径**
+     * （刚录完、还没落盘），所以这个投影就是"待保存的临时音频路径"，可以直接拿去删除。
+     */
+    val audioPaths = mutableStateOf<List<String>>(emptyList())
+
+    /**
      * 一个新的**空**文字块（清空草稿时用；id 走 [newDraftBlockId] 全局单调，不会和现有块撞）。
      *
      * ⚠️ 它**不**经 [updateBlocks]：拿到的是"还没插进去的块"，插进去那一步才走 [updateBlocks]。
@@ -109,7 +117,7 @@ internal object StashComposerDraft {
      * 免得两个草稿的"什么算正文"慢慢走偏）。
      */
     fun updateBlocks(transform: (List<DraftBlock>) -> List<DraftBlock>) {
-        val next = syncDraftMirrors(transform(blocks.toList()), text, imagePaths)
+        val next = syncDraftMirrors(transform(blocks.toList()), text, imagePaths, audioPaths)
         blocks.clear()
         blocks.addAll(next)
     }
