@@ -173,6 +173,34 @@ internal object EditSessionDraft {
         replaceBlocksInternal(transform(blocks.toList()))
     }
 
+    /**
+     * 把**某一个块**的图片路径换成 [newPath]（§0.16.22：内置编辑器保存回来后"换掉那一张图"）。
+     *
+     * 为什么按**块 id** 找而不是"第几张图"：同一张图完全可能在正文里出现两次，而用户点的是
+     * **那一块**上的 ✎；块顺序也会因为插字 / 删块随时变化，用序号一定会改错地方。
+     *
+     * 与 `updateBlocks { … }` 同一套落库步骤（收尾 + 刷新 [imagePaths] 镜像），
+     * 所以新路径立刻反映到"哪些是待落盘的临时图"那条投影上。
+     *
+     * @return true = 真的换上了（false = 那个块已经不在了 —— 用户编辑期间把块删了、
+     *   或者编辑条已经关掉换了别的条目；调用方据此决定那份结果文件是留还是删）。
+     */
+    fun replaceImageBlockPath(blockId: String, newPath: String): Boolean {
+        if (newPath.isBlank()) return false
+        var replaced = false
+        updateBlocks { list ->
+            list.map { block ->
+                if (block is DraftBlock.Image && block.id == blockId) {
+                    replaced = true
+                    block.copy(path = newPath)
+                } else {
+                    block
+                }
+            }
+        }
+        return replaced
+    }
+
     /** 清掉草稿（保存成功、或主动放弃这一条）。cache 临时图一并删除。 */
     fun clear() {
         discardCurrent()

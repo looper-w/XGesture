@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -348,6 +349,18 @@ internal fun DraftBlockEditorSurface(
      * 只用来回答"删掉这个语音块时要不要顺手删文件"（已有文件绝不能删）。
      */
     existingAudioFileNames: Set<String> = emptySet(),
+    /**
+     * 图片块角落那枚 **✎**（§0.16.22）：非 null = 显示，点了用它把**当前这一块**送进内置图片编辑器。
+     *
+     * 传 null（默认）= 不显示 —— 加号弹窗（`HistoryComposerModal`）走的就是这条路。
+     * 这么分是因为"编辑一张已经落盘的图、再把结果**换回这一块**"只有就地编辑那条链有回传路径
+     * （见 `HistoryPanelScreen` 的 `openImageEditorForBlock`），弹窗里那块图还没落盘、也没有
+     * "属于哪一条条目"可言。
+     *
+     * 参数是**块 id**：块里的路径有两种含义（cache 绝对路径 / 条目里的文件名），
+     * 只有调用方拿着 `existingImageFileNames` 能把它们翻成可解码的路径并写回正确的那一块。
+     */
+    onEditImage: ((blockId: String) -> Unit)? = null,
 ) {
     /**
      * 图片块解码的采样目标（§0.16.19）。
@@ -731,6 +744,8 @@ internal fun DraftBlockEditorSurface(
                             onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
                             // §0.16.19：按显示宽度解码（原来固定 480px，整宽渲染时糊）。
                             imageTargetPx = imageTargetPx,
+                            // §0.16.22：✎ 进内置编辑器（null = 这个入口不给这枚按钮）。
+                            onEdit = onEditImage?.let { edit -> { edit(block.id) } },
                         )
                     }
 
@@ -935,6 +950,11 @@ private fun DraftBlockEditorImage(
     onBlockPlaced: (Int) -> Unit,
     /** 解码采样目标（长边像素，§0.16.19）。 */
     imageTargetPx: Int,
+    /**
+     * 角落那枚 **✎**（§0.16.22）：非 null = 显示，点了把它**这一块**送进内置图片编辑器。
+     * 见 `DraftBlockEditorSurface.onEditImage` 的 KDoc（为什么只有就地编辑条给这枚按钮）。
+     */
+    onEdit: (() -> Unit)? = null,
 ) {
     val theme = historyTheme()
     val shape = RoundedCornerShape(HistoryRadii.sm)
@@ -988,6 +1008,32 @@ private fun DraftBlockEditorImage(
                 tint = Color.White,
                 modifier = Modifier.size(13.dp),
             )
+        }
+        // §0.16.22：✎ 放在**另一角**（TopStart）而不是挨着 ✕ —— 这两枚一个是"改这张"、
+        // 一个是"删这块"，紧挨着误触的代价是删掉用户刚选的那张图，不值得为省一个角去冒。
+        if (onEdit != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(theme.text.copy(alpha = 0.55f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onEdit,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    // 无障碍文案复用现成的 `stash_action_edit`（"编辑"），不为这枚按钮新增 key。
+                    contentDescription = stringResource(R.string.stash_action_edit),
+                    tint = Color.White,
+                    modifier = Modifier.size(13.dp),
+                )
+            }
         }
     }
 }

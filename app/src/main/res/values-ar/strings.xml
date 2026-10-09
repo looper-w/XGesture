@@ -3077,6 +3077,14 @@
     <string name="stash_voice_error_network">يحتاج التعرّف على الكلام إلى اتصال بالشبكة</string>
     <string name="stash_voice_error_permission">مطلوب إذن الميكروفون</string>
     <string name="stash_voice_error_generic">فشل الإدخال الصوتي</string>
+    <string name="stash_audio_channel_name">تسجيل صوتي</string>
+    <string name="stash_audio_notification_title">جارٍ التسجيل…</string>
+    <string name="stash_audio_notification_body">اضغط إلغاء للتخلص من هذا التسجيل</string>
+    <string name="stash_audio_play">تشغيل</string>
+    <string name="stash_audio_pause">إيقاف مؤقت</string>
+    <string name="stash_audio_playback_failed">تعذّر تشغيل هذا التسجيل</string>
+    <string name="stash_audio_record_failed">فشل التسجيل</string>
+    <string name="stash_audio_permission_denied">يلزم إذن الميكروفون للتسجيل</string>
     <string name="clipboard_panel_tab">الحافظة</string>
     <string name="clipboard_empty">لا توجد سجلات في الحافظة</string>
     <string name="clipboard_search_hint">البحث في الحافظة…</string>

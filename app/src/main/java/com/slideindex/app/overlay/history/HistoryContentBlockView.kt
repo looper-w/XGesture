@@ -3,6 +3,8 @@ package com.slideindex.app.overlay.history
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +67,17 @@ internal fun HistoryContentBlockView(
     previewWidthPx: Int,
     previewHeightPx: Int,
     expanded: Boolean,
+    /**
+     * 图片块上的**点击热区**（§0.16.22）：点了就地展开 / 收起这条卡片。
+     *
+     * 为什么要单独传进来而不能靠宿主那层的 `clickable`：折叠态的图在
+     * `HorizontalPager`（那是 [HistoryImagePagerSection]，自己带热区）或
+     * 本函数这条 `Image` 分支上，而**本分支的 `Image` 会把单击吃掉**
+     * —— 用户看到的就是"点图没反应，只有点那行文件名才展开"。
+     *
+     * null = 宿主不给这个行为（例如块编辑器预览），那就什么也不挂。
+     */
+    onTapToggle: (() -> Unit)? = null,
 ) {
     when (block.kind) {
         ClipboardBlockKind.TEXT -> {
@@ -128,9 +141,19 @@ internal fun HistoryContentBlockView(
                 }
             }
             val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
+            // §0.16.22：整块图都是热区（含 `Fit` 留白那两条边）—— 判据交给 Compose：
+            // `Image` 自己的尺寸已经按内容算好，外面这层 `clickable` 正好圈住它。
+            val tapModifier = if (onTapToggle != null) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { onTapToggle() }
+            } else {
+                Modifier
+            }
             if (imageBitmap != null) {
                 if (expanded) {
-                    HistoryExpandedImage(imageBitmap = imageBitmap)
+                    HistoryExpandedImage(imageBitmap = imageBitmap, modifier = tapModifier)
                 } else {
                     Image(
                         bitmap = imageBitmap,
@@ -138,7 +161,8 @@ internal fun HistoryContentBlockView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = if (imageSource == HistoryImageSource.Stash) 150.dp else 200.dp)
-                            .clip(RoundedCornerShape(8.dp)),
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(tapModifier),
                         contentScale = ContentScale.Fit,
                     )
                 }

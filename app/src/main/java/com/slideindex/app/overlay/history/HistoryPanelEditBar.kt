@@ -156,6 +156,16 @@ internal fun HistoryPanelEditBar(
     resolveAudioPath: (String) -> String = { it },
     /** 条目**原本就有**的语音文件名（§0.16.21）：判据与 [existingImageFileNames] 同理。 */
     existingAudioFileNames: Set<String> = emptySet(),
+    /**
+     * 图片块角落那枚 **✎**（§0.16.22）：点了把**这一块**的当前图片送进内置编辑器。
+     *
+     * 就地编辑条**一定**要传它（这是"就地改图"的唯一入口）；加号弹窗不传 = 不显示那枚按钮
+     * （理由见 `DraftBlockEditorSurface.onEditImage` 的 KDoc）。
+     *
+     * 参数是块 id —— 由 `HistoryPanelScreen.openImageEditorForBlock` 翻成可解码路径、
+     * 起中转 Activity、拿到编辑结果后**替换那一块**。
+     */
+    onEditImage: ((blockId: String) -> Unit)? = null,
     onHeightChanged: (Dp) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -253,6 +263,7 @@ internal fun HistoryPanelEditBar(
             existingImageFileNames = existingImageFileNames,
             resolveAudioPath = resolveAudioPath,
             existingAudioFileNames = existingAudioFileNames,
+            onEditImage = onEditImage,
         )
         FlowRow(
             modifier = Modifier

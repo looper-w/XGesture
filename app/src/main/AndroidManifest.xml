@@ -361,6 +361,13 @@
             android:theme="@style/Theme.SlideIndex.Transparent" />
 
         <activity
+            android:name=".service.StashEditImageTrampolineActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.SlideIndex.Transparent" />
+
+        <activity
             android:name=".service.RingLauncherSlotIconEditorTrampolineActivity"
             android:excludeFromRecents="true"
             android:exported="false"

@@ -192,6 +192,54 @@ private fun blockFileNamesOf(
         }
     }
 
+/**
+ * 就地图块那枚 **✎** 的落地实现（§0.16.22）。
+ *
+ * 链路（每一步都必须在这一层，组件里做不了）：
+ * ① **挂起面板窗**（[StashPanelExternalUi.suspend]）：面板是比编辑器更高一层的无障碍覆盖窗，
+ *    不挂起就会盖在编辑器上面；
+ * ② 起 `StashEditImageTrampolineActivity`（overlay 的 Compose 树没有 `ActivityResultRegistryOwner`，
+ *    拿不到编辑器保存后的结果 —— 与选图走 trampoline 是同一个理由）；
+ * ③ 结果回来**第一件事就是恢复面板**，然后：
+ *    - 取消（null）→ **什么都不做**；
+ *    - 有结果 → 把 [blockId] 那一块的路径换成新图，并删掉被替换掉的**临时**文件
+ *      （`existingImageFileNames` 里的原图**绝不删**：那是用户自己的图，见
+ *      [resolveEditBlockImagePath] 的"集合成员"判据）。
+ *
+ * 为什么替换的判据是**块 id** 而不是"第几张"：同一张图可能在正文里出现两次，
+ * 而用户点的是**那一块**上的 ✎（块顺序随时会因为插字/删块变化，用序号一定会改错地方）。
+ */
+private fun openImageEditorForBlock(
+    context: android.content.Context,
+    blockId: String,
+    blockPath: String,
+    existingImageFileNames: Set<String>,
+    repository: com.slideindex.app.stash.StashRepository?,
+) {
+    val decodedPath = resolveEditBlockImagePath(
+        path = blockPath,
+        existingImageFileNames = existingImageFileNames,
+        repository = repository,
+    )
+    StashPanelExternalUi.suspend?.invoke()
+    com.slideindex.app.service.StashEditImageTrampolineActivity.launch(context, decodedPath) { edited ->
+        // ⚠️ 恢复必须是**第一件事**（取消也要恢复，否则面板再也弹不出来）。
+        StashPanelExternalUi.resume?.invoke()
+        if (edited.isNullOrBlank()) return@launch
+        val applied = EditSessionDraft.replaceImageBlockPath(blockId, edited)
+        if (applied) {
+            // 换掉了才删旧文件，而且只删"本来就不属于这条条目"的那份（cache 临时图）。
+            // 删除本身失败无所谓（cache 会被系统清），所以 runCatching 吞掉。
+            if (blockPath !in existingImageFileNames) {
+                runCatching { File(decodedPath).delete() }
+            }
+        } else {
+            // 没换上（用户把那一块删了 / 编辑中途关掉了编辑条）：结果文件没人引用，别留在 cache 里。
+            runCatching { File(edited).delete() }
+        }
+    }
+}
+
 @Composable
 internal fun HistoryPanelScreen(
     gravityEnd: Boolean,
@@ -1484,6 +1532,21 @@ internal fun HistoryPanelScreen(
                          */
                         blocks = editBlocks,
                         onBlocksChange = { transform -> EditSessionDraft.updateBlocks(transform) },
+                        // §0.16.22：图片块角落的 ✎ → 内置图片编辑器 → 保存后**换掉这一块的那张图**。
+                        // 块路径的两种含义（cache 绝对路径 / 条目里的文件名）由 openImageEditorForBlock
+                        // 按 existingImageFileNames 分流，与保存链用的是同一份集合。
+                        onEditImage = { blockId ->
+                            val block = editBlocks.firstOrNull { it.id == blockId } as? DraftBlock.Image
+                            if (block != null) {
+                                openImageEditorForBlock(
+                                    context = appContext,
+                                    blockId = blockId,
+                                    blockPath = block.path,
+                                    existingImageFileNames = editEntryExistingImageNames,
+                                    repository = stashRepo,
+                                )
+                            }
+                        },
                         onTagsChange = { value -> EditSessionDraft.tags.value = value },
                         onSave = { tags, newImagePaths ->
                             /**

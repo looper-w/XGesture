@@ -32,6 +32,7 @@ import com.slideindex.app.R
 import com.slideindex.app.clipboard.ClipboardDragShareFallback
 import com.slideindex.app.clipboard.ClipboardEntry
 import com.slideindex.app.clipboard.ClipboardEntryType
+import com.slideindex.app.clipboard.ClipboardImageLabel
 import com.slideindex.app.clipboard.ClipboardThumbnailCache
 import com.slideindex.app.clipboard.ClipboardWriter
 import com.slideindex.app.clipboard.displayTypeLabelKey
@@ -192,6 +193,8 @@ internal fun HistoryClipboardEntryCard(
                             selectedIndex = selectedImageIndex,
                             onSelectedIndexChange = onSelectedImageIndexChange,
                             onLongPressDrag = onLongPressDrag,
+                            // §0.16.22：点图 = 就地展开（剪贴板卡片与闪念卡片同一条交互）。
+                            onTapExpand = if (canExpand) onExpandedChange else null,
                         )
                     } else if (imageLoadFailed) {
                         Text(
@@ -330,23 +333,54 @@ internal fun HistoryStashEntryCard(
         entry.resolvedContentBlocks()
     }
     val canExpand = remember(entry.id, entry.type, richBlocks) { entry.shouldOfferExpand() }
-    val summaryText = remember(entry.id, entry.type, entry.text, richBlocks) {
-        when (entry.type) {
-            StashEntryType.TEXT -> entry.text.orEmpty()
-            StashEntryType.RICH -> entry.combinedText()
-            else -> ""
-        }
-    }
     val richImageFileNames = remember(entry.id, entry.contentBlocks, entry.imageFileName) {
         entry.allImageFileNames()
     }
     /**
-     * 分享用的纯文本（§0.16.21）：比 [summaryText] 多一样东西 —— **语音块**。
+     * 卡片上显示的正文 —— 已经把「图片文件名」这层噪声去掉（§0.16.22）。
      *
-     * `summaryText` 走 `combinedText()`（正文语义，也是搜索语料），里面没有"语音 0:12"；
-     * 一条只录了音的闪念用它分享出去会是空的。`exportText()` 才是"导出"该有的语义。
+     * 从相册/文件管理器复制的图片，剪贴板里往往**同时**带了文件名（`IMG_20240101_123456.jpg`）——
+     * 它会被存进正文，于是闪念卡片上就冒出一行文件名：那张图就在卡片上，这行字纯属噪声。
+     * 判据复用剪贴板那边那份 [ClipboardImageLabel.isMetadataText]（"这是图片的标签文字，不是内容"），
+     * **不是**自己写一个"像不像文件名"的正则 —— 两处判据分家，迟早会出现"剪贴板页签不显示、
+     * 闪念卡片显示"这种不一致。
+     *
+     * ⚠️ **只在有图的时候过滤**：没有图的条目里那串文字就是用户自己打的，绝不能吞。
+     * 剪贴板页签与编辑浮窗**不过滤**（用户明确要求那两处保留），所以它只作用在这张卡片上。
      */
-    val exportText = remember(entry.id, entry.type, entry.text, richBlocks) { entry.exportText() }
+    val cardBodyText = remember(entry.id, entry.type, entry.text, richBlocks, richImageFileNames) {
+        when (entry.type) {
+            StashEntryType.TEXT -> entry.text.orEmpty()
+            StashEntryType.RICH -> entry.combinedText()
+            else -> ""
+        }.let { body ->
+            if (body.isBlank() || richImageFileNames.isEmpty()) {
+                body
+            } else {
+                ClipboardImageLabel.stripMetadataText(
+                    text = body,
+                    imageSources = richImageFileNames,
+                    uri = null,
+                )
+            }
+        }
+    }
+    /**
+     * 分享用的纯文本（§0.16.21）：比卡片的摘要多一样东西 —— **语音块**。
+     *
+     * `cardBodyText` 走 `combinedText()`（正文语义，也是搜索语料），里面没有"语音 0:12"；
+     * 一条只录了音的闪念用它分享出去会是空的。`exportText()` 才是"导出"该有的语义。
+     * §0.16.22 起这里也顺手去掉图片文件名那层噪声（与卡片显示同一套判据）。
+     */
+    val exportText = remember(entry.id, entry.type, entry.text, richBlocks, richImageFileNames) {
+        entry.exportText().let { body ->
+            if (body.isBlank() || richImageFileNames.isEmpty()) {
+                body
+            } else {
+                ClipboardImageLabel.stripMetadataText(body, richImageFileNames, null)
+            }
+        }
+    }
     val singleThumb = rememberLoadedSingleThumb(
         entryId = entry.id,
         loadKey = listOf(previewWidthPx, previewHeightPx, entry.type),
@@ -492,6 +526,8 @@ internal fun HistoryStashEntryCard(
                                     selectedIndex = selectedImageIndex,
                                     onSelectedIndexChange = onSelectedImageIndexChange,
                                     onLongPressDrag = onLongPressDrag,
+                                    // §0.16.22：点图 = 就地展开当前这张（不跳图、不开全屏查看器）。
+                                    onTapExpand = if (canExpand) onExpandedChange else null,
                                 )
                             } else if (richImageLoadFailed) {
                                 Text(
@@ -501,7 +537,7 @@ internal fun HistoryStashEntryCard(
                                 )
                             }
                             HistoryCollapsedSummaryText(
-                            text = summaryText,
+                            text = cardBodyText,
                             strikethrough = done,
 
                         )

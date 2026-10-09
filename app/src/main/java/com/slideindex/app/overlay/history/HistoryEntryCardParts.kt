@@ -84,6 +84,15 @@ internal fun HistoryImagePagerSection(
     onSelectedIndexChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     onLongPressDrag: (() -> Unit)? = null,
+    /**
+     * 点图 = **就地展开这条卡片**（§0.16.22）：null = 这个入口不给"点图展开"。
+     *
+     * 为什么要专门给一个回调、不靠外面那层 `clickable`：这里的 `HorizontalPager`
+     * 自己要吃水平拖拽手势，它会把落到图上的**单击**一并吞掉 —— 外层 `clickable`
+     * 收不到事件，用户感受到的就是"点图没反应，只有点旁边那行字才展开"。
+     * 所以热区必须挂在**图自己**身上（每一页、每一张缩略图都挂）。
+     */
+    onTapExpand: (() -> Unit)? = null,
 ) {
     if (thumbnails.isEmpty()) return
     val pagerState = rememberPagerState(
@@ -100,22 +109,35 @@ internal fun HistoryImagePagerSection(
             pagerState.scrollToPage(selectedIndex.coerceIn(0, thumbnails.lastIndex))
         }
     }
+    /**
+     * 图上的热区（§0.16.22）。
+     *
+     * ⚠️ 长按拖拽优先：给了 [onLongPressDrag] 时用 `combinedClickable`（**同一次**手势里
+     * 短按 = 展开、长按 = 拖出），不要叠两个 clickable —— 叠了以后长按会先被
+     * `clickable` 认领成"按下"，拖拽就起不来了（那是既有能力，不能为了点图弄丢）。
+     */
+    val tapModifier: Modifier = when {
+        onTapExpand != null && onLongPressDrag != null -> Modifier.combinedClickable(
+            onClick = onTapExpand,
+            onLongClick = onLongPressDrag,
+        )
+        onTapExpand != null -> Modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+        ) { onTapExpand() }
+        onLongPressDrag != null -> Modifier.combinedClickable(
+            onClick = {},
+            onLongClick = onLongPressDrag,
+        )
+        else -> Modifier
+    }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(120.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .then(
-                    if (onLongPressDrag != null) {
-                        Modifier.combinedClickable(
-                            onClick = {},
-                            onLongClick = onLongPressDrag,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
+                .then(tapModifier),
         ) {
             HorizontalPager(
                 state = pagerState,
@@ -127,7 +149,10 @@ internal fun HistoryImagePagerSection(
                 Image(
                     bitmap = imageBitmap,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 每一页都要有自己的热区：翻到第 3 张再点它，也该展开这条卡片。
+                        .then(tapModifier),
                     contentScale = ContentScale.Crop,
                 )
             }
@@ -173,6 +198,9 @@ internal fun HistoryImagePagerSection(
                                     },
                                     shape = RoundedCornerShape(6.dp),
                                 )
+                                // §0.16.22：缩略图先切页码（它自己的语义），并且**必须**用
+                                // `clickable` 的既有"子节点先消费"把它吃掉 —— 交给外层的话，
+                                // 点缩略图会变成"展开卡片"，用户就再也切不了第 2、3 张了。
                                 .clickable { onSelectedIndexChange(index) },
                             contentScale = ContentScale.Crop,
                         )
@@ -197,6 +225,16 @@ internal fun HistoryExpandableContentSection(
     onLongPressDrag: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    // §0.16.22：点图 = 就地展开这条卡片（**只**挂了图 / 语音 / 未知块这些自绘内容上）。
+    //
+    // 为什么不能只靠下面 Column 的 `gestureModifier`：图片那块的 `HorizontalPager`
+    // 自己要吃拖拽手势，落进它的**单击**收不到（用户原话："只有那行文件名能点"）。
+    // 所以把热区补在图上（见 [HistoryImagePagerSection] 的 `onTapExpand` 与
+    // `HistoryContentBlockView` 的 `onTapToggle`）。
+    //
+    // ⚠️ 折叠态是"展开"，展开态是"收起" —— 与 Column 那层同一个语义，不要在两处各写一半。
+    // 链接文本块不挂热区：它的点按要留给"选中/长按复制"，那是既有行为。
+    val imageTapToggle: (() -> Unit)? = if (canExpand) onExpandedChange else null
     val gestureModifier = when {
         canExpand && onLongPressDrag != null -> {
             Modifier.combinedClickable(
@@ -250,6 +288,8 @@ internal fun HistoryExpandableContentSection(
                         previewWidthPx = previewWidthPx,
                         previewHeightPx = previewHeightPx,
                         expanded = true,
+                        // §0.16.22：展开态点图 = 收起（与点卡片别处同一个语义）。
+                        onTapToggle = imageTapToggle,
                     )
                 }
             }
@@ -279,6 +319,9 @@ internal fun HistoryExpandableContentSection(
                             previewWidthPx = previewWidthPx,
                             previewHeightPx = previewHeightPx,
                             expanded = false,
+                            // 语音胶囊自己吃点击（点了就播），这里传下去也不会生效；
+                            // 传它是为了"将来这里再放别的块"时行为一致。
+                            onTapToggle = imageTapToggle,
                         )
                     }
                 }
