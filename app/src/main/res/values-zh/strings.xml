@@ -4087,6 +4087,10 @@ adb 模式应返回 uid=2000。
     <string name="quick_wheel_sector_title">扇区（编辑与预览）</string>
     <string name="quick_wheel_sector_desc">点按圆环选择或取消 90° 扇区：编辑层、各处预览与列表摘要都会照你选的显示。真实呼出时由动作绑定决定——不设置就按触发位置自动求解扇区，保证所有容器都在屏内；也可以在动作绑定处手动固定一个扇区。</string>
     <string name="quick_wheel_sector_span">%1$d°</string>
+    <string name="quick_wheel_sector_dir_top_right">右上扇区</string>
+    <string name="quick_wheel_sector_dir_bottom_right">右下扇区</string>
+    <string name="quick_wheel_sector_dir_bottom_left">左下扇区</string>
+    <string name="quick_wheel_sector_dir_top_left">左上扇区</string>
     <!-- 动作绑定页：一级圆形的扇区（空环 = 自动）。 -->
     <string name="quick_wheel_action_sector_title">扇区（一级圆形）</string>
     <!-- 动作提示条（HUD）：手指遮住容器时，在屏幕边缘显示"此刻松手会发生什么"。 -->

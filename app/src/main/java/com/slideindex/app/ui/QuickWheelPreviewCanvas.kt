@@ -21,8 +21,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.slideindex.app.R
 import com.slideindex.app.overlay.layout.QuickWheelLayout
 import com.slideindex.app.overlay.layout.QuickWheelAdaptiveScreen
 import com.slideindex.app.overlay.layout.QuickWheelLayoutEngine
@@ -364,7 +371,12 @@ internal fun QuickWheelHintPill(
 /**
  * 可点选的「一级轮盘扇区环」：4 个 90° 扇区，点选 / 取消点选，至少保留一个。
  *
- * 扇区 0 自正上方起顺时针编号，与 [QuickWheelLayoutEngine] 的布点角度一致。
+ * 扇区 0 自正上方起顺时针编号，与 [QuickWheelLayoutEngine] 的布点角度一致
+ * （0 = 右上、1 = 右下、2 = 左下、3 = 左上）。
+ *
+ * 无障碍：整环只有一个 Canvas，读屏原本既读不出状态、也无法操作。这里给它挂一个语义节点：
+ * contentDescription = 控件名、stateDescription = 当前已选扇区、customActions = 逐个扇区的
+ * 切换动作（TalkBack 在「操作」菜单里给出），与点按走同一个 [onToggleSector]。
  */
 @Composable
 fun QuickWheelSectorRing(
@@ -375,8 +387,35 @@ fun QuickWheelSectorRing(
     outlineColor: Color,
     modifier: Modifier = Modifier,
 ) {
+    val sectorName = stringResource(R.string.quick_wheel_action_sector_title)
+    val sectorAuto = stringResource(R.string.quick_wheel_action_sector_auto)
+    val sectorDirections = listOf(
+        stringResource(R.string.quick_wheel_sector_dir_top_right),
+        stringResource(R.string.quick_wheel_sector_dir_bottom_right),
+        stringResource(R.string.quick_wheel_sector_dir_bottom_left),
+        stringResource(R.string.quick_wheel_sector_dir_top_left),
+    )
+    val selectedDirections = sectorDirections.filterIndexed { index, _ ->
+        QuickWheelLayoutEngine.isSectorSelected(sectorMask, index)
+    }
     Canvas(
-        modifier = modifier.pointerInput(sectorMask) {
+        modifier = modifier
+            .semantics {
+                contentDescription = sectorName
+                // 一个都不选 = 自动（见 quick_wheel_sector_desc），此时读成"自动"更容易理解。
+                stateDescription = if (selectedDirections.isEmpty()) {
+                    sectorAuto
+                } else {
+                    selectedDirections.joinToString(", ")
+                }
+                customActions = sectorDirections.mapIndexed { index, label ->
+                    CustomAccessibilityAction(label) {
+                        onToggleSector(index)
+                        true
+                    }
+                }
+            }
+            .pointerInput(sectorMask) {
             detectTapGestures { position ->
                 val centerX = size.width / 2f
                 val centerY = size.height / 2f

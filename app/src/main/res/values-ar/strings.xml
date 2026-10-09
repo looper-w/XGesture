@@ -4070,6 +4070,10 @@
     <string name="quick_wheel_sector_title">القطاع (التحرير والمعاينة)</string>
     <string name="quick_wheel_sector_desc">انقر على الحلقة لتفعيل قطاعات 90° أو تعطيلها — ويعرض المحرر وكل معاينة وملخص القائمة ما اخترته بالضبط. ويخضع التشغيل الفعلي لإعداد ربط الإجراء: فإن لم تحدّد شيئاً يُحسب القطاع تلقائياً من موضع التشغيل لتبقى كل الحاويات على الشاشة، ويمكنك أيضاً تثبيت قطاع يدوياً هناك.</string>
     <string name="quick_wheel_sector_span">%1$d°</string>
+    <string name="quick_wheel_sector_dir_top_right">القطاع العلوي الأيمن</string>
+    <string name="quick_wheel_sector_dir_bottom_right">القطاع السفلي الأيمن</string>
+    <string name="quick_wheel_sector_dir_bottom_left">القطاع السفلي الأيسر</string>
+    <string name="quick_wheel_sector_dir_top_left">القطاع العلوي الأيسر</string>
     <string name="quick_wheel_action_sector_title">القطاع (الدائرة الأساسية)</string>
     <string name="quick_wheel_hud_tap">نقر: %1$s</string>
     <string name="quick_wheel_hud_long_press">ضغط مطوّل: %1$s</string>

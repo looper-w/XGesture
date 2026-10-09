@@ -4066,6 +4066,10 @@
     <string name="quick_wheel_sector_title">セクター（編集とプレビュー）</string>
     <string name="quick_wheel_sector_desc">リングをタップして 90° セクターを有効／無効にします。エディタ、各プレビュー、一覧の概要は選択どおりに表示されます。実際の起動は動作バインディング側の設定に従い、未設定ならトリガー位置からセクターを自動計算してすべてのコンテナが画面内に収まるようにします。そこでは手動でセクターを固定することもできます。</string>
     <string name="quick_wheel_sector_span">%1$d°</string>
+    <string name="quick_wheel_sector_dir_top_right">右上のセクター</string>
+    <string name="quick_wheel_sector_dir_bottom_right">右下のセクター</string>
+    <string name="quick_wheel_sector_dir_bottom_left">左下のセクター</string>
+    <string name="quick_wheel_sector_dir_top_left">左上のセクター</string>
     <string name="quick_wheel_action_sector_title">セクター（プライマリ円形）</string>
     <string name="quick_wheel_hud_tap">タップ: %1$s</string>
     <string name="quick_wheel_hud_long_press">長押し: %1$s</string>
