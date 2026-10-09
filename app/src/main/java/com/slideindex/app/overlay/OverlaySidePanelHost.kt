@@ -354,15 +354,58 @@ class OverlaySidePanelHost(
         panelHost.setInputActive(active = true, requestRootFocus = true)
     }
 
+    /**
+     * §0.16.24：**外部"返回"请求**（手势里的"返回"动作）进入本面板返回链的唯一入口。
+     *
+     * 链路（**全工程只有这一份返回层级判定**）：
+     * ```
+     * 注入器 GestureAction.Back → FloatBallStashPanel.requestBackIfShowing()
+     *   → 本方法（路由：面板是否显示）
+     *     → OverlayViewBackHandler.dispatchBack()
+     *        ① 输入法弹着 → 收键盘（面板/弹窗/展开态都不动），已消费
+     *        ② 否则 onBack() = handlePanelBack()
+     *             → panelBackInterceptor（HistoryPanelScreen 里的 1..6 档，注册表见那里的 KDoc）
+     *             → clipboardInputActive（第 7 档：交回浏览态）
+     *             → dismiss()（第 8 档：收面板）
+     * ```
+     * ⚠️ 这里只做**路由**（面板是否显示、有没有 handler）；**键盘优先、子层先后**那条判定**只有一份**，
+     * 在 `OverlayViewBackHandler.dispatchBack()` 与 `HistoryPanelScreen` 的注册表里。
+     * 调用侧（`SlideIndexAccessibilityGestureInjector` → `FloatBallStashPanel.requestBackIfShowing`）
+     * **绝不要**自己判 IME、自己判子层、或自己 `dismiss()` —— 抄一份就会漏掉优先级
+     * （真机回归：面板里弹着键盘时手势返回把整个面板关了，而正确行为是收键盘、面板留着）。
+     *
+     * **必须主线程调用**（手势分发的漏斗 `SlideIndexAccessibilityGestureInjector.perform` 本来就在主线程）；
+     * 这里要同步返回"是否已消费"，所以不做跨线程投递。
+     *
+     * @return true = 这次返回已由面板消费（调用方不要再落 `GLOBAL_ACTION_BACK`）；
+     *   面板没显示 → false（不吞别人的返回）；极端情况下 handler 还没建起来 → 同样 false
+     *   （宁可交回系统返回，也**不绕过**键盘优先规则去直接 `handlePanelBack()`）。
+     */
+    fun requestBackIfShowing(): Boolean {
+        if (!isUserVisible) return false
+        val handler = backHandler ?: return false
+        return handler.dispatchBack()
+    }
+
+    /**
+     * 面板自己的返回策略（第 7、8 档）：输入态 → 收面板。完整层级见
+     * `HistoryPanelScreen` 的「返回层级注册表」；键盘优先（第 0 档）在 `dispatchBack()` 里，
+     * 已经在本方法被调到**之前**判过了。
+     */
     private fun handlePanelBack() {
         // §0.16.22 诊断：面板的返回漏斗。真机上"返回键关不掉面板"时，用它分辨是
         // ① 返回键压根没到浮窗（这条日志不出现），还是 ② 到了却被下面某一档吞掉（这条出现、面板不关）。
         Log.i(tag, "handlePanelBack: interceptor=${panelBackInterceptor != null} clipboardInput=$clipboardInputActive")
+        // 第 1..6 档（interceptor）命中时**由它自己**打 `back decision` 行（分支名只有它知道）。
         if (panelBackInterceptor?.invoke() == true) return
         if (clipboardInputActive) {
             setClipboardInputActive(false)
+            // §0.16.24 诊断：tag 沿用 `OverlayBack`（不新建），格式与其余档位一字不差，
+            // 这样 `grep 'back decision'` 能把整条决策链按顺序读出来。
+            Log.i(BACK_DECISION_TAG, "back decision consumed=true branch=clipboardInput")
             return
         }
+        Log.i(BACK_DECISION_TAG, "back decision consumed=true branch=dismiss")
         dismiss()
     }
 
@@ -490,5 +533,19 @@ class OverlaySidePanelHost(
 
     companion object {
         private const val SHOW_DEBOUNCE_MS = 300L
+
+        /**
+         * §0.16.24：返回决策日志的 tag —— **沿用 [OverlayViewBackHandler] 那个 `OverlayBack`，不新建 tag**
+         * （字符串必须与那边逐字一致，`adb logcat -s OverlayBack` 才能把整条返回链一次捞全）。
+         *
+         * 统一格式：
+         * `back decision consumed=<true|false> branch=<ime|interceptor:*|clipboardInput|dismiss|fallthrough>`
+         *
+         * **一次返回只会出现一行**，因为每一档命中就往回 return：
+         * 第 0 档（`ime`）由 `OverlayViewBackHandler.dispatchBack()` 打，第 1..6 档（`interceptor:*`）由
+         * `HistoryPanelScreen` 的 `panelBackInterceptor` 自己打，第 7/8 档（`clipboardInput` / `dismiss`）
+         * 由 [handlePanelBack] 打，全都没命中（面板没显示）才由注入器打 `fallthrough`。
+         */
+        private const val BACK_DECISION_TAG = "OverlayBack"
     }
 }

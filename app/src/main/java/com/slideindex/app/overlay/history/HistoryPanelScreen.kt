@@ -1,5 +1,6 @@
 package com.slideindex.app.overlay.history
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -460,6 +461,34 @@ internal fun HistoryPanelScreen(
         }
     }
 
+    /*
+     * ======================= 「返回层级」注册表（唯一一份）=======================
+     *
+     * §0.16.24：**系统返回键 / 手势"返回"动作 / 各浮窗的返回入口，全部走这里这一份判定**，
+     * 顺序**从上到下、命中即消费并停止**。以后在面板里新增任何"覆盖正文的临时层"，
+     * **必须登记到本表**（并加进下面的 `DisposableEffect` keys）—— 否则那层开着时返回会直接
+     * 掉到最后一档"收面板"，用户看到的就是"返回把整个面板关了"。
+     *
+     * | 序 | 层 | 判据 | 关闭动作 | 判定位置 |
+     * |---|---|---|---|---|
+     * | 0 | **输入法** | `isImeVisible()` | 收键盘，面板/弹窗/展开态都不动 | `OverlayViewBackHandler.dispatchBack()`（**不在本文件**） |
+     * | 1 | 提醒时间选择器 `HistoryReminderPicker` | `reminderPicker != null` | `reminderPicker = null` | 下面 `when` 第 1 档 |
+     * | 2 | 标签管理浮窗 `HistoryTagManagerModal` | `tagManagerOpen` | `tagManagerOpen = false` | 第 2 档 |
+     * | 3 | 就地编辑条 `HistoryPanelEditBar` | `editTarget != null` | `editTarget = null`（**刻意不清草稿**） | 第 3 档 |
+     * | 4 | 「记一条」加号弹窗 `HistoryComposerModal` | `composerOpen` | `composerOpen = false` | 第 4 档 |
+     * | 5 | **展开的卡片** `HistoryExpandableContentSection` | `expandedEntryIds` 非空 | 收起**最近展开**的那张 | 第 5 档 |
+     * | 6 | 常驻搜索框的查询词 | `activeSearchQuery.isNotBlank()` | 清空查询（§"返回键优先收起搜索"） | 第 6 档（`consumeExpandableSearchBack`） |
+     * | 7 | 窗口输入态（为输入法聚焦） | `OverlaySidePanelHost.clipboardInputActive` | 交回浏览态 | `OverlaySidePanelHost.handlePanelBack()`（**不在本文件**） |
+     * | 8 | **面板本身** | 面板显示中 | `dismiss()` | 同上（最后一档） |
+     *
+     * ⚠️ 顺序按"**后开的先关**"排：弹窗/编辑条只可能盖在列表之上（点不到卡片），所以展开的卡片
+     * 排在这些模态之下；而它们都排在"清搜索词"与"收面板"之上。
+     * ⚠️ 顺序 0（键盘优先）**只有一份**，在 `dispatchBack()` 里 —— 本文件与调用侧都**不要**再判 IME。
+     * ⚠️ 本表只覆盖**面板窗内**的层。另有**独立窗**不在本表：`HistoryNoteSlotWindow`（长按把手弹的
+     * 输入槽）、`HistorySavePeekWindow`（存下后的预览）—— 它们各自有 `OverlayViewBackHandler`，
+     * **系统返回**按焦点路由到它们（谁在上面就给谁），而**手势"返回"**走面板入口、不经过它们
+     * （两种情况都还没纳入本次分层，真机如撞上再单独处理）。
+     */
     DisposableEffect(
         activeSearchQuery,
         selectedTab,
@@ -467,16 +496,25 @@ internal fun HistoryPanelScreen(
         editTarget,
         tagManagerOpen,
         reminderPicker,
+        // 第 5 档的判据也要当 key：否则闭包里捕获的是旧集合，卡片展开了按返回却收不回来。
+        expandedEntryIds,
     ) {
         onRegisterBackInterceptor {
-            // 返回键依次收：提醒选择器 → 标签管理 → 编辑条 → 输入条 → 清搜索（→ 关面板）。
+            // 与上面注册表一一对应（层 → 动作）。
+            //
+            // §0.16.24 诊断：每一档命中时打**一行**统一格式的决策日志（tag 沿用 `OverlayBack`，
+            // 不新建），供真机 `grep 'back decision'` 一眼判读"这次返回被哪一档吃掉/有没有漏给系统"：
+            //   `back decision consumed=true branch=interceptor:<档位>`
+            // 没打这行 = 本档没命中（继续往下：clipboardInput → dismiss → 或交回系统）。
             when {
                 reminderPicker != null -> {
                     reminderPicker = null
+                    Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:reminderPicker")
                     true
                 }
                 tagManagerOpen -> {
                     tagManagerOpen = false
+                    Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:tagManager")
                     true
                 }
                 editTarget != null -> {
@@ -490,19 +528,38 @@ internal fun HistoryPanelScreen(
                     // ②这条条目本身不在了 —— 删掉它（[EditSessionDraft.clear]），
                     // 或者改去编辑另一条（[EditSessionDraft.begin] 换 entryId 时会作废旧草稿）。
                     editTarget = null
+                    Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:editBar")
                     true
                 }
                 composerOpen -> {
                     composerOpen = false
+                    Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:composer")
                     true
                 }
-                else -> consumeExpandableSearchBack(
-                    // 搜索框现在是常驻的：只有"有内容"才需要返回键介入（清空查询）。
-                    expanded = activeSearchQuery.isNotBlank(),
-                    query = activeSearchQuery,
-                    onExpandedChange = {},
-                    onQueryChange = onActiveSearchQueryChange,
-                )
+                // 第 5 档：展开的卡片。只收**最近展开**的那一张（LIFO）——
+                // `expandedEntryIds` 是 `Set`，写入用的是 `Set.plus`（LinkedHashSet，保留插入顺序），
+                // 所以 `last()` 就是"最后被展开的那张"。若以后换成无序集合，这里会退化成
+                // "收起其中一张"，届时需要改成有序结构（**别**改成"一次全收"：那就不是"只关自己"了）。
+                expandedEntryIds.isNotEmpty() -> {
+                    viewModel.toggleExpanded(expandedEntryIds.last())
+                    Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:expanded")
+                    true
+                }
+                else -> {
+                    // 第 6 档：清搜索词。**命中才打日志**（没命中就什么都不打，继续往下走
+                    // clipboardInput → dismiss，由那两档打自己的行）。
+                    val consumed = consumeExpandableSearchBack(
+                        // 搜索框现在是常驻的：只有"有内容"才需要返回键介入（清空查询）。
+                        expanded = activeSearchQuery.isNotBlank(),
+                        query = activeSearchQuery,
+                        onExpandedChange = {},
+                        onQueryChange = onActiveSearchQueryChange,
+                    )
+                    if (consumed) {
+                        Log.i(BackDecisionLogTag, "back decision consumed=true branch=interceptor:search")
+                    }
+                    consumed
+                }
             }
         }
         onDispose { onRegisterBackInterceptor(null) }
@@ -2188,3 +2245,12 @@ private val HistoryHeaderCollapseThreshold = 16.dp
  * 而一次循环只是一次 `getActiveNotifications` + 一遍提醒表，代价可以忽略。
  */
 private const val ReminderPendingPollIntervalMs = 2_000L
+
+/**
+ * §0.16.24：返回决策日志的 tag —— **沿用 `OverlayViewBackHandler` 那个 `OverlayBack`，不新建 tag**。
+ *
+ * 面板这条返回链的每一档都用**同一行格式**报自己（见 `onRegisterBackInterceptor` 里的注释）：
+ * `back decision consumed=<true|false> branch=<ime|interceptor:*|clipboardInput|dismiss|fallthrough>`，
+ * 真机上 `adb logcat -s OverlayBack` 一眼就能看出这次返回被谁吃掉、有没有漏给下层 App。
+ */
+private const val BackDecisionLogTag = "OverlayBack"

@@ -46,28 +46,36 @@ internal object SlideIndexAccessibilityGestureInjector {
         }
         val result = when (action) {
             GestureAction.Back -> {
-                // §0.16.22：**先看收纳面板**（闪念 / 剪贴板侧栏）。
+                // §0.16.22 / §0.16.24：**先看收纳面板**（闪念 / 剪贴板侧栏）。
                 //
-                // 为什么必须由这里显式收：面板是独立 overlay 窗，它自己的返回处理
-                // （`OverlayViewBackHandler` → `OverlaySidePanelHost.handlePanelBack`）在真机上
-                // **完全不响应**（实测：面板开着按系统 BACK，窗口焦点不变、面板纹丝不动；
-                // 而"点面板外遮罩"能关，说明面板的 dismiss 本身是好的）。
-                // 于是以前这条路会落到下面的 `GLOBAL_ACTION_BACK` —— 它要么被系统丢给底下的
-                // App，要么在 overlay 窗上没有任何人处理，用户感受就是"手势返回关不掉面板"。
-                // 手势返回（悬浮球 / 触钮）**都**汇到本漏斗，所以在这里加一条面板感知分支，
-                // 就不必再指望"系统返回能落到面板窗上"。
+                // 为什么必须由这里插一手：面板是独立 overlay 窗，它自己的按键返回处理在真机上
+                // **收不到事件**（实测：面板开着按系统 BACK，窗口焦点不变、面板纹丝不动；
+                // 而"点面板外遮罩"能关，说明面板的 dismiss 本身是好的）。手势返回（悬浮球 / 触钮）
+                // **都**汇到本漏斗，所以这里给面板一条明确入口，不必再指望"系统返回能落到面板窗上"。
                 //
-                // ⚠️ 判据用 `isShowing`（真的在屏幕上）而不是 `isAttached`：面板在进程启动时就有
-                // 一个 GONE 的预热壳（`warmUpBelowChrome`，见 `FloatBallStashPanel`），用 isAttached
-                // 会把"面板其实没开"时的返回键也吞掉。
+                // ⚠️ **只调入口、不判定**：`requestBackIfShowing()` 把这次返回交给面板**自己的返回链**，
+                // 那条链里的层级判定**全工程只有一份**（注册表见 `HistoryPanelScreen` 的 KDoc）：
+                //   ① 输入法弹着 → 只收键盘（面板/弹窗/展开态都不动）
+                //   ② 否则面板里的子层（提醒选择器 / 标签管理 / 编辑条 / 记一条弹窗 / 展开的卡片）
+                //      → 只关最上面那一层
+                //   ③ 否则窗口输入态 → 交回浏览态
+                //   ④ 否则面板本身 → 收起
+                // 面板没显示 → 返回 false，落到下面的分支（`GLOBAL_ACTION_BACK`，不吞别人的返回）。
+                //
+                // ⛔ **不要在这里自己判 IME、判子层、也不要自己 `FloatBallStashPanel.dismiss()`**：
+                // 那等于把层级再抄一份，抄漏了就会出现"面板里弹着键盘/卡片展开着，返回却把整个面板关了"
+                // （§0.16.22 的真机回归）。
                 when {
-                    FloatBallStashPanel.isShowing -> {
-                        FloatBallStashPanel.dismiss()
-                        true
-                    }
+                    FloatBallStashPanel.requestBackIfShowing() -> true
                     ClipboardFloatService.isExpandedShowing() && !ClipboardFloatService.isPinned() ->
                         ClipboardFloatService.closeFromBack()
-                    else -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    else -> {
+                        // §0.16.24 诊断：面板那一整套层级（含第 0 档键盘优先）**没有任何一档认领**这一次
+                        // 返回 → 交回系统。这是唯一打 `consumed=false` 的地方：真机上看到它，就说明这次
+                        // 返回漏给了下层 App（面板当时没显示），不是被面板吞掉了。
+                        Log.i(BACK_DECISION_TAG, "back decision consumed=false branch=fallthrough")
+                        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    }
                 }
             }
             GestureAction.Home -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -775,6 +783,14 @@ internal object SlideIndexAccessibilityGestureInjector {
     const val MAX_HOLD_DURATION_MS = 5_000L
     const val MAX_RECORDED_GESTURE_DURATION_MS = 5_000L
     private const val TAG = "SlideIndexA11y"
+    /**
+     * §0.16.24：返回决策日志的 tag —— 沿用 `OverlayViewBackHandler` 那个 `OverlayBack`（**不新建 tag**），
+     * 字符串与面板链其余档位逐字一致，`adb logcat -s OverlayBack` 才能把一次返回读成一行。
+     *
+     * 本文件只负责打**最后一档** `fallthrough`（`consumed=false`：走完整套层级都没命中、交回系统）；
+     * 其余分支名见 `OverlaySidePanelHost` 里的常量注释。
+     */
+    private const val BACK_DECISION_TAG = "OverlayBack"
     private const val GESTURE_TIMEOUT_MS = 600L
     private const val SCROLL_GESTURE_DELAY_MS = 180L
 }

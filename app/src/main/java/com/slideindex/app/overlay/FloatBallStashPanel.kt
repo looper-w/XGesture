@@ -149,6 +149,25 @@ object FloatBallStashPanel {
         sideHost.dismiss()
     }
 
+    /**
+     * §0.16.24：**手势里的"返回"动作访问本面板的唯一入口**
+     * （`SlideIndexAccessibilityGestureInjector` 的 `GestureAction.Back` 分支调它）。
+     *
+     * 为什么不让调用方直接 [dismiss]：那样会**绕过整个返回层级**（真机回归：面板里弹着键盘、
+     * 或卡片展开着时，手势返回直接把整个面板关了）。这次返回一律交给面板自己的返回链：
+     * ```
+     * 本方法 → OverlaySidePanelHost.requestBackIfShowing()
+     *   → OverlayViewBackHandler.dispatchBack()   ← 第 0 档「键盘优先」在这里（唯一一份）
+     *     → OverlaySidePanelHost.handlePanelBack() ← 第 7/8 档（输入态 / 收面板）
+     *       → panelBackInterceptor                   ← 第 1..6 档，注册表见 HistoryPanelScreen 的 KDoc
+     * ```
+     * ⚠️ **系统返回与手势返回共用这一份层级判定**：调用侧不要再抄 IME 判定、不要再判子层、
+     * 更不要自己 `dismiss()`；以后面板里新增覆盖层，去 `HistoryPanelScreen` 的注册表登记。
+     *
+     * @return true = 这次返回已被面板消费（调用方不要再落 `GLOBAL_ACTION_BACK`）；面板没显示 → false。
+     */
+    fun requestBackIfShowing(): Boolean = sideHost.requestBackIfShowing()
+
     fun destroy() {
         sideHost.destroy()
         pendingInitialTab = HistoryFloatingTab.Stash

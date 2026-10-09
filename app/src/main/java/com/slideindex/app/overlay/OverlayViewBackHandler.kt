@@ -161,16 +161,42 @@ internal class OverlayViewBackHandler(
         )
     }
 
-    private fun dispatchBack() {
-        if (handlingBack) return
+    /**
+     * 本浮窗的**返回唯一漏斗**：键盘优先 → 浮窗自己的 [onBack]。
+     *
+     * 三个来源**共用这一份判定**：
+     * ① `OnBackInvokedCallback`（predictive-back 开着时）；
+     * ② legacy 按键监听（`OnUnhandledKeyEventListener` / 无参 `setOnKeyListener`，注入 `KEYCODE_BACK`）；
+     * ③ **外部"返回"请求** —— 手势里的"返回"动作那条路（`SlideIndexAccessibilityGestureInjector`
+     *    → `FloatBallStashPanel.requestBackIfShowing` → `OverlaySidePanelHost.requestBackIfShowing`）。
+     *
+     * ⚠️ **键盘优先（§0.16.7）只在这里判**（[hideImeAndConsumeBack]）：键盘弹着时这一次返回归键盘，
+     * 收键盘、**不动浮窗**。调用侧（手势那条路、各浮窗自己）**不要再抄一份 IME 判定、也不要自己
+     * `dismiss()`** —— 抄一份必然漏掉这条优先级（真机回归：面板里弹着键盘时，手势返回把面板直接关了）。
+     *
+     * @return true = 这次返回由本浮窗消费，调用方不要再把它交给系统（`GLOBAL_ACTION_BACK`）。
+     */
+    fun dispatchBack(): Boolean {
+        if (handlingBack) {
+            // 同一浮窗的返回正在处理中（Flyme 的 compat 回调与按键注入可能同时到）：这一次同样算
+            // "已被我们认领"，绝不能返回 false 让它漏给下层 App。
+            return true
+        }
         handlingBack = true
         try {
             // §0.16.22 诊断：真机上"返回键到底有没有走到浮窗的返回漏斗"只能靠这条日志分辨
             // （没有它就只能靠猜；`adb logcat -s OverlayBack`）。
-            Log.i(TAG, "dispatchBack: 返回键到达浮窗，交给 onBack（键盘优先规则在内）")
+            Log.i(TAG, "dispatchBack: 收到一次返回（按键或手势请求），交给 onBack（键盘优先规则在内）")
             // 键盘弹着 → 这一次返回归键盘（见类注释）。收完就消费掉，不给浮窗自己的 onBack。
-            if (hideImeAndConsumeBack()) return
+            if (hideImeAndConsumeBack()) {
+                // §0.16.24 诊断：第 0 档「键盘优先」命中。这条路**不会**再调 [onBack]，
+                // 所以面板链上第 1..8 档一次都不会打日志 —— 这是本次返回**唯一的一行**
+                // `back decision`（统一格式见 [OverlaySidePanelHost] 里的常量注释）。
+                Log.i(TAG, "back decision consumed=true branch=ime")
+                return true
+            }
             onBack()
+            return true
         } finally {
             view.post { handlingBack = false }
         }
