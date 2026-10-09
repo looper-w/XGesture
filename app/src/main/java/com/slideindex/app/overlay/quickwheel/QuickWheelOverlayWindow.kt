@@ -58,6 +58,16 @@ object QuickWheelOverlayWindow {
     private var externalMoveHandler: ((Float, Float) -> Unit)? = null
     private var externalUpHandler: ((Float, Float) -> Unit)? = null
 
+    /**
+     * 当前窗口的**代次**：每次 [dismiss] / 每次成功呼出都会 +1。
+     *
+     * 存在的理由：[dismiss] 在非主线程调用时会 `post` 到主线程；[onDismiss] 也来自内容层回调。
+     * 这些延迟执行体如果无条件收起，就会把"这段时间里刚呼出的新窗口"一起关掉
+     * （实测表现：轮盘闪一下就自己消失）。所以延迟体只在自己那一代仍是当前代时才生效。
+     */
+    @Volatile
+    private var session = 0
+
     val isShowing: Boolean get() = composeView != null
 
     /**
@@ -177,22 +187,31 @@ object QuickWheelOverlayWindow {
         anchorMode: QuickWheelAnchorMode = QuickWheelAnchorMode.FOLLOW_FINGER,
     ): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) {
+            // ⚠️ 等待期间主线程可能已经 dismiss()（手势会话结束 / dismissAllPanels）。
+            // 那时这次呼出必须作废：否则下面仍会 addView，而 composeView 等字段已被清空，
+            // 结果是"窗口留在屏幕上、再没有任何人能移除它"，且 isShowing 永远是 true。
+            val expected = session
             var result = false
             val latch = java.util.concurrent.CountDownLatch(1)
             mainHandler.post {
-                result = showInternal(
-                    context = context,
-                    settings = settings,
-                    wheel = wheel,
-                    anchorRawX = anchorRawX,
-                    anchorRawY = anchorRawY,
-                    actionExecutor = actionExecutor,
-                    externalTracking = externalTracking,
-                    showCenter = showCenter,
-                    adaptivePlacement = adaptivePlacement,
-                    primarySectorMaskOverride = primarySectorMaskOverride,
-                    anchorMode = anchorMode,
-                )
+                result = if (session != expected) {
+                    Log.i(TAG, "show: 等待主线程期间窗口已被收起，作废本次呼出")
+                    false
+                } else {
+                    showInternal(
+                        context = context,
+                        settings = settings,
+                        wheel = wheel,
+                        anchorRawX = anchorRawX,
+                        anchorRawY = anchorRawY,
+                        actionExecutor = actionExecutor,
+                        externalTracking = externalTracking,
+                        showCenter = showCenter,
+                        adaptivePlacement = adaptivePlacement,
+                        primarySectorMaskOverride = primarySectorMaskOverride,
+                        anchorMode = anchorMode,
+                    )
+                }
                 latch.countDown()
             }
             runCatching { latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS) }
@@ -200,6 +219,9 @@ object QuickWheelOverlayWindow {
         }
 
         dismiss()
+        // dismiss() 之后 session 就是"这一次呼出"的代号；本函数在主线程上是同步跑完的，
+        // 中途不会再有人改它，记下来给 onDismiss / 延迟回调核对"要关的是不是我"。
+        val mySession = session
         this.externalTracking = externalTracking
         if (wheel.slots.isEmpty() && !wheel.centerSlot.isConfigured) {
             Log.w(TAG, "show: 轮盘为空，忽略")
@@ -266,7 +288,7 @@ object QuickWheelOverlayWindow {
                         screenWidthPx = screenWidthPx,
                         onExecuteTap = { slot -> executeSlot(slot, longPress = false, anchorX, anchorY) },
                         onExecuteLongPress = { slot -> executeSlot(slot, longPress = true, anchorX, anchorY) },
-                        onDismiss = { mainHandler.post { dismiss() } },
+                        onDismiss = { dismissForSession(mySession) },
                         externalTracking = externalTracking,
                         showCenter = showCenter,
                         adaptive = adaptive,
@@ -376,11 +398,22 @@ object QuickWheelOverlayWindow {
         if (externalTracking) dismiss()
     }
 
+    /** 内容层回调：只收起**属于 [expected] 代**的那个窗口（迟到的回调不再误伤新窗口）。 */
+    private fun dismissForSession(expected: Int) {
+        if (expected != session) return
+        dismiss()
+    }
+
     fun dismiss() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { dismiss() }
+            // ⚠️ 必须比对"投递那一刻"的代次：无条件执行的话，这个延迟 dismiss 会把
+            // 投递之后新呼出的窗口一起关掉。
+            val expected = session
+            mainHandler.post { if (expected == session) dismiss() }
             return
         }
+        // 作废所有在途的延迟 dismiss（它们持有的是旧代次）。
+        session++
         val view = composeView
         val owner = composeOwner
         val wm = windowManager
@@ -394,10 +427,13 @@ object QuickWheelOverlayWindow {
         externalMoveHandler = null
         externalUpHandler = null
         if (view != null && wm != null) {
-            runCatching { wm.removeViewImmediate(view) }
+            runCatching { wm.removeView(view) }
         }
-        OverlayCompose.disposeComposeView(view)
-        owner?.destroy()
+        // ⚠️ 走仓库统一的拆除路径：它等 ComposeView 真正 detach 之后再 destroy owner，
+        // 避免 layout 阶段 "ViewTreeLifecycleOwner not found"
+        //（composition 本身由 DisposeOnDetachedFromWindow 释放）。
+        // 以前这里是 disposeComposeView + owner.destroy() 立即执行，与其它浮层不一致。
+        OverlayCompose.teardownOverlayCompose(view, owner)
     }
 
     private fun executeSlot(slot: QuickWheelSlot, longPress: Boolean, anchorX: Float, anchorY: Float) {
