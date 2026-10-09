@@ -194,9 +194,13 @@ internal fun formatHistoryRelativeTime(epochMs: Long): String {
 }
 
 /**
- * 提醒时间的展示（设计稿 `.item .remind`）：`今天 21:30` / `明天 09:00` / `3月5日 09:00`。
+ * 提醒时间的展示（设计稿 `.item .remind`）：`今天 21:30` / `明天 09:00` / `昨天 21:30` / `3月5日 09:00`。
  *
- * 与 [formatHistoryRelativeTime] 不同：提醒是**未来**时间，所以按"今天/明天/日期"说。
+ * 与 [formatHistoryRelativeTime] 不同：提醒按"今天/明天/日期"说。
+ *
+ * ⚠️ 这个函数**也服务于过去**：灰色「已提醒」画的是"这条提醒什么时候到点过"
+ * （`firedAt` 记的是**提醒原本的到点时刻**，不是"我们看见它的时刻"），所以昨天到点的会走到「昨天」那一档。
+ * 没有这一档时它会退化成 `10月8日 21:30` 这种绝对日期 —— 能看，但不如"昨天 21:30"直观。
  */
 @Composable
 internal fun formatReminderTime(epochMs: Long): String {
@@ -206,6 +210,11 @@ internal fun formatReminderTime(epochMs: Long): String {
     val time = SimpleDateFormat("HH:mm", locale).format(Date(epochMs))
     val dayLabel = when {
         sameDay(now, target) -> stringResource(R.string.stash_group_today)
+        // 「昨天」：给**响过**的提醒用（见上面 KDoc —— `firedAt` 记的是到点时刻）。
+        // 复用分组那枚 key（四个 locale 都已存在：昨天 / Yesterday / 昨日 / أمس），不新增字符串。
+        sameDay(target, Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }) -> {
+            stringResource(R.string.stash_group_yesterday)
+        }
         // ⚠️ 这里必须拿 **target** 和"明天"比：原来写成 `sameDay(now, 明天)` 是拿今天比明天，恒为 false，
         // 于是"明天 09:00"一直退化成"10月9日 09:00"（§0.16.10 修）。
         sameDay(target, Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }) -> {
