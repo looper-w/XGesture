@@ -312,6 +312,9 @@ class OverlaySidePanelHost(
         backHandler?.detach()
         backHandler = OverlayViewBackHandler(composeView, ::handlePanelBack).also {
             it.attach(requestViewFocus = false)
+            // §0.16.22：再补一条更早一档的按键拦截（只在"注入 KEYCODE_BACK"那条路上装）。
+            // 真机上"面板开着按返回毫无反应"就是靠它兜住的，理由见 `attachKeyFallback` 的 KDoc。
+            it.attachKeyFallback()
         }
         return true
     }
@@ -336,10 +339,14 @@ class OverlaySidePanelHost(
             backHandler = OverlayViewBackHandler(view, ::handlePanelBack).also {
                 // 现在是真的要收返回键：视图焦点也一并给上（旧版 OnUnhandledKeyEventListener 那条路要用）。
                 it.attach(requestViewFocus = true)
+                // §0.16.22：同上，兜底那一条按键路也要跟着装（attach / refresh 之后都要重装一次，
+                // 因为 refresh() 内部会先把旧的摘掉）。
+                it.attachKeyFallback()
             }
         } else {
             // 窗口刚变成可聚焦，注册得重来一次（`OnBackInvokedCallback` 要窗口有 dispatcher）。
             handler.refresh()
+            handler.attachKeyFallback()
         }
     }
 
@@ -348,6 +355,9 @@ class OverlaySidePanelHost(
     }
 
     private fun handlePanelBack() {
+        // §0.16.22 诊断：面板的返回漏斗。真机上"返回键关不掉面板"时，用它分辨是
+        // ① 返回键压根没到浮窗（这条日志不出现），还是 ② 到了却被下面某一档吞掉（这条出现、面板不关）。
+        Log.i(tag, "handlePanelBack: interceptor=${panelBackInterceptor != null} clipboardInput=$clipboardInputActive")
         if (panelBackInterceptor?.invoke() == true) return
         if (clipboardInputActive) {
             setClipboardInputActive(false)

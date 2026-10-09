@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.PointerSwipeConfig
 import com.slideindex.app.gesture.PointerSwipeDirection
+import com.slideindex.app.overlay.FloatBallStashPanel
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -45,10 +46,28 @@ internal object SlideIndexAccessibilityGestureInjector {
         }
         val result = when (action) {
             GestureAction.Back -> {
-                if (ClipboardFloatService.isExpandedShowing() && !ClipboardFloatService.isPinned()) {
-                    ClipboardFloatService.closeFromBack()
-                } else {
-                    service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                // §0.16.22：**先看收纳面板**（闪念 / 剪贴板侧栏）。
+                //
+                // 为什么必须由这里显式收：面板是独立 overlay 窗，它自己的返回处理
+                // （`OverlayViewBackHandler` → `OverlaySidePanelHost.handlePanelBack`）在真机上
+                // **完全不响应**（实测：面板开着按系统 BACK，窗口焦点不变、面板纹丝不动；
+                // 而"点面板外遮罩"能关，说明面板的 dismiss 本身是好的）。
+                // 于是以前这条路会落到下面的 `GLOBAL_ACTION_BACK` —— 它要么被系统丢给底下的
+                // App，要么在 overlay 窗上没有任何人处理，用户感受就是"手势返回关不掉面板"。
+                // 手势返回（悬浮球 / 触钮）**都**汇到本漏斗，所以在这里加一条面板感知分支，
+                // 就不必再指望"系统返回能落到面板窗上"。
+                //
+                // ⚠️ 判据用 `isShowing`（真的在屏幕上）而不是 `isAttached`：面板在进程启动时就有
+                // 一个 GONE 的预热壳（`warmUpBelowChrome`，见 `FloatBallStashPanel`），用 isAttached
+                // 会把"面板其实没开"时的返回键也吞掉。
+                when {
+                    FloatBallStashPanel.isShowing -> {
+                        FloatBallStashPanel.dismiss()
+                        true
+                    }
+                    ClipboardFloatService.isExpandedShowing() && !ClipboardFloatService.isPinned() ->
+                        ClipboardFloatService.closeFromBack()
+                    else -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 }
             }
             GestureAction.Home -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)

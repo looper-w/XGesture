@@ -3,6 +3,7 @@ package com.slideindex.app.overlay
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -37,6 +38,8 @@ internal class OverlayViewBackHandler(
     private var unhandledKeyListener: ViewCompat.OnUnhandledKeyEventListenerCompat? = null
     private var attachListener: View.OnAttachStateChangeListener? = null
     private var usesUnhandledKeyBackListener = false
+    /** §0.16.22：是否已经装了"更早一档"的 [View.setOnKeyListener] 兜底（见 [attachKeyFallback]）。 */
+    private var keyFallbackInstalled = false
     private var handlingBack = false
     private var registerAttempts = 0
     private var predictiveBackEnabled = false
@@ -64,6 +67,42 @@ internal class OverlayViewBackHandler(
             scheduleRegisterOnBackInvoked()
         } else {
             registerUnhandledKeyBackListener()
+        }
+    }
+
+    /**
+     * §0.16.22：再补一条**更早一档**的返回键拦截（[View.setOnKeyListener]）。
+     *
+     * 真机事故（闪念面板开着，返回键完全无反应；点面板外遮罩却能关）之后的复盘：
+     * [ViewCompat.OnUnhandledKeyEventListenerCompat] 只在"**整棵视图树都没人处理**这个事件"时
+     * 才被调用 —— 而浮窗里是 Compose，`AndroidComposeView` 的按键分发（焦点系统 / 节点上的
+     * `onPreviewKeyEvent`）只要把返回键判成"已处理"，那个"未处理"回调就**永远没机会跑**，
+     * 于是浮窗没有任何存活的返回路径（本仓库里确实存在 Compose 侧消费 `Key.Back` 的先例，
+     * 见 `PickResultInteractiveText` 的 `onPreviewKeyEvent`）。
+     *
+     * [View.dispatchKeyEvent] 里 `OnKeyListener` 是**第一顺位**（早于 `event.dispatch()` 走视图树），
+     * 拿到的是同一支返回键，且动作仍然汇进**同一个漏斗** [dispatchBack] ——
+     * 所以"键盘弹着先收键盘"（§0.16.7）与重入保护照旧生效，不另造一套语义。
+     *
+     * ⚠️ 只在"注入 `KEYCODE_BACK`"这条路（[shouldUseOnBackInvoked] 为 false）装：
+     * OnBackInvoked 与 legacy 按键监听**不能并存**（Flyme 上会形成
+     * `registerCompatOnBackInvokedCallback` ↔ `injectBackKeyEvents` 的循环，见类注释）。
+     * ⚠️ 只被"面板窗"这一条路调用（`OverlaySidePanelHost`），其余浮窗行为不变。
+     */
+    fun attachKeyFallback() {
+        // 上一次装的先清掉：反复 show / 设置翻转都会走到这里，保证同一时刻只有一条按键路。
+        if (keyFallbackInstalled) {
+            view.setOnKeyListener(null)
+            keyFallbackInstalled = false
+        }
+        predictiveBackEnabled = resolvePredictiveBackEnabled(view.context)
+        if (shouldUseOnBackInvoked()) return
+        keyFallbackInstalled = true
+        view.setOnKeyListener { _, keyCode, event ->
+            if (keyCode != KeyEvent.KEYCODE_BACK) return@setOnKeyListener false
+            // 与 unhandled 监听同一套语义：DOWN 直接消费（不漏给下面的 App），UP 才动作。
+            if (event.action == KeyEvent.ACTION_UP) dispatchBack()
+            true
         }
     }
 
@@ -126,6 +165,9 @@ internal class OverlayViewBackHandler(
         if (handlingBack) return
         handlingBack = true
         try {
+            // §0.16.22 诊断：真机上"返回键到底有没有走到浮窗的返回漏斗"只能靠这条日志分辨
+            // （没有它就只能靠猜；`adb logcat -s OverlayBack`）。
+            Log.i(TAG, "dispatchBack: 返回键到达浮窗，交给 onBack（键盘优先规则在内）")
             // 键盘弹着 → 这一次返回归键盘（见类注释）。收完就消费掉，不给浮窗自己的 onBack。
             if (hideImeAndConsumeBack()) return
             onBack()
@@ -193,6 +235,11 @@ internal class OverlayViewBackHandler(
         attachListener?.let { view.removeOnAttachStateChangeListener(it) }
         attachListener = null
         registerAttempts = 0
+        if (keyFallbackInstalled) {
+            // §0.16.22：与 attachKeyFallback 成对（refresh() 会先 detach 再按最新设置重装）。
+            view.setOnKeyListener(null)
+            keyFallbackInstalled = false
+        }
         if (usesUnhandledKeyBackListener) {
             unhandledKeyListener?.let { listener ->
                 ViewCompat.removeOnUnhandledKeyEventListener(view, listener)
@@ -212,6 +259,7 @@ internal class OverlayViewBackHandler(
     }
 
     private companion object {
+        private const val TAG = "OverlayBack"
         private const val MAX_ON_BACK_REGISTER_ATTEMPTS = 12
 
         /**
