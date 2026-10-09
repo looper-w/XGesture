@@ -690,7 +690,23 @@ class StashRepository @Inject constructor(
         while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
             sampleSize *= 2
         }
-        val maxPixels = targetWidthPx.toLong() * maxVisibleHeightPx * 2L
+        // ⚠️ §0.16.20：**不要再按 `targetWidthPx * maxVisibleHeightPx` 限制像素**。
+        //
+        // 老写法是 `maxPixels = targetWidthPx * maxVisibleHeightPx * 2`。对**竖长截图**
+        // （1080×2400，卡片渲染 296dp 宽 × 150dp 高 → 目标宽约 680px、可见高约 345px）
+        // 这个预算是 680×345×2 ≈ 47 万像素，而原图 259 万像素 → 采样被硬推到 **2**，
+        // 解出来只有 540px 宽（比目标还小），再 `scale` 到 680px 就成了**放大** ——
+        // 用户说的"屏幕截图缩略图明显发糊"就是这么来的（宽度够、**高度维**被预算饿死）。
+        //
+        // 新预算按"**较大边**"给：`side²`（side = max(目标宽, 可见高)，再乘 2 的平方），
+        // 等价于允许"最长边 ≤ 2×side"的方形图。高度方向因此不再被单独掐死；
+        // 上限仍是 [HistoryCardImageMaxSourcePixels]（1200 万像素 ≈ 48MB），防止 1 亿像素的
+        // 全景图把内存吃光。
+        val budgetSidePx = maxOf(targetWidthPx, maxVisibleHeightPx)
+        val maxPixels = minOf(
+            (budgetSidePx.toLong() * 2L) * (budgetSidePx.toLong() * 2L),
+            HistoryCardImageMaxSourcePixels,
+        )
         while (
             (bounds.outWidth.toLong() / sampleSize) * (bounds.outHeight / sampleSize) > maxPixels
         ) {
@@ -832,5 +848,13 @@ class StashRepository @Inject constructor(
         const val INDEX_FILE_NAME = "index.json"
         const val STASH_PREVIEW_MAX_SIDE_PX = 720
         const val MAX_ENTRIES = 200
+
+        /**
+         * 卡片缩略图解码的**源图像素上限**（§0.16.20）。
+         *
+         * 1200 万像素 ≈ 48MB（ARGB_8888）；这是"给竖长截图足够采样余量"和"别被全景图吃光内存"
+         * 之间的折中。真正进缓存的还是缩放+裁切后的卡片图（几百 KB 级）。
+         */
+        const val HistoryCardImageMaxSourcePixels = 12_000_000L
     }
 }

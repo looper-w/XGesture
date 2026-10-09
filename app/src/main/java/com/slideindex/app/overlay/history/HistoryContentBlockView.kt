@@ -36,14 +36,23 @@ internal enum class HistoryImageSource {
 }
 
 /**
- * 卡片内图片的**解码超前系数**（§0.16.19）。
+ * 卡片内图片的**解码超前系数**（§0.16.19 引入，§0.16.20 从 1.5 提到 **2.0**）。
  *
- * 1.5 = 用户给的 1.5~2 里偏保守的一档：卡片图是 `ContentScale.Fit` + 高度上限，
- * 竖图的实际渲染宽度只有"高度 × 宽高比"，再叠上 `inSampleSize` 只能取 2 的幂，
- * 不超前就会掉档。取 1.5 而不是 2.0 是因为卡片的解码结果会**同时**留在
- * `thumbnailCache`（`LruCache`）里，列表里几十张的量级下要让缓存装得下。
+ * 为什么要超前：`inSampleSize` 只能取 **2 的幂**，目标卡在档位边界上就会掉到一半那一档
+ * （掉一半 = 用户看到的"发糊"）。1.5 那一版用户实测仍嫌糊，所以取到 2.0。
+ *
+ * ⚠️ §0.16.20 的**关键修正其实不在这个系数**，而在**像素预算**：
+ * 老的 `maxPixels = 目标宽 × 可见高 × 2` 对**竖长截图**（1080×2400、卡片 296dp 宽 × 150dp 高）
+ * 只有约 47 万像素，会把 259 万像素的原图硬采到 1/4（解出 540px 宽，比目标 680px 还小 → 放大变糊）。
+ * 现在两个解码器都改成按"**较大边**"给预算（`(2 × max(目标宽, 可见高))²`，上限 1200 万像素），
+ * 高度维不再被饿死。**系数与预算两处都要对**才清晰，只改一个没用。
+ *
+ * 内存：卡片解码结果都进 `thumbnailCache` / `ClipboardThumbnailCache`（`LruCache`，1/8 堆），
+ * 旧值会被换出。最坏一张：源 `(2×680)² ≈ 167 万像素` ≈ **6.7MB**（解出来还会被缩到 680px 宽、
+ * 裁到 ≤150dp 高，长期驻留的是那个小图）；同时可见 3~4 张 → 瞬时约 20~27MB，
+ * 在 1/8 堆（旗舰机约 32~64MB）之内。
  */
-private const val HistoryCardImageOversample = 1.5f
+private const val HistoryCardImageOversample = 2.0f
 
 @Composable
 internal fun HistoryContentBlockView(
@@ -66,16 +75,21 @@ internal fun HistoryContentBlockView(
             )
         }
         ClipboardBlockKind.IMAGE -> {
-            // §0.16.19：解码目标 = **显示宽度 × 超前系数**。
+            // §0.16.20：解码目标 = **最终渲染尺寸里"较大的那一边" × density × 超前系数**。
             //
-            // `previewWidthPx` 是卡片内容的显示宽度（由 `historyPreviewWidthPx()` 按面板真实宽度算），
-            // 这里再乘 [HistoryCardImageOversample]：下面那张图是 `ContentScale.Fit` +
-            // `heightIn(max = 150/200.dp)`，**竖图**会被"高度塞满"→ 实际渲染宽度只有
-            // `150dp × 宽高比`（3:4 竖图 ≈ 405px），而 `inSampleSize` 只能取 2 的幂，
-            // 不超前一点就会掉到一半那一档 —— 用户看到的"缩略图也糊"多半是这种竖图。
+            // 渲染尺寸怎么算（两个 tab 同一条路径，参数由调用方给）：
+            // - 宽：`previewWidthPx` = 卡片内容宽度 = `historyPreviewWidthPx()`
+            //   （面板真实宽度 − 24dp；竖屏 411dp 屏 → 面板 320dp → 这里约 296dp ≈ 680px）；
+            // - 高：`previewHeightPx` = 折叠时的高度上限（闪念 150dp ≈ 345px、剪贴板 120dp ≈ 276px）；
+            //   展开时高度不设限，用 `historyExpandedImageMaxSidePx()`。
             //
-            // 内存：卡片的解码结果都进 `thumbnailCache`（`LruCache`，1/8 堆），且旧值会被换出；
-            // 单个 1266×1728 的条目 ≈ 8.7MB，在 1/8 堆（通常数十 MB）之内。
+            // ⚠️ **竖长截图（1080×2400，宽高比 0.45）是决定性场景**：它 `Fit` 进这个盒子时
+            // **宽度是满的**（296dp ≈ 680px），高度被裁到 150dp。也就是说"较长边"是**宽**，
+            // 目标宽必须给到 680px 以上才不糊 —— 而老实现虽然也传了宽度，却被解码器里那个
+            // `目标宽 × 可见高 × 2` 的**像素预算**掐死（见 [HistoryCardImageOversample] 的说明）。
+            //
+            // 所以这里保持"按宽度给目标"，真正修清晰度的是解码器的预算改成按较大边算；
+            // 展开态走 `historyExpandedImageMaxSidePx()`（≤2048），不受折叠这一套限制。
             val decodeWidthPx = if (expanded) {
                 previewWidthPx
             } else {

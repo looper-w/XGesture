@@ -167,6 +167,14 @@ object ClipboardImageStore {
         return decodeThumbnailForCardFromFile(file, targetWidthPx, maxVisibleHeightPx)
     }
 
+    /**
+     * 剪贴板卡片的 **URI 版**解码（§0.16.20）。
+     *
+     * ⚠️ 老实现是 `BitmapFactory.decodeStream(stream)` —— **全尺寸解码**再缩放：
+     * "屏幕截图"那种 1080×2400 的 URI 会先吃 10MB，超大图直接 OOM。
+     * 现在先 `inJustDecodeBounds` 读尺寸、按与文件版**同一套预算**算 `inSampleSize`，
+     * 再解码（流要开两次：`InputStream` 不能倒回）。
+     */
     fun loadUriThumbnailForCard(
         context: Context,
         uriString: String,
@@ -174,10 +182,35 @@ object ClipboardImageStore {
         maxVisibleHeightPx: Int
     ): Bitmap? {
         if (uriString.isBlank() || targetWidthPx <= 0 || maxVisibleHeightPx <= 0) return null
+        val uri = uriString.toUri()
         return runCatching {
-            context.contentResolver.openInputStream(uriString.toUri())?.use { stream ->
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+            // 与 `decodeThumbnailForCardFromFile` 完全同一套采样算式（两处必须一致，
+            // 否则"文件图"和"URI 图"在同一个卡片里会一个清晰一个糊）。
+            var sampleSize = 1
+            while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
+                sampleSize *= 2
+            }
+            val budgetSidePx = maxOf(targetWidthPx, maxVisibleHeightPx)
+            val maxPixels = minOf(
+                (budgetSidePx.toLong() * 2L) * (budgetSidePx.toLong() * 2L),
+                CARD_IMAGE_MAX_SOURCE_PIXELS,
+            )
+            while (
+                (bounds.outWidth.toLong() / sampleSize) * (bounds.outHeight / sampleSize) > maxPixels
+            ) {
+                sampleSize *= 2
+            }
+
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
                 scaleAndCropThumbnailForCard(
-                    BitmapFactory.decodeStream(stream) ?: return@use null,
+                    BitmapFactory.decodeStream(stream, null, options) ?: return@use null,
                     targetWidthPx,
                     maxVisibleHeightPx
                 )
@@ -344,7 +377,17 @@ object ClipboardImageStore {
         while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
             sampleSize *= 2
         }
-        val maxPixels = targetWidthPx.toLong() * maxVisibleHeightPx * 2L
+        // ⚠️ §0.16.20：像素预算改用"**较大边**"，与 `StashRepository.loadThumbnailByFileNameForCard`
+        // 保持**同一套算法**（两个 tab 的缩略图必须一起变清晰，不能只修一个）。
+        //
+        // 老写法 `targetWidthPx * maxVisibleHeightPx * 2` 对**竖长截图**（1080×2400）太紧：
+        // 预算只有约 47 万像素 → 采样被推到 2 → 解出 540px 宽（比目标 680px 还小）→ 放大变糊。
+        // 新预算 = `(2 × max(目标宽, 可见高))²`，上限 [CARD_IMAGE_MAX_SOURCE_PIXELS]。
+        val budgetSidePx = maxOf(targetWidthPx, maxVisibleHeightPx)
+        val maxPixels = minOf(
+            (budgetSidePx.toLong() * 2L) * (budgetSidePx.toLong() * 2L),
+            CARD_IMAGE_MAX_SOURCE_PIXELS,
+        )
         while (
             (bounds.outWidth.toLong() / sampleSize) * (bounds.outHeight / sampleSize) > maxPixels
         ) {
@@ -392,4 +435,13 @@ object ClipboardImageStore {
     }
 
     private const val PREVIEW_MAX_SIDE_PX = 384
+
+    /**
+     * 卡片缩略图解码的**源图像素上限**（§0.16.20）。
+     *
+     * 与 `StashRepository.HistoryCardImageMaxSourcePixels` **同一个值**（两处注释互相点名）：
+     * 1200 万像素 ≈ 48MB（ARGB_8888），防止超大图/全景图把内存吃光；
+     * 进 `ClipboardThumbnailCache`（`LruCache`，1/8 堆）的仍是缩放+裁切后的小图。
+     */
+    private const val CARD_IMAGE_MAX_SOURCE_PIXELS = 12_000_000L
 }

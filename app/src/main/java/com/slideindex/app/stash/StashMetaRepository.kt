@@ -305,7 +305,8 @@ class StashMetaRepository @Inject constructor(
 
     /**
      * 收尾**已经过点**的提醒：删掉它们（第 4 条：过期提醒清理），并同步清掉闹钟与提醒镜像；
-     * 同时给它们记一条 [StashMetaStore.firedAt]（"响过了"），卡片据此画灰色「已提醒」（§0.16.15）。
+     * 同时给它们记一条 [StashMetaStore.firedAt]（"响过了"—— 记的是**那条提醒该响的时刻** `atMs`，
+     * 不是"对账这一刻"，理由见规则 3 与实现里的 ⚠️），卡片据此画灰色「已提醒」（§0.16.15）。
      *
      * 「稍后」写回显示（为什么需要它）：用户点了通知上的「稍后 10 分钟」时进程可能没装数据层，
      * 只能把新时间记在 [StashReminderMirror] 的 snooze override 里；于是 meta 里这一条的时间
@@ -320,6 +321,10 @@ class StashMetaRepository @Inject constructor(
      *    （**不是**删这条条目的全部元数据），`AlarmManager.cancel` + 镜像一并清，
      *    并写一条 [StashMetaStore.firedAt] —— "删提醒"和"记下它响过"是一件事的两半：
      *    只删不记，卡片上那行 ⏰ 就会凭空消失（用户实测的抱怨）；只记不删，闹钟会一直挂着。
+     *    ⚠️ 这条 `firedAt` 写的是**该条目自己的 `atMs`**（只有 `atMs` 缺失/非正数才退化成 `nowMs`）。
+     *    两个理由：① 「已提醒」显示的是"这条提醒响过/到点过"的时刻，本来就是 `atMs`；
+     *    ② `StashReminderPendingState` 的流光兜底判据是 `now - firedAt <= 30min`，
+     *    写 `nowMs` 会让"搬走一条过期很久的提醒"反而把光点亮半小时。细节在下面实现的 ⚠️ 里。
      *
      * 幂等、可反复调用。
      *
@@ -334,6 +339,7 @@ class StashMetaRepository @Inject constructor(
      * 会把一条其实还有效的提醒删掉（override 也会被一起清掉，救不回来）。
      *
      * @param nowMs 判定"过期"的时间基准，留参数是为了可测（默认当前时间）。
+     *   ⚠️ 它**只**用来判过期和在 `atMs` 不可用时兜底，**不再**被写进 `firedAt`（那是 `atMs`）。
      * @return 真正删掉的条数（第 2 条那种"改成更晚时间"的不计入）。
      */
     suspend fun clearExpiredReminders(nowMs: Long = System.currentTimeMillis()): Int {
@@ -360,7 +366,22 @@ class StashMetaRepository @Inject constructor(
                     reminders.remove(entryId)
                     // ⚠️ 这里**必须**留下"响过了"的痕迹（而不是像 setReminder(null) 那样清掉）：
                     // 卡片上那行 ⏰ 就是靠它从"未来时间"切换成灰色的「已提醒」。
-                    fired[entryId] = nowMs
+                    //
+                    // ⚠️ 记的是**这条提醒该响的时刻 `atEpochMs`**，而不是"对账这一刻" `nowMs`：
+                    // - 语义上 `firedAt` 回答的是"这条提醒什么时候响过 / 到点过"，那本来就是 `atMs`；
+                    //   卡片那行灰色「已提醒」也应当按这个时刻展示（`stashReminderRow` 把 `firedAt`
+                    //   一路传给 `HistoryTimelineGutter` 画"已提醒 昨天 21:30"）。写 `nowMs` 的话，
+                    //   "提醒过点三天后用户才打开面板"会把这一行显示成"已提醒 刚刚"，是假信息；
+                    // - 流光那边更硬：`StashReminderPendingState` 的兜底判据是
+                    //   `now - firedAt <= STALE_PENDING_GRACE_MS`（30 分钟）。写 `nowMs` 会让一条
+                    //   **过期很久**的条目在被对账搬走的那一刻被当成"刚响过"→ 光又亮半小时
+                    //   （刚修好"通知没了光还亮"，再来一次回光返照更糟）；写 `atMs` 则只有真的
+                    //   刚响过的才亮 —— 搬走陈年过期项时，光**当场**就是灭的。
+                    //
+                    // 兜底：`atMs` 缺失 / 非正数理论上不会发生（这条就是从 `reminders` 里取出来的），
+                    // 但真遇上坏数据时宁可退化成 `nowMs`（"它响过"这个语义仍然成立），也不能往
+                    // `firedAt` 里塞 0 / 负数：那会让 `recentlyFired` 永远为假，卡片还会显示 1970 年。
+                    fired[entryId] = if (atEpochMs > 0L) atEpochMs else nowMs
                     expiredRemovals += entryId
                     changed = true
                 }

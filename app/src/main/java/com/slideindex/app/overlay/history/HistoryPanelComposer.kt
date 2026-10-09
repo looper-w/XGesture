@@ -889,41 +889,39 @@ private val HistoryComposerThumbnailSize = 64.dp
 private const val HistoryComposerThumbnailTargetPx = 320
 
 /**
- * 图片块解码的**兜底**采样目标（没有 `LocalWindowInfo` 时用，§0.16.19）。
+ * 图片块解码采样目标的**上限**（§0.16.19 引入，§0.16.20 从 1080 提到 **1440**）。
  *
- * 1080 = 常见手机屏幕的宽度像素；正文图块是**整宽**渲染的，采样到屏幕宽就 1:1 不糊了。
- */
-private const val HistoryComposerImageTargetDefaultPx = 1080
-
-/**
- * 图片块解码采样目标的**上限**（§0.16.19，防内存）。
+ * 为什么提到 1440：正文图块是**整宽**渲染的，而"屏幕截图"这类**竖长图**高度很大，
+ * 用户想看清细节时 1080 那一档仍偏软。常见手机（1080 宽）上目标由 `min(屏宽, 420dp)`
+ * 决定（≈1080），**只有大屏/折叠屏才吃到 1440** —— 所以这次提档对小屏几乎零成本，
+ * 对大屏才真正生效。
  *
- * 最坏情况估算（ARGB_8888 = 4 字节/像素）：1080 宽、4:3 → 1080×810 ≈ **3.5MB**；
- * 一条闪念塞 10 张图 → ~35MB（弹窗草稿里每张图一个 `remember(path)`），
- * 这在"一条闪念"的量级上仍然可接受（`StashRepository` 的缩略图缓存本身是 1/8 堆）。
- * 所以上限就卡在 1080：**多图条目也不会被一刀切地放大**。
+ * 最坏情况估算（ARGB_8888 = 4 字节/像素）：
+ * - 1440 宽、4:3 → 1440×1080 ≈ **6.2MB**（1080 那一档约 3.5MB）；
+ * - 一条闪念塞 10 张图 → 上界 ~62MB（弹窗草稿里每张图一个 `remember(path, imageTargetPx)`）。
+ *   这是**上界**：正文视口只有 160..320dp 高（≈2 张 120dp 图 + 文字），同时在屏的通常 1~3 张，
+ *   滚出视口的块随 Composable 回收释放。
+ * - 所以上限卡在 1440：**多图条目不会被一刀切地放大**，而竖长图的细节够看。
  */
-private const val HistoryComposerImageTargetMaxPx = 1080
+private const val HistoryComposerImageTargetMaxPx = 1440
 
 /** 与 `historyPanelWidthDpOf`（`HistoryPanelUi.kt`）里那个面板宽度上限保持同一个值。 */
 private val HistoryComposerPanelMaxWidth = 420.dp
 
 /**
- * 正文图片块的解码采样目标（§0.16.19）。
+ * 正文图片块的解码采样目标（§0.16.19 引入，§0.16.20 提高上限）。
  *
  * 依据（用户给的算式：**显示尺寸 × density × 1.5~2**）：
- * - 显示尺寸 = 正文图块的实际宽度。它占**面板整宽**（`fillMaxWidth`），
- *   面板宽有 420dp 上限（`panelWidthOf`），所以取 `min(屏幕宽, 420dp)` 就是上限；
- * - density 用 `LocalDensity.fontScale` 之外的真实缩放（`density`）；
- * - ×2 是因为 `inSampleSize` 只能取 **2 的幂**：目标要略微超前，否则会掉到一半（÷2）那一档，
- *   而"掉一半"正是糊的来源。
+ * - 显示尺寸 = 正文图块的实际尺寸。它占**面板整宽**（`fillMaxWidth`），宽度上限是
+ *   `HistoryComposerPanelMaxWidth`（420dp，与 `panelWidthOf` 同一个值）；
+ *   高度是固定 120dp，所以对**竖长截图**来说"较大边"永远是宽 —— 按宽度给目标就够了；
+ * - ×2 是因为 `inSampleSize` 只能取 **2 的幂**：目标要超前，否则会掉到一半（÷2）那一档，
+ *   "掉一半"正是糊的来源（这条与卡片那套 [HistoryCardImageOversample] 同一个理由）；
+ * - 上限 [HistoryComposerImageTargetMaxPx] 防内存（见那条 KDoc 的估算）。
  *
  * 为什么不直接用 `historyPreviewWidthPx()`（卡片缩略图用的那个）：它内部含
  * "容器旋转就取 min(w,h)" 那套卡片专用兜底，而这里要的是"弹窗正文的整宽上限"，
  * 两者算式不同（差 24dp 与 960 上限）；各自写清楚比互相借用更好维护。
- *
- * ⚠️ 只在**正文块编辑器**里用：面板卡片的缩略图**早就**是按显示宽度解码的
- * （`historyPreviewWidthPx()` + `loadThumbnailByFileNameForCard`），见本次交付说明。
  */
 @Composable
 private fun draftBlockImageTargetPx(): Int {
@@ -936,7 +934,7 @@ private fun draftBlockImageTargetPx(): Int {
         (displayWidthPx * HistoryComposerImageTargetOversample)
             .toInt()
             .coerceAtMost(HistoryComposerImageTargetMaxPx)
-            .coerceAtLeast(HistoryComposerImageTargetDefaultPx / 2)
+            .coerceAtLeast(HistoryComposerImageTargetMaxPx / 2)
     }
 }
 

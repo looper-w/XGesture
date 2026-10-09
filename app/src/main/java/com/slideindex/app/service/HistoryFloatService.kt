@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -40,6 +41,7 @@ import com.slideindex.app.settings.HistoryFloatHandleWidth
 import com.slideindex.app.stash.StashAccess
 import com.slideindex.app.stash.StashCoordinator
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +80,17 @@ class HistoryFloatService : Service() {
      * 用它保证"进程起来后必然算一次"这件事不被退避/可见性 gate 吃掉（见 [refreshHandlePendingGlow]）。
      */
     private var hasEverComputed = false
+    /**
+     * 过期提醒「有界对账」的重入闸门（见 [reconcileExpiredRemindersIfNeeded]）。
+     *
+     * `clearExpiredReminders()` 是 suspend（要拿跨进程文件锁 + 写盘 + 取消闹钟），可能跨好几拍
+     * 500ms tick 才回来；而 [refreshHandlePendingGlow] 到点就会再起一个协程。没有这个闸门的话，
+     * 几拍会同时排队去写同一份 meta 文件 —— 纯属浪费，而且它们算出来的结果完全一样。
+     *
+     * 用 [AtomicBoolean] 而不是 `@Volatile var`：读取与置位必须是一个原子动作
+     * （先读 false 再各自置 true 的写法挡不住两拍同时进来），`compareAndSet` 才是真正的"抢位"。
+     */
+    private val reconcilingExpiredReminders = AtomicBoolean(false)
     /** [HistorySaveSignal] 的普通回调（Service 里没有组合上下文）。 */
     private val saveListener: (String) -> Unit = { text ->
         // 把手自己都被藏起来时（全屏/横屏/息屏）不要凭空冒出一个预览。
@@ -345,6 +358,11 @@ class HistoryFloatService : Service() {
      * 在别处被推进过，都不会出现"永远没算过"的情况 —— 而没算过时 `hasPending` 永远是初值 false。
      * 唯一保留的前置条件是"把手真的可能被看见"（窗口已上屏且没被全屏/横屏/息屏藏起来），
      * 那是为了不在没人看的窗口期白算；但它不会**消费**首次计算的机会（标志只在真算过之后置位）。
+     *
+     * ⚠️ 每一拍照样是"先对账、再算流光"两步（[reconcileExpiredRemindersIfNeeded]）：
+     * 对账是治"用户从不打开面板 + 通知权限被关 → 那条过期 `reminders` 没人收尾 → 光永久亮"的，
+     * 详见那个方法的注释。对账同样受这里的可见性 gate 保护 —— 把手看不见时流光本来就不显示，
+     * 不需要为了收敛去写盘。
      */
     private fun refreshHandlePendingGlow() {
         val firstTime = !hasEverComputed
@@ -361,6 +379,11 @@ class HistoryFloatService : Service() {
         // 虽然很轻，但这里是 500ms 的服务 tick（主线程），不该把 IO/系统调用压在主线程上。
         // 它内部只写一个 Compose state（`hasPending`），从后台线程写是安全的。
         deps.applicationScope.launch(Dispatchers.Default) {
+            // 先对账，再算流光：
+            // 对账会把"过点超过宽限期"的 `reminders` 条目搬进 `firedAt`（并 cancel 掉它的闹钟），
+            // 于是兜底判据改由 `recentlyFired`（自带 30 分钟时限）接手 → 光在宽限期后自然灭。
+            // 这是治本的收敛入口（面板那条 LaunchedEffect 在"从不打开面板"时永远不跑）。
+            reconcileExpiredRemindersIfNeeded()
             val changed = StashReminderPendingState.refresh(applicationContext)
             pendingGlowBackoffMs = if (changed) {
                 PENDING_GLOW_MIN_INTERVAL_MS
@@ -368,6 +391,50 @@ class HistoryFloatService : Service() {
                 (maxOf(pendingGlowBackoffMs, PENDING_GLOW_MIN_INTERVAL_MS) * 2)
                     .coerceAtMost(PENDING_GLOW_MAX_INTERVAL_MS)
             }
+        }
+    }
+
+    /**
+     * 「有界对账」：把**过点超过宽限期**的 `reminders` 收尾掉（搬进 `firedAt`），让流光能自然熄灭。
+     *
+     * 治的是什么：[StashReminderPendingState] 的兜底判据里，`reminders[id] <= now` 这一半
+     * **不能**加时限（它专门覆盖"通知权限被关 / 通知发不出去"的机器 —— `StashReminderReceiver`
+     * 在 `areNotificationsEnabled() == false` 时直接 return，那些用户**永远没有通知可看**）；
+     * 而收尾它的 `clearExpiredReminders()` 原先**只在面板可见/数据变化时**才被调，
+     * 于是"用户从不打开面板 + 通知权限被关"时，那条过期项永远躺在 `reminders` 里 → 把手永久亮。
+     * 这里补上服务侧那条入口，整条链是：
+     * **`reminders` 过期项 →（面板可见时 / 本服务的 30s 轮询）对账搬进 `firedAt` → 宽限期后自然灭**。
+     *
+     * 为什么不是"给 `overdue` 也加时限"：那等于把上面那批用户的流光彻底关掉
+     * （见 [StashReminderPendingState] 的 §「过期 `reminders` 的收敛链」）。收敛只能靠"把过期项搬走"。
+     *
+     * 代价控制（三层，从最便宜到最贵）：
+     * 1. **零写盘探针** [StashReminderPendingState.hasStaleExpiredReminders]：只读内存里的
+     *    `StateFlow` 快照，没有"过点超过宽限期"的条目就立刻返回 —— 绝大多数轮询走的就是这条；
+     * 2. **重入闸门** [reconcilingExpiredReminders]：上一拍的对账还没回来就直接放弃这一拍，绝不叠写；
+     * 3. 只有前两步都放行，才真的去 `clearExpiredReminders()`（suspend：文件锁 + 写盘 + 取消闹钟）。
+     *    它的收敛是**有保证**的：每条过期项要么被删掉（同时记 `firedAt`），要么被 snooze override
+     *    推成未来时间 —— 两种结果都会让探针在下一拍返回 false，同一条不会被反复对账。
+     *
+     * ⚠️ 这里**只**调 `clearExpiredReminders`，不调 `mergeSnoozeOverrides`（面板那边要按顺序先并再清，
+     * 是因为它紧接着要用合并后的表 `rescheduleAll`）。本方法只做收尾，而 `clearExpiredReminders`
+     * 内部自己会读 snooze override 并按规则 2 顺延，所以顺序问题在这里不存在。
+     *
+     * 失败不吵：对账失败只记一条 warn（下一拍 30s 后自然重试），不弹任何 UI —— 它是自愈，不是用户操作。
+     */
+    private suspend fun reconcileExpiredRemindersIfNeeded() {
+        // ① 便宜判断：只扫一遍内存快照，没有该搬走的就直接返回（零写盘）。
+        if (!StashReminderPendingState.hasStaleExpiredReminders()) return
+        // ② 抢位：抢不到说明上一拍还没写完，这一拍直接放弃。
+        if (!reconcilingExpiredReminders.compareAndSet(false, true)) return
+        try {
+            // 数据层晚于本服务挂上时拿不到 → 静默跳过，下一次轮询再试（`deps.stashRepository`
+            // 是 `StashMetaRepository` 的构造依赖，它的 `init` 会把自己挂到 `StashAccess`）。
+            val repo = StashAccess.metaRepository ?: return
+            runCatching { repo.clearExpiredReminders() }
+                .onFailure { Log.w(TAG, "过期提醒对账失败（下一拍重试）", it) }
+        } finally {
+            reconcilingExpiredReminders.set(false)
         }
     }
 
@@ -436,6 +503,8 @@ class HistoryFloatService : Service() {
     }
 
     companion object {
+        private const val TAG = "HistoryFloatService"
+
         const val ACTION_LOCK_POSITION = "com.slideindex.app.history_float.LOCK_POSITION"
         const val ACTION_SET_HANDLE_WIDTH = "com.slideindex.app.history_float.SET_HANDLE_WIDTH"
         const val ACTION_SET_LANDSCAPE_ENABLED = "com.slideindex.app.history_float.SET_LANDSCAPE_ENABLED"
