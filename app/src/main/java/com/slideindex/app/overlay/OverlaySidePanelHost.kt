@@ -453,6 +453,9 @@ class OverlaySidePanelHost(
     }
 
     fun dismiss() {
+        // §0.16.23：面板已经收起了 —— "外部 UI 回来要恢复面板"不再成立，先把挂起态作废，
+        // 免得随后的兜底 resume 把一个 GONE 的 MATCH_PARENT 窗重新点亮成"整屏点不动"。
+        StashPanelExternalUi.onHostWindowDismissed()
         panelHost.runOnMain {
             if (!panelHost.isAttached) return@runOnMain
             val visibleState = panelVisibilityState
@@ -516,11 +519,17 @@ class OverlaySidePanelHost(
      */
     fun suspendForExternalUi() {
         panelHost.setDragHidden(true)
+        // §0.16.23：让挂起状态**只有一个真源**（`StashPanelExternalUi`）—— 它还要按这个状态起看门狗、
+        // 并且要能回答"现在能不能再点 ✎"。两侧都幂等，所以重复自报无害。
+        StashPanelExternalUi.onHostWindowSuspended()
     }
 
     /** 外部 UI 回来后恢复面板窗（与 [suspendForExternalUi] 成对）。 */
     fun resumeAfterExternalUi() {
         panelHost.setDragHidden(false)
+        // §0.16.23：`FloatBallStashPanel.show` 里那句直接 resume 也要把状态拉回来，
+        // 否则陈旧的"挂起中"会挡住用户下一次 ✎（用户实测的"面板消失了"那一幕）。
+        StashPanelExternalUi.onHostWindowResumed()
     }
 
     /** 跟手拖动期间面板窗要"看得见但不吃触摸"（见 [OverlayFullScreenPanelHost.setTouchable]）。 */

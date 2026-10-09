@@ -3062,6 +3062,8 @@
     <string name="stash_undo">元に戻す</string>
     <string name="stash_deleted">削除しました</string>
     <string name="stash_edit_saved">保存しました</string>
+    <string name="stash_image_edit_replaced_hint">画像を差し替えました。保存を忘れずに</string>
+    <string name="stash_image_edit_busy">編集中です。少々お待ちください</string>
     <string name="stash_appended">追記しました</string>
     <string name="stash_done_marked">完了にしました</string>
     <string name="stash_undone_marked">未完了に戻しました</string>

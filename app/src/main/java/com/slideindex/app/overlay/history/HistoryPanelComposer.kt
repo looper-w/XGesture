@@ -417,6 +417,28 @@ internal fun DraftBlockEditorSurface(
     val blockViewportOffsets = remember { mutableStateMapOf<String, Int>() }
     /** 正文视口高度（px，由容器 `onGloballyPositioned` 实测上报）；0 = 还没测到。 */
     var viewportHeightPx by remember { mutableStateOf(0) }
+    /**
+     * **块序列本身**的实测高度（px，§0.16.23）。
+     *
+     * 只用来算尾部那枚"空白落点"该占多高（[tailTapZoneHeight]）—— 它量的是**块**，
+     * 不含落点自己，所以"量出来 → 改落点高度 → 再量"不构成回环（一轮就稳定）。
+     */
+    var blocksHeightPx by remember { mutableStateOf(0) }
+    /**
+     * 尾部"空白落点"的高度（§0.16.23）。
+     *
+     * = `正文视口最小高度 − 块序列高度`，下限 40dp（空文字块的最小高度）。
+     *
+     * 为什么这么算：正文视口是 `heightIn(160..320)`，内容不满 160dp 时**容器仍然有 160dp**
+     * —— 最后一块下面那一片空白原来是死的（点它什么都不会发生）。按这个算式，落点正好把
+     * "从最后一块底部到视口底部"整片吃掉；块本身已经超过 160dp 时（要滚动）就退回 40dp 的最小落点。
+     *
+     * ⚠️ 不要改用 `viewportHeightPx` 来算：那个值是**容器**高度，容器高度 = `clamp(内容高, 160, 320)`，
+     * 而内容高里又含落点自己 → 会滚成"每次都把内容撑到 320dp"的正反馈（面板正文永远顶格）。
+     */
+    val tailTapZoneHeight: Dp =
+        (HistoryComposerBodyMinHeightDp - with(LocalDensity.current) { blocksHeightPx.toDp() })
+            .coerceAtLeast(HistoryComposerEmptyBlockMinHeight)
 
     /** 当前"插入/修改"的落点：优先最后聚焦那块（还在的话），否则退到最后一个文字块。 */
     fun targetTextBlockId(): String? =
@@ -610,6 +632,41 @@ internal fun DraftBlockEditorSurface(
         }
     }
 
+    /**
+     * §0.16.23：「点正文最后一块**下方的空白**」→ 把光标送进正文末尾，顺手滚过去。
+     *
+     * 两种情况分开处理（都满足"点空白就能在图片下面继续写"）：
+     * - 末尾**已经是空文字块**（收尾规则 `normalizeDraftBlocks` 保证媒体块后面总有它）→
+     *   **不再叠一个空块**，只把光标送进去。两个挨着的空块对用户没有任何意义，
+     *   而 `pendingCursor` 那条既有机制已经负责"下一帧要焦点 + 滚进视口"。
+     * - 末尾是**有文字的文字块**（用户写满了最后一行、下面还有空白）→ 追加一个空文字块再送光标，
+     *   这正是需求里的"点空白 → 追加一个空文本块"。
+     *
+     * 为什么用 `pendingCursor` 而不是直接 `focusRequester.requestFocus()`：新块当帧还不存在
+     * （组合都没跑），`requestFocus()` 会静默失败 —— 见 [pendingCursor] 的 KDoc。
+     */
+    fun focusOrAppendTailTextBlock() {
+        val last = blocks.lastOrNull()
+        if (last is DraftBlock.Text && last.value.isEmpty()) {
+            latestValues[last.id] = TextFieldValue("", selection = TextRange(0))
+            pendingCursor[last.id] = 0
+            scrollBlockIntoView(last.id)
+            return
+        }
+        // ⚠️ id 必须由 `newDraftBlockId()` 在 transform **内部**发出来（与插图的规则同一条），
+        // 但落光标要在这个块真的进列表之后（所以先记下来再写 pendingCursor）。
+        var createdId: String? = null
+        onBlocksChange { list ->
+            val tail = newEmptyDraftTextBlock()
+            createdId = tail.id
+            list + tail
+        }
+        createdId?.let { id ->
+            pendingCursor[id] = 0
+            scrollBlockIntoView(id)
+        }
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         if (onAddImage != null || showVoiceButton) {
             Row(
@@ -686,80 +743,107 @@ internal fun DraftBlockEditorSurface(
             // 块间距 7dp：太小看不出"这是两块"（尤其空块），太大就断成两个输入框了。
             verticalArrangement = Arrangement.spacedBy(HistoryComposerBlockGap),
         ) {
-            blocks.forEachIndexed { index, block ->
-                when (block) {
-                    is DraftBlock.Text -> key(block.id) {
-                        HistoryComposerTextBlock(
-                            block = block,
-                            // 整份正文只剩这一块时才显示占位提示（老实现的判据是 `text.isEmpty()`）。
-                            showHint = hint != null && blocks.size == 1 && block.value.isEmpty(),
-                            hint = hint,
-                            onValueChange = { updated ->
-                                latestValues[block.id] = updated
-                                onBlocksChange { list ->
-                                    list.map { item ->
-                                        if (item.id == block.id && item is DraftBlock.Text) {
-                                            item.copy(value = updated.text)
-                                        } else {
-                                            item
+            // §0.16.23：块序列单独包一层 —— 只为了量出"块自己有多高"（`blocksHeightPx`），
+            // 用来算下面那枚"尾部空白落点"该占多高。位置语义不变：第一层子项 y 仍从 0 开始，
+            // `blockViewportOffsets`（`positionInParent()`）算出来的滚动目标与原来逐字一致。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords -> blocksHeightPx = coords.size.height },
+                verticalArrangement = Arrangement.spacedBy(HistoryComposerBlockGap),
+            ) {
+                blocks.forEachIndexed { index, block ->
+                    when (block) {
+                        is DraftBlock.Text -> key(block.id) {
+                            HistoryComposerTextBlock(
+                                block = block,
+                                // 整份正文只剩这一块时才显示占位提示（老实现的判据是 `text.isEmpty()`）。
+                                showHint = hint != null && blocks.size == 1 && block.value.isEmpty(),
+                                hint = hint,
+                                onValueChange = { updated ->
+                                    latestValues[block.id] = updated
+                                    onBlocksChange { list ->
+                                        list.map { item ->
+                                            if (item.id == block.id && item is DraftBlock.Text) {
+                                                item.copy(value = updated.text)
+                                            } else {
+                                                item
+                                            }
                                         }
                                     }
-                                }
-                            },
-                            onFocusChanged = { focused -> if (focused) lastFocusedBlockId = block.id },
-                            onBackspaceOnLeadingEdge = {
-                                // 位置 0 的退格 = 想删掉**前一个块**；只有前一个块是媒体块（图 / 语音）时
-                                // 才需要这套特殊处理（文字块之间的退格交给 IME 自己）。
-                                val previous = blocks.getOrNull(index - 1)
-                                if (previous is DraftBlock.Image || previous is DraftBlock.Audio) {
-                                    when (previous) {
-                                        is DraftBlock.Image -> removeImageBlock(previous)
-                                        is DraftBlock.Audio -> removeAudioBlock(previous)
-                                        else -> Unit
+                                },
+                                onFocusChanged = { focused -> if (focused) lastFocusedBlockId = block.id },
+                                onBackspaceOnLeadingEdge = {
+                                    // 位置 0 的退格 = 想删掉**前一个块**；只有前一个块是媒体块（图 / 语音）时
+                                    // 才需要这套特殊处理（文字块之间的退格交给 IME 自己）。
+                                    val previous = blocks.getOrNull(index - 1)
+                                    if (previous is DraftBlock.Image || previous is DraftBlock.Audio) {
+                                        when (previous) {
+                                            is DraftBlock.Image -> removeImageBlock(previous)
+                                            is DraftBlock.Audio -> removeAudioBlock(previous)
+                                            else -> Unit
+                                        }
+                                        // 焦点回到前一个文字块末尾（那块就是光标左边那段文字）。
+                                        val before = blocks.getOrNull(index - 2) as? DraftBlock.Text
+                                        if (before != null) pendingCursor[before.id] = before.value.length
                                     }
-                                    // 焦点回到前一个文字块末尾（那块就是光标左边那段文字）。
-                                    val before = blocks.getOrNull(index - 2) as? DraftBlock.Text
-                                    if (before != null) pendingCursor[before.id] = before.value.length
-                                }
-                            },
-                            focusRequester = focusRequester,
-                            ownFocusRequester = focusRequesters.getOrPut(block.id) { FocusRequester() },
-                            pendingCursor = pendingCursor,
-                            onSubmitKey = onSubmitKey,
-                            focusDelegation = focusDelegation,
-                            // §0.16.18：上报本块在视口里的 y（"插入后滚到目标块"要用它算位置）。
-                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
-                            // 只有"插入造成的光标移动"才需要滚（打字时的光标移动不滚，
-                            // 否则用户往上翻着看时会被一次次拽回底部）。
-                            autoScroll = { scrollBlockIntoView(block.id) },
-                        )
-                    }
-
-                    is DraftBlock.Image -> key(block.id) {
-                        DraftBlockEditorImage(
-                            path = resolveImagePath(block.path),
-                            onRemove = { removeImageBlock(block) },
-                            // §0.16.18：图片块也要上报 y（插图后目标块常常就是刚补的空文字块，
-                            // 但图片本身很高，用户想看到的往往是图本身）。
-                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
-                            // §0.16.19：按显示宽度解码（原来固定 480px，整宽渲染时糊）。
-                            imageTargetPx = imageTargetPx,
-                            // §0.16.22：✎ 进内置编辑器（null = 这个入口不给这枚按钮）。
-                            onEdit = onEditImage?.let { edit -> { edit(block.id) } },
-                        )
-                    }
-
-                    // §0.16.21：语音块 —— 整宽胶囊、点了就地播、右侧 ✕ 删（与图片块平级）。
-                    is DraftBlock.Audio -> key(block.id) {
-                        DraftBlockEditorAudio(
-                            path = resolveAudioPath(block.path),
-                            durationMs = block.durationMs,
-                            onRemove = { removeAudioBlock(block) },
-                            onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
-                        )
+                                },
+                                focusRequester = focusRequester,
+                                ownFocusRequester = focusRequesters.getOrPut(block.id) { FocusRequester() },
+                                pendingCursor = pendingCursor,
+                                onSubmitKey = onSubmitKey,
+                                focusDelegation = focusDelegation,
+                                // §0.16.18：上报本块在视口里的 y（"插入后滚到目标块"要用它算位置）。
+                                onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
+                                // 只有"插入造成的光标移动"才需要滚（打字时的光标移动不滚，
+                                // 否则用户往上翻着看时会被一次次拽回底部）。
+                                autoScroll = { scrollBlockIntoView(block.id) },
+                            )
+                        }
+    
+                        is DraftBlock.Image -> key(block.id) {
+                            DraftBlockEditorImage(
+                                path = resolveImagePath(block.path),
+                                onRemove = { removeImageBlock(block) },
+                                // §0.16.18：图片块也要上报 y（插图后目标块常常就是刚补的空文字块，
+                                // 但图片本身很高，用户想看到的往往是图本身）。
+                                onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
+                                // §0.16.19：按显示宽度解码（原来固定 480px，整宽渲染时糊）。
+                                imageTargetPx = imageTargetPx,
+                                // §0.16.22：✎ 进内置编辑器（null = 这个入口不给这枚按钮）。
+                                onEdit = onEditImage?.let { edit -> { edit(block.id) } },
+                            )
+                        }
+    
+                        // §0.16.21：语音块 —— 整宽胶囊、点了就地播、右侧 ✕ 删（与图片块平级）。
+                        is DraftBlock.Audio -> key(block.id) {
+                            DraftBlockEditorAudio(
+                                path = resolveAudioPath(block.path),
+                                durationMs = block.durationMs,
+                                onRemove = { removeAudioBlock(block) },
+                                onBlockPlaced = { y -> blockViewportOffsets[block.id] = y },
+                            )
+                        }
                     }
                 }
             }
+            // §0.16.23：「正文最后一块下方的空白」是一枚**落点**（用户报"图片在最底部时光标到不了图片下面"）。
+            //
+            // 高度 = 正文视口最小高度 − 块序列实测高度（下限 = 空文字块的最小高度 40dp）：
+            // "内容不满一屏时，最后一块下面那一整片空白"于是**整片**都点得到 —— 而不是只有紧贴块的那几像素，
+            // 也不是把整块正文都变成点击区（后者会连"点图/点文字块"都算成新建块）。
+            //
+            // 无缩进陷阱：`blocksHeightPx` 量的是**块本身**（本 Box 在外面），不构成"量了又改高度"的回环。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(tailTapZoneHeight)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { focusOrAppendTailTextBlock() },
+                    ),
+            )
         }
     }
 }

@@ -81,7 +81,7 @@ internal fun newEmptyDraftTextBlock(): DraftBlock.Text =
 /**
  * 块序列的收尾规则 + 两条"只读镜像"的重算。**两个草稿共用这一份**，别各写一遍。
  *
- * 收尾只保证一件事：**至少有一个文字块**（见 [normalizeDraftBlocks]）。
+ * 收尾保证两件事：**至少有一个文字块**、且**最后一个块一定是文字块**（见 [normalizeDraftBlocks]）。
  *
  * 镜像用 `MutableState` 装（[textMirror] / [imagePathsMirror] / [audioPathsMirror]）：
  * 它们在组合里被读，必须各自是一个可观察对象；`SnapshotStateList` 装不了"派生字符串"。
@@ -111,14 +111,27 @@ internal fun syncDraftMirrors(
 }
 
 /**
- * 收尾：一张 `DraftBlock` 都没有时补一个空文字块。
+ * 收尾（§0.16.16 的"至少一个文字块" + §0.16.23 的"最后一个块必须是文字块"）：
+ * 1. 一张 `DraftBlock` 都没有 → 补一个空文字块；
+ * 2. 最后一个块是**图片 / 语音**（整宽独占一行的媒体块）→ 在它后面补一个空文字块。
  *
- * 为什么**只**保证"至少一个文字块"、不去合并相邻空块：用户手上有两个挨着的空块是
- * 完全合法的中途状态（删掉中间一张图就会留下它），这时硬合并会把光标/焦点从用户
- * 刚站住的那个块上挪走。真正的合并交给"存下"那一步（空文字块本来就会被跳过）。
+ * 第 2 条是用户实测 bug 的根因修复：「图片在正文最底部时，光标到不了图片下面」。
+ * 媒体块整宽独占一行，"图片右边"**不可能**有光标（本仓库的 `BasicTextField` 没有内联元素，
+ * 做不到图文混排）；能落光标的只有**块与块之间**，所以媒体块后面必须永远留一个空文字块
+ * —— 否则正文末尾是图时，用户点图下面的空白没有任何块可接光标。
+ *
+ * 为什么**不**去合并相邻空块：用户手上有两个挨着的空块是完全合法的中途状态
+ * （删掉中间一张图就会留下它），硬合并会把光标/焦点从用户刚站住的那个块上挪走。
+ * 真正的合并交给"存下"那一步（空文字块本来就会被跳过）。
+ *
+ * ⚠️ 幂等：末尾已经是文字块时**原样返回同一个 list 实例**，不重新发 id
+ * （每次重组都发新 id 会让 Compose 的 `key(block.id)` 把整块重建、输入框丢焦点）。
  */
-internal fun normalizeDraftBlocks(blocks: List<DraftBlock>): List<DraftBlock> =
-    blocks.ifEmpty { listOf(newEmptyDraftTextBlock()) }
+internal fun normalizeDraftBlocks(blocks: List<DraftBlock>): List<DraftBlock> {
+    if (blocks.isEmpty()) return listOf(newEmptyDraftTextBlock())
+    if (blocks.last() is DraftBlock.Text) return blocks
+    return blocks + newEmptyDraftTextBlock()
+}
 
 /** 一份块序列的**只读投影**里"文字"那一半的语义（非空文字块用 `\n` 连接）。 */
 internal fun draftTextOf(blocks: List<DraftBlock>): String =

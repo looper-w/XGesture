@@ -196,7 +196,7 @@ private fun blockFileNamesOf(
  * 就地图块那枚 **✎** 的落地实现（§0.16.22）。
  *
  * 链路（每一步都必须在这一层，组件里做不了）：
- * ① **挂起面板窗**（[StashPanelExternalUi.suspend]）：面板是比编辑器更高一层的无障碍覆盖窗，
+ * ① **挂起面板窗**（[StashPanelExternalUi.suspendForExternalUi]）：面板是比编辑器更高一层的无障碍覆盖窗，
  *    不挂起就会盖在编辑器上面；
  * ② 起 `StashEditImageTrampolineActivity`（overlay 的 Compose 树没有 `ActivityResultRegistryOwner`，
  *    拿不到编辑器保存后的结果 —— 与选图走 trampoline 是同一个理由）；
@@ -208,6 +208,25 @@ private fun blockFileNamesOf(
  *
  * 为什么替换的判据是**块 id** 而不是"第几张"：同一张图可能在正文里出现两次，
  * 而用户点的是**那一块**上的 ✎（块顺序随时会因为插字/删块变化，用序号一定会改错地方）。
+ *
+ * ---
+ * ## §0.16.23：每一步一行判读日志（tag = [StashEditImageTrampolineActivity.LOG_TAG]）
+ *
+ * `adb logcat -s StashImageEdit` 应该能按顺序看到：
+ * `openImageEditorForBlock …` → `launch trampoline …` → `trampoline onCreate …` →
+ * `trampoline launch editor … extra=true` → `editor onCreate …` → `editor save→output …` →
+ * `trampoline onActivityResult …` → `trampoline deliver …` → `面板侧回调 delivered …` →
+ * `replaceImageBlockPath …` → `resumeAfterExternalUi 调用点=…`。
+ * 哪一步断在日志里，就是哪一步的根因。
+ *
+ * ## 两道防"静默消失"的闸（§0.16.23）
+ * 1. **已有一次编辑在途**（`editInFlight`，由本函数**同步**置位）→ 忽略这次点击 + 一次可见提示：
+ *    否则会叠起第二个 trampoline，而第二次挂起会被幂等忽略、第一次的结果回来才恢复，
+ *    用户看到的就是"点了没反应"。
+ * 2. **面板仍处于外部 UI 挂起态** → 同样忽略 + 可见提示。这个状态有两种来源：
+ *    别的外部 UI（相册选择器）正在前台（**不能**在这里抢着恢复，那会让面板盖住相册），
+ *    或者上一次挂起漏了恢复 —— 后者由 `StashPanelExternalUi` 的 5s 看门狗自愈，
+ *    所以两种都不该"静默消失"。
  */
 private fun openImageEditorForBlock(
     context: android.content.Context,
@@ -215,27 +234,76 @@ private fun openImageEditorForBlock(
     blockPath: String,
     existingImageFileNames: Set<String>,
     repository: com.slideindex.app.stash.StashRepository?,
+    /** 面板内提示条（复用 `HistoryPanelScreen` 里那条 `.toast`）。 */
+    onMessage: (Int) -> Unit,
 ) {
+    val tag = com.slideindex.app.service.StashEditImageTrampolineActivity.LOG_TAG
     val decodedPath = resolveEditBlockImagePath(
         path = blockPath,
         existingImageFileNames = existingImageFileNames,
         repository = repository,
     )
-    StashPanelExternalUi.suspend?.invoke()
+    val sourceFile = File(decodedPath)
+    Log.i(
+        tag,
+        "openImageEditorForBlock blockId=$blockId blockPath=$blockPath 解析后源路径=$decodedPath " +
+            "源文件存在=${sourceFile.isFile} 大小=${sourceFile.length()} 在途=${com.slideindex.app.service.StashEditImageTrampolineActivity.editInFlight}",
+    )
+    // 闸 1：已经有一次编辑在途（用户连点 / 上一次还没回来）→ 直接忽略，别再叠一个 trampoline。
+    // ⚠️ 判据是"在途"标志，它由**发起方同步置位**（见 markEditInFlight），所以连点两下也挡得住。
+    if (com.slideindex.app.service.StashEditImageTrampolineActivity.editInFlight) {
+        Log.w(tag, "openImageEditorForBlock 忽略：已有一次图片编辑在途 blockId=$blockId（不静默：给一次提示）")
+        onMessage(R.string.stash_image_edit_busy)
+        return
+    }
+    // 闸 2：面板还停在挂起态 —— 可能是别的外部 UI（相册选择器）正在前台，也可能是上一次 resume 丢了。
+    // 两种都**忽略这次点击**（放弃与看门狗已经分别保证"别叠外部 UI"与"最多 5s 自己回来"），
+    // 但绝不静默：给一次提示 + 一行日志。
+    if (StashPanelExternalUi.isSuspended) {
+        Log.w(
+            tag,
+            "openImageEditorForBlock 忽略：面板正处于外部 UI 挂起态 blockId=$blockId " +
+                "（看门狗会在租约过期后自动恢复，见 StashPanelExternalUi）",
+        )
+        onMessage(R.string.stash_image_edit_busy)
+        return
+    }
+    // 源文件不可读：起编辑器也只会立刻"取消"回来（trampoline 会早退），这里直接给定论 + 可见提示。
+    if (!sourceFile.isFile) {
+        Log.w(tag, "openImageEditorForBlock 放弃：源图不可读（路径=$decodedPath）blockId=$blockId")
+        onMessage(R.string.inspire_image_edit_load_failed)
+        return
+    }
+    // 先同步置"在途"，再挂起、再起 trampoline：这段窗口里第二次点击必须被闸 1 挡住。
+    com.slideindex.app.service.StashEditImageTrampolineActivity.markEditInFlight(true)
+    StashPanelExternalUi.suspendForExternalUi(caller = "edit-image-block blockId=$blockId")
     com.slideindex.app.service.StashEditImageTrampolineActivity.launch(context, decodedPath) { edited ->
+        com.slideindex.app.service.StashEditImageTrampolineActivity.markEditInFlight(false)
         // ⚠️ 恢复必须是**第一件事**（取消也要恢复，否则面板再也弹不出来）。
-        StashPanelExternalUi.resume?.invoke()
-        if (edited.isNullOrBlank()) return@launch
+        StashPanelExternalUi.resumeAfterExternalUi(caller = "编辑器结果回调")
+        if (edited.isNullOrBlank()) {
+            Log.i(tag, "openImageEditorForBlock 回调 cancelled blockId=$blockId（面板已恢复，块不动）")
+            return@launch
+        }
         val applied = EditSessionDraft.replaceImageBlockPath(blockId, edited)
+        val file = File(edited)
+        Log.i(
+            tag,
+            "replaceImageBlockPath blockId=$blockId found=$applied newPath=$edited " +
+                "新文件存在=${file.isFile} 大小=${file.length()}",
+        )
         if (applied) {
             // 换掉了才删旧文件，而且只删"本来就不属于这条条目"的那份（cache 临时图）。
             // 删除本身失败无所谓（cache 会被系统清），所以 runCatching 吞掉。
             if (blockPath !in existingImageFileNames) {
                 runCatching { File(decodedPath).delete() }
             }
+            // 两级保存的用户可见提示：编辑器「保存」只改了**草稿**，还要按编辑浮窗的「保存」才落条目。
+            onMessage(R.string.stash_image_edit_replaced_hint)
         } else {
             // 没换上（用户把那一块删了 / 编辑中途关掉了编辑条）：结果文件没人引用，别留在 cache 里。
-            runCatching { File(edited).delete() }
+            Log.w(tag, "replaceImageBlockPath 失败：块 id 对不上（用户删了那块 / 编辑条已换条目）blockId=$blockId")
+            runCatching { file.delete() }
         }
     }
 }
@@ -1450,9 +1518,9 @@ internal fun HistoryPanelScreen(
                     //
                     // §0.16.16：**不在这里插块** —— 路径原样交回弹窗，由它按"当前光标"切块插入
                     // （光标/焦点只活在弹窗里，这里插只能追加到末尾，那就退回老行为了）。
-                    StashPanelExternalUi.suspend?.invoke()
+                    StashPanelExternalUi.suspendForExternalUi(caller = "composer-add-image")
                     StashComposerImageTrampolineActivity.launch(appContext) { picked ->
-                        StashPanelExternalUi.resume?.invoke()
+                        StashPanelExternalUi.resumeAfterExternalUi(caller = "选图回调（弹窗）")
                         if (picked.isNotEmpty()) onPicked(picked.distinct())
                     }
                 },
@@ -1544,6 +1612,13 @@ internal fun HistoryPanelScreen(
                                     blockPath = block.path,
                                     existingImageFileNames = editEntryExistingImageNames,
                                     repository = stashRepo,
+                                    onMessage = showPanelMessage,
+                                )
+                            } else {
+                                // 静默返回是上一轮的坑：块已经被删掉时也要在日志里留下定论（§0.16.23）。
+                                Log.w(
+                                    com.slideindex.app.service.StashEditImageTrampolineActivity.LOG_TAG,
+                                    "✎ 忽略：块已不在草稿里 blockId=$blockId（不是图片块）",
                                 )
                             }
                         },
@@ -1703,9 +1778,9 @@ internal fun HistoryPanelScreen(
                             //
                             // §0.16.17：**不在这里插块** —— 路径原样交回编辑条，由它按"当前光标"切块插入
                             // （与弹窗完全同一套；在这里插只能追加到末尾，那就退回老行为了）。
-                            StashPanelExternalUi.suspend?.invoke()
+                            StashPanelExternalUi.suspendForExternalUi(caller = "editbar-add-image")
                             StashComposerImageTrampolineActivity.launch(appContext) { picked ->
-                                StashPanelExternalUi.resume?.invoke()
+                                StashPanelExternalUi.resumeAfterExternalUi(caller = "选图回调（编辑条）")
                                 if (picked.isNotEmpty()) onPicked(picked.distinct())
                             }
                         },

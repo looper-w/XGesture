@@ -6,11 +6,13 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.slideindex.app.R
+import com.slideindex.app.overlay.StashPanelExternalUi
 import com.slideindex.app.util.TrampolineResultPort
 import java.io.File
 import java.util.UUID
@@ -37,9 +39,37 @@ class StashComposerImageTrampolineActivity : ComponentActivity() {
     private val maxItems: Int
         get() = intent.getIntExtra(EXTRA_MAX_ITEMS, DefaultMaxItems).coerceIn(2, 20)
 
+    /** 是否已经交付过结果（`onResume` 兜底与 launcher 回调都可能在同一次里跑，必须幂等）。 */
+    private var delivered = false
+
+    /** 选择器是否真的压过我们（`onPause`）—— `onResume` 兜底的判据。 */
+    private var pausedWithPicker = false
+
+    /**
+     * 选择器**已经交回结果**（回调进来了）。
+     *
+     * ⚠️ 与 [delivered] 分开：回调里还要把 URI 解码落盘（`Dispatchers.IO`，有耗时），
+     * 那段时间 [delivered] 仍是 false，若 `onResume` 兜底按 [delivered] 判，就会在落盘途中
+     * 抢先交付一个空列表 —— 用户选的图全丢（比"面板卡住"严重得多）。
+     */
+    private var resultReceived = false
+
+    /* ---------- §0.16.23：面板挂起租约（防止"结果丢了 → 面板冻死 / 看门狗误伤"） ---------- */
+
+    private val leaseHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var leaseRunning = false
+    private val leaseTick = object : Runnable {
+        override fun run() {
+            if (!leaseRunning) return
+            StashPanelExternalUi.renewExternalUiLease(owner = LeaseOwner)
+            leaseHandler.postDelayed(this, LeaseIntervalMs)
+        }
+    }
+
     private val pickLauncher = registerForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(DefaultMaxItems)
     ) { uris ->
+        resultReceived = true
         if (uris.isEmpty()) {
             deliver(emptyList())
         } else {
@@ -61,13 +91,66 @@ class StashComposerImageTrampolineActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // §0.16.23：把"面板为外部 UI 挂起"的租约往后推一次 —— 相册选择器起来之前（onPause 之前）
+        // 也归看门狗管；随后每次 onPause 开始续租，onResume 停止（见下面三个回调）。
+        StashPanelExternalUi.renewExternalUiLease(owner = LeaseOwner)
         runCatching { pickLauncher.launch(imageOnlyRequest) }.onFailure {
             Toast.makeText(this, R.string.stash_pin_add_failed, Toast.LENGTH_SHORT).show()
             deliver(emptyList())
         }
     }
 
+    /**
+     * 相册选择器（外部 UI）压上来了：**开始续租**。
+     *
+     * ⚠️ 没有这一步，`StashPanelExternalUi` 的 5s 看门狗会在用户翻相册翻到一半时把面板恢复出来 ——
+     * 面板是比相册更高的无障碍覆盖层，那一瞬间用户就点不着相册了。续租 = "外部 UI 还活着"。
+     */
+    override fun onPause() {
+        super.onPause()
+        startLease()
+    }
+
+    /**
+     * 回到前台 = 外部 UI 已经不在我们上面了：停止续租。
+     *
+     * 顺手兜底"结果/生命周期丢了"：已经压过我们（[pausedWithPicker]）却还没交付结果，
+     * 就按取消交付一次 —— 面板挂起态不会因为回调丢失而永久卡死（§0.16.23）。
+     */
+    override fun onResume() {
+        super.onResume()
+        stopLease()
+        if (pausedWithPicker && !resultReceived && !delivered) {
+            Log.w(TAG, "onResume 兜底：选择器已退出但没有任何结果 → 按取消交付（面板恢复由发起方做）")
+            deliver(emptyList())
+        }
+    }
+
+    override fun onDestroy() {
+        stopLease()
+        super.onDestroy()
+    }
+
+    private fun startLease() {
+        pausedWithPicker = true
+        if (leaseRunning) return
+        leaseRunning = true
+        leaseHandler.removeCallbacks(leaseTick)
+        leaseHandler.postDelayed(leaseTick, LeaseIntervalMs)
+    }
+
+    private fun stopLease() {
+        if (!leaseRunning) return
+        leaseRunning = false
+        leaseHandler.removeCallbacks(leaseTick)
+    }
+
     private fun deliver(paths: List<String>) {
+        if (delivered) {
+            Log.i(TAG, "deliver 重复调用（幂等忽略）")
+            return
+        }
+        delivered = true
         val token = intent.getStringExtra(TrampolineResultPort.EXTRA_TOKEN).orEmpty()
         if (token.isNotEmpty()) {
             TrampolineResultPort.deliver(
@@ -78,6 +161,8 @@ class StashComposerImageTrampolineActivity : ComponentActivity() {
                     putBoolean(TrampolineResultPort.EXTRA_CANCELLED, paths.isEmpty())
                 },
             )
+        } else {
+            Log.w(TAG, "deliver：intent 里没有 token → 发起方收不到结果")
         }
         finish()
         @Suppress("DEPRECATION")
@@ -119,6 +204,11 @@ class StashComposerImageTrampolineActivity : ComponentActivity() {
         private const val DefaultMaxItems = 9
         private const val CacheDirName = "stash_composer_images"
         private const val MaxDimension = 2048
+
+        /** 日志 tag（与图片编辑链路同一个 tag，`adb logcat -s StashImageEdit` 能看到全部外部 UI 挂起/恢复）。 */
+        private const val TAG = com.slideindex.app.service.StashEditImageTrampolineActivity.LOG_TAG
+        private const val LeaseOwner = "composer-add-image"
+        private const val LeaseIntervalMs = 2_000L
 
         /** 照片选择器请求（`PickVisualMediaRequest(ImageOnly)`，避免把视频也选进来）。 */
         private val imageOnlyRequest =

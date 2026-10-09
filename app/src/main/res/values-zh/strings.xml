@@ -3150,6 +3150,8 @@
     <string name="stash_undo">撤销</string>
     <string name="stash_deleted">已删除</string>
     <string name="stash_edit_saved">已保存</string>
+    <string name="stash_image_edit_replaced_hint">已替换图片，记得保存</string>
+    <string name="stash_image_edit_busy">正在编辑中，请稍候</string>
     <string name="stash_appended">已追加</string>
     <string name="stash_done_marked">已完成</string>
     <string name="stash_undone_marked">已标记为未完成</string>

@@ -3042,6 +3042,8 @@
     <string name="stash_undo">تراجع</string>
     <string name="stash_deleted">تم الحذف</string>
     <string name="stash_edit_saved">تم الحفظ</string>
+    <string name="stash_image_edit_replaced_hint">تم استبدال الصورة — تذكّر الحفظ</string>
+    <string name="stash_image_edit_busy">جارٍ التحرير — لحظة واحدة</string>
     <string name="stash_appended">تمت الإضافة</string>
     <string name="stash_done_marked">تم وضع علامة منجز</string>
     <string name="stash_undone_marked">تمت العودة إلى غير منجز</string>

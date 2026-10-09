@@ -3128,6 +3128,9 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="stash_undo">Undo</string>
     <string name="stash_deleted">Deleted</string>
     <string name="stash_edit_saved">Saved</string>
+    <!-- §0.16.22/23：图片块 ✎ 进内置编辑器后的两条可见提示（两级保存：编辑器保存只改草稿）。 -->
+    <string name="stash_image_edit_replaced_hint">Image replaced — remember to save</string>
+    <string name="stash_image_edit_busy">Still editing — one moment</string>
     <string name="stash_appended">Appended</string>
     <string name="stash_done_marked">Marked as done</string>
     <string name="stash_undone_marked">Marked as not done</string>
