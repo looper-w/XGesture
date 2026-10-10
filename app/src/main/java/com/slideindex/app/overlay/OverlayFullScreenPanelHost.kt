@@ -183,12 +183,12 @@ class OverlayFullScreenPanelHost(
      * Cross-window blur for translucent overlay panels (API 31+, [WindowManager.isCrossWindowBlurEnabled]).
      * Returns true when [FLAG_BLUR_BEHIND] is active — Compose should use semi-transparent surfaces.
      */
-    fun updateBackgroundBlur(context: Context, blurRadiusDp: Int): Boolean {
+    fun updateBackgroundBlur(context: Context, blurRadiusDp: Int, userEnabled: Boolean = true): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             var result = false
             val latch = java.util.concurrent.CountDownLatch(1)
             mainHandler.post {
-                result = updateBackgroundBlur(context, blurRadiusDp)
+                result = updateBackgroundBlur(context, blurRadiusDp, userEnabled)
                 latch.countDown()
             }
             runCatching { latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS) }
@@ -198,9 +198,8 @@ class OverlayFullScreenPanelHost(
         val view = composeViewRef ?: return false
         val params = layoutParams ?: return false
 
-        val wantsNativeBlur = blurRadiusDp > 0
-        val canNativeBlur = wantsNativeBlur && runCatching { wm.isCrossWindowBlurEnabled }
-            .getOrDefault(false)
+        val wantsNativeBlur = blurRadiusDp > 0 && userEnabled
+        val canNativeBlur = wantsNativeBlur && OverlayBlurGate.isSystemBlurEnabled(wm)
 
         if (canNativeBlur) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND

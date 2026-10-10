@@ -540,8 +540,8 @@ class OverlaySidePanelHost(
         panelHost.setTouchable(touchable)
     }
 
-    fun updateBackgroundBlur(context: Context, blurRadiusDp: Int): Boolean =
-        panelHost.updateBackgroundBlur(context, blurRadiusDp)
+    fun updateBackgroundBlur(context: Context, blurRadiusDp: Int, userEnabled: Boolean = true): Boolean =
+        panelHost.updateBackgroundBlur(context, blurRadiusDp, userEnabled)
 
     companion object {
         private const val SHOW_DEBOUNCE_MS = 300L

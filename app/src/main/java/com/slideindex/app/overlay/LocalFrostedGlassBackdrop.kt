@@ -9,9 +9,15 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import androidx.annotation.ColorInt
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun LocalFrostedGlassBackdrop(
@@ -22,6 +28,11 @@ fun LocalFrostedGlassBackdrop(
     enabled: Boolean = true
 ) {
     if (!enabled) return
+
+    if (!rememberOverlayBlurEnabled()) {
+        SolidPanelBackdrop(modifier = modifier, cornerRadiusPx = cornerRadiusPx)
+        return
+    }
 
     AndroidView(
         modifier = modifier,
@@ -45,6 +56,22 @@ fun LocalFrostedGlassBackdrop(
         update = { view ->
             setupBackgroundBlur(view, cornerRadiusPx, blurRadiusPx, tintColor)
         }
+    )
+}
+
+/**
+ * 模糊不可用（总开关关闭 / 系统不支持跨窗模糊 / 反射失败）时的实色降级。
+ *
+ * 这层 backdrop 往往是面板**唯一**的背景来源（取词等面板的卡片自身没有背景色），
+ * 所以不能简单跳过，否则面板会塌成半透明 tint 甚至全透明。
+ */
+@Composable
+private fun SolidPanelBackdrop(modifier: Modifier, cornerRadiusPx: Float) {
+    val corner = with(LocalDensity.current) { cornerRadiusPx.toDp() }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(corner))
+            .background(MiuixTheme.colorScheme.surfaceContainer),
     )
 }
 
@@ -102,14 +129,19 @@ internal class LocalFrostedGlassDrawable(private val viewProvider: () -> View?) 
         return blurDrawable
     }
 
+    // @JvmOverloads：蜂窝浮层（HoneycombOverlayView.java）仍按 6 参调用，默认 enabled = true。
+    @JvmOverloads
     fun draw(
         canvas: Canvas,
         bounds: RectF,
         cornerRadiusPx: Float,
         blurRadiusPx: Int,
         @ColorInt tintColor: Int,
-        alpha: Float = 1f
+        alpha: Float = 1f,
+        /** 调用点表达的意图（如全局模糊总开关）；false 时直接不画，由调用点走实色兜底。 */
+        enabled: Boolean = true
     ): Boolean {
+        if (!enabled) return false
         if (bounds.isEmpty || alpha <= 0.001f) return false
         val drawable = ensureDrawable() ?: return false
         return runCatching {

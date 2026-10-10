@@ -3226,6 +3226,8 @@
     <string name="stash_panel_section_appearance">收纳面板</string>
     <string name="stash_panel_background_blur">背景模糊</string>
     <string name="stash_panel_background_blur_desc">Android 12+ 模糊面板后方窗口内容；顶栏在列表滚动时会模糊面板内内容</string>
+    <string name="overlay_blur_enabled">悬浮窗模糊</string>
+    <string name="overlay_blur_enabled_desc">悬浮面板的毛玻璃背景。关闭后改用实色面板：系统跨窗模糊与面板内模糊一并关闭。壁纸模糊不受影响</string>
     <string name="clipboard_background_monitoring_section">后台监听</string>
     <string name="clipboard_background_monitoring_title">剪贴板后台监听</string>
     <string name="clipboard_background_monitoring_desc">在其他应用复制后自动记录到剪贴板历史（通过 Shizuku/Root 特权监听）</string>

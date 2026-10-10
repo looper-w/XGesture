@@ -3117,6 +3117,8 @@
     <string name="stash_panel_section_appearance">لوحة التخزين</string>
     <string name="stash_panel_background_blur">ضبابية الخلفية</string>
     <string name="stash_panel_background_blur_desc">Android 12+ يقوم بتمويه محتوى النافذة خلف اللوحة؛ ويتم تمويه محتوى اللوحة نفسها في الشريط العلوي عند التمرير</string>
+    <string name="overlay_blur_enabled">ضبابية اللوحات العائمة</string>
+    <string name="overlay_blur_enabled_desc">تأثير الزجاج المصنفر خلف اللوحات العائمة. عند الإيقاف تصبح اللوحات بلون صلب: يتم تعطيل تمويه النظام العابر للنوافذ وتمويه اللوحة معاً. لا يتأثر تمويه الخلفية</string>
     <string name="clipboard_background_monitoring_section">المراقبة في الخلفية</string>
     <string name="clipboard_background_monitoring_title">مراقبة الحافظة في الخلفية</string>
     <string name="clipboard_background_monitoring_desc">تسجيل النسخ تلقائياً في سجل الحافظة بعد النسخ في تطبيقات أخرى (عبر امتيازات Shizuku/Root)</string>

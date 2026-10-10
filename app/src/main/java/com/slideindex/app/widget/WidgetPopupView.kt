@@ -235,14 +235,16 @@ class WidgetPopupCardLayout(
 
     fun applyCardBackground() {
         val page = pages.getOrElse(currentPageIndex) { WidgetPanelPage() }
+        // 全局模糊总开关与单项开关取交集：任一关闭都走实色卡片。
+        val blurActive = settings.overlayBlurEnabled && settings.widgetPanelBlurEnabled
         val surfaceColor = WidgetPanelUi.panelSurfaceColorInt(
             overlayAlpha = page.overlayAlpha,
             editMode = editMode,
-            blurEnabled = settings.widgetPanelBlurEnabled,
+            blurEnabled = blurActive,
         )
-        val strokeColor = if (settings.widgetPanelBlurEnabled) 0x29FFFFFF.toInt() else 0x14FFFFFF
+        val strokeColor = if (blurActive) 0x29FFFFFF.toInt() else 0x14FFFFFF
 
-        if (settings.widgetPanelBlurEnabled) {
+        if (blurActive) {
             setupBackgroundBlur(
                 cornerRadiusPx = cornerRadiusPx,
                 blurRadiusPx = (settings.widgetPanelBlurRadiusDp * density).roundToInt(),

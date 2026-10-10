@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.slideindex.app.overlay.FloatBallOverlay
+import com.slideindex.app.overlay.OverlayBlurGate
 import com.slideindex.app.overlay.OverlayCompose
 import com.slideindex.app.overlay.OverlayComposeOwner
 import com.slideindex.app.overlay.OverlayPanelSystemGestureExclusion
@@ -238,8 +239,7 @@ object SearchPanelOverlayWindow {
 
         val wantsNativeBlur = backgroundStyle == SearchPanelBackgroundStyle.BLUR &&
             blurRadiusDp > 0
-        val canNativeBlur = wantsNativeBlur && runCatching { wm.isCrossWindowBlurEnabled }
-            .getOrDefault(false)
+        val canNativeBlur = wantsNativeBlur && OverlayBlurGate.isSystemBlurEnabled(wm)
         nativeBlurActive = canNativeBlur
 
         if (canNativeBlur) {

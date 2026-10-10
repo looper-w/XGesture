@@ -660,6 +660,9 @@ internal object SettingsSnapshotReader {
                 AppSettings.STASH_PANEL_BLUR_RADIUS_MAX_DP,
             ),
             ),
+            overlayBlur = OverlayBlurSettings(
+                overlayBlurEnabled = prefs[SettingsPreferenceKeys.OVERLAY_BLUR_ENABLED] ?: true,
+            ),
             defaultImageViewerPackage = prefs[SettingsPreferenceKeys.DEFAULT_IMAGE_VIEWER_PACKAGE],
             imageEditorDelayDeleteEnabled = prefs[SettingsPreferenceKeys.IMAGE_EDITOR_DELAY_DELETE_ENABLED] ?: false,
             searchPanel = SearchPanelSettings(

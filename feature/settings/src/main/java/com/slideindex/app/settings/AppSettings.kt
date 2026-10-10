@@ -82,6 +82,7 @@ data class AppSettings(
     val defaultImageViewerPackage: String? = null,
     val imageEditorDelayDeleteEnabled: Boolean = false,
     val searchPanel: SearchPanelSettings = SearchPanelSettings(),
+    val overlayBlur: OverlayBlurSettings = OverlayBlurSettings(),
 ) {
     /** 当前底栏样式的生效模糊半径（派生，不落盘）。 */
     val bottomNavBlurRadiusDp: Float
@@ -399,6 +400,8 @@ data class AppSettings(
     val searchPanelHistoryMaxEntries get() = searchPanel.searchPanelHistoryMaxEntries
     val searchPanelSectionAliases get() = searchPanel.searchPanelSectionAliases
     val aggregatedImageSearchEngines get() = searchPanel.aggregatedImageSearchEngines
+
+    val overlayBlurEnabled get() = overlayBlur.overlayBlurEnabled
 
     // endregion
 

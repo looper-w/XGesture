@@ -312,7 +312,12 @@ internal class QuickLauncherRenderer(
         val alpha = QuickLauncherDisplaySettings.backgroundAlphaArgb(
             host.settings().quickLauncherDisplay.backgroundOpacityPercent
         )
-        val blurRadiusDp = host.settings().quickLauncherDisplay.blurRadiusDp
+        val blurRadiusDp = if (host.settings().overlayBlurEnabled) {
+            host.settings().quickLauncherDisplay.blurRadiusDp
+        } else {
+            // 全局模糊总开关关闭：半径为 0，下面自然走实色绘制兜底。
+            0
+        }
         val blurDrawn = if (blurRadiusDp <= 0) {
             false
         } else {
@@ -321,7 +326,8 @@ internal class QuickLauncherRenderer(
                 bounds = grid,
                 cornerRadiusPx = panelCorner,
                 blurRadiusPx = host.dp(blurRadiusDp.toFloat()).toInt(),
-                tintColor = Color.argb(alpha, 48, 48, 52)
+                tintColor = Color.argb(alpha, 48, 48, 52),
+                enabled = host.settings().overlayBlurEnabled,
             )
         }
         if (!blurDrawn) {
@@ -654,7 +660,12 @@ internal class QuickLauncherRenderer(
         val folderRight = folderLayout.rect.right
         val folderTop = folderLayout.rect.top
         val folderCorner = host.dp(20f)
-        val blurRadiusDp = host.settings().quickLauncherDisplay.blurRadiusDp
+        val blurRadiusDp = if (host.settings().overlayBlurEnabled) {
+            host.settings().quickLauncherDisplay.blurRadiusDp
+        } else {
+            // 全局模糊总开关关闭：半径为 0，下面自然走实色绘制兜底。
+            0
+        }
         val blurDrawn = if (blurRadiusDp <= 0) {
             false
         } else {
@@ -663,7 +674,8 @@ internal class QuickLauncherRenderer(
                 bounds = ctrl.folderRect,
                 cornerRadiusPx = folderCorner,
                 blurRadiusPx = host.dp(blurRadiusDp.toFloat()).toInt(),
-                tintColor = Color.argb(235, 34, 34, 38)
+                tintColor = Color.argb(235, 34, 34, 38),
+                enabled = host.settings().overlayBlurEnabled,
             )
         }
         if (!blurDrawn) {

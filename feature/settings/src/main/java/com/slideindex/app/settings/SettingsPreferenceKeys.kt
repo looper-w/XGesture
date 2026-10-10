@@ -660,6 +660,7 @@ internal object SettingsPreferenceKeys {
     val CLIPBOARD_FLOAT_AUTO_CLOSE_SECONDS = intPreferencesKey("clipboard_float_auto_close_seconds")
     val STASH_PANEL_BACKGROUND_BLUR_ENABLED = booleanPreferencesKey("stash_panel_background_blur_enabled")
     val STASH_PANEL_BACKGROUND_BLUR_RADIUS_DP = intPreferencesKey("stash_panel_background_blur_radius_dp")
+    val OVERLAY_BLUR_ENABLED = booleanPreferencesKey("overlay_blur_enabled")
     val DEFAULT_IMAGE_VIEWER_PACKAGE = stringPreferencesKey("default_image_viewer_package")
     val IMAGE_EDITOR_DELAY_DELETE_ENABLED = booleanPreferencesKey("image_editor_delay_delete_enabled")
     val OCR_ENGINE_ID = stringPreferencesKey("ocr_engine_id")

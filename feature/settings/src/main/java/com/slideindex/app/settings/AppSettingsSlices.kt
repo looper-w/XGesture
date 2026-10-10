@@ -502,3 +502,15 @@ data class OtpSettings(
     /** 这些应用的验证码不处理（既不提取也不自动填充）。 */
     val otpBlockedPackages: Set<String> = emptySet(),
 )
+
+/**
+ * 全局悬浮窗外观：所有浮层窗口与面板的模糊总开关。
+ *
+ * 只管"窗口跨窗模糊"与"面板内 backdrop"两条路，**不含**壁纸/截图模糊
+ * （`BlurredWallpaperCache` / `SystemWallpaperBlurHelper`；蜂窝与全息启动器背景保持现状）。
+ * 关闭后各处一律降级为实色底，不允许只剩半透明 tint。
+ */
+data class OverlayBlurSettings(
+    /** 悬浮窗模糊总开关；关闭时全部降级为实色底。 */
+    val overlayBlurEnabled: Boolean = true,
+)

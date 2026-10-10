@@ -145,6 +145,10 @@ class HomeViewModel @AssistedInject constructor(
         settingsRepository.setBottomNavGlassEnabled(enabled)
     }
 
+    fun setOverlayBlurEnabled(enabled: Boolean) = launchSettingsWrite {
+        settingsRepository.setOverlayBlurEnabled(enabled)
+    }
+
     fun setTopAppBarBlurStyle(style: TopAppBarBlurStyle) = launchOptimisticSettingsWrite(
         optimisticUpdate = { settings -> settings.copy(topAppBarBlurStyleId = style.id) },
         block = { settingsRepository.setTopAppBarBlurStyle(style) },

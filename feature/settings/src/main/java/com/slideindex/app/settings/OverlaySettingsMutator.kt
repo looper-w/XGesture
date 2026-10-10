@@ -1385,6 +1385,10 @@ class OverlaySettingsMutator @Inject constructor(
         it[SettingsPreferenceKeys.STASH_PANEL_BACKGROUND_BLUR_ENABLED] = enabled
     }
 
+    suspend fun setOverlayBlurEnabled(enabled: Boolean) = editor.edit {
+        it[SettingsPreferenceKeys.OVERLAY_BLUR_ENABLED] = enabled
+    }
+
     suspend fun setStashPanelBackgroundBlurRadiusDp(value: Int) = editor.edit {
         it[SettingsPreferenceKeys.STASH_PANEL_BACKGROUND_BLUR_RADIUS_DP] = value.coerceIn(
             AppSettings.STASH_PANEL_BLUR_RADIUS_MIN_DP,

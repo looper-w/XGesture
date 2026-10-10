@@ -3138,6 +3138,8 @@
     <string name="stash_panel_section_appearance">コレクションパネル</string>
     <string name="stash_panel_background_blur">背景ぼかし</string>
     <string name="stash_panel_background_blur_desc">Android 12 以降でパネル背面をぼかし。スクロール中はヘッダーがパネル内コンテンツをぼかします</string>
+    <string name="overlay_blur_enabled">フローティングパネルのぼかし</string>
+    <string name="overlay_blur_enabled_desc">フローティングパネル背面のすりガラス。オフにすると実色パネルになります（システムのクロスウィンドウぼかしとパネル内ぼかしをまとめて無効化。壁紙のぼかしは対象外）</string>
     <string name="clipboard_background_monitoring_section">バックグラウンド監視</string>
     <string name="clipboard_background_monitoring_title">クリップボードのバックグラウンド監視</string>
     <string name="clipboard_background_monitoring_desc">他アプリからのコピーを自動記録（Shizuku/Root 特権リスナー経由）</string>

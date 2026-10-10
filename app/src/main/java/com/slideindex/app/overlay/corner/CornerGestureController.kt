@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import com.slideindex.app.data.AppRepository
 import com.slideindex.app.overlay.EdgeSystemGestureExclusionView
 import com.slideindex.app.overlay.ModuleForwardedTouchGate
+import com.slideindex.app.overlay.OverlayBlurGate
 import com.slideindex.app.overlay.OverlayPassthrough
 import com.slideindex.app.overlay.OverlayScreenMetrics
 import com.slideindex.app.overlay.OverlayWindowTypes
@@ -646,7 +647,7 @@ internal class CornerGestureController(
             corner.backgroundStyle == CornerGestureSettings.BACKGROUND_BLUR &&
             corner.blurDp > 0
         val canNativeBlur = wantsBlur &&
-            runCatching { windowManager.isCrossWindowBlurEnabled }.getOrDefault(false)
+            OverlayBlurGate.canBlur(windowManager, userEnabled = settings.overlayBlurEnabled)
         if (canNativeBlur) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
             val rawBlurPx = (corner.blurDp * density).roundToInt()

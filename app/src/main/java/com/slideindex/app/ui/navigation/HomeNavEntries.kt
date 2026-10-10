@@ -235,6 +235,8 @@ fun NavEntryBuilder.homeNavEntries(ctx: MainNavContext) {
             onBottomNavBlurRadiusChange = viewModel::setBottomNavBlurRadiusDp,
             onBottomNavBlurPreviewChange = ctx.onBottomNavBlurPreviewChange,
             onBottomNavBlurPreviewStop = ctx.onBottomNavBlurPreviewStop,
+            overlayBlurEnabled = settings.overlayBlurEnabled,
+            onOverlayBlurEnabledChange = viewModel::setOverlayBlurEnabled,
         )
     }
 

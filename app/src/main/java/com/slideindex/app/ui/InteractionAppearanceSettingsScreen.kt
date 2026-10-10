@@ -64,6 +64,8 @@ fun InteractionAppearanceSettingsScreen(
     onAppUiLanguageChange: (com.slideindex.app.settings.AppUiLanguage) -> Unit,
     onBottomNavBlurPreviewChange: (Float) -> Unit = {},
     onBottomNavBlurPreviewStop: () -> Unit = {},
+    overlayBlurEnabled: Boolean = true,
+    onOverlayBlurEnabledChange: (Boolean) -> Unit = {},
 ) {
     val view = LocalView.current
     val hapticLightLabel = stringResource(R.string.haptic_strength_light)
@@ -147,6 +149,20 @@ fun InteractionAppearanceSettingsScreen(
         groupedCardItems(
             keyPrefix = "interaction_appearance_theme",
             items = themeAppearanceItems,
+        )
+        MiuixListSettingsCard(
+            keyPrefix = "interaction-overlay-blur",
+            items = listOf(
+                settingsCardScopeItem("overlay-blur") {
+                    SettingSwitchRow(
+                        title = stringResource(R.string.overlay_blur_enabled),
+                        subtitle = stringResource(R.string.overlay_blur_enabled_desc),
+                        checked = overlayBlurEnabled,
+                        enabled = true,
+                        onCheckedChange = onOverlayBlurEnabledChange,
+                    )
+                },
+            ),
         )
 
         item(key = "interaction_feedback_section") {

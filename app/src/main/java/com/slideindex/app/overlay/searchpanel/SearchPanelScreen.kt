@@ -118,6 +118,7 @@ import com.slideindex.app.freezer.FreezerOperations
 import com.slideindex.app.overlay.BlurredWallpaperCache
 import com.slideindex.app.overlay.FloatBallImageSearchPanel
 import com.slideindex.app.overlay.FloatBallTextPick
+import com.slideindex.app.overlay.OverlayBlurGate
 import com.slideindex.app.overlay.OverlaySelectionToolbarActions
 import com.slideindex.app.overlay.OverlaySelectionToolbarPopup
 import com.slideindex.app.overlay.SystemWallpaperBlurHelper
@@ -239,6 +240,7 @@ fun SearchPanelScreen(
     val backgroundStyle = settings.searchPanelBackgroundStyle
     val blurRadiusDp = settings.searchPanelBlurRadiusDp
     val dimPercent = settings.searchPanelDimPercent
+    val overlayBlurEnabled = settings.overlayBlurEnabled
 
     var mode by remember { mutableStateOf(SearchMode.TEXT) }
     var textFieldValue by remember {
@@ -401,7 +403,7 @@ fun SearchPanelScreen(
         }
     }
 
-    LaunchedEffect(backgroundStyle, blurRadiusDp, visibilityState.targetState) {
+    LaunchedEffect(backgroundStyle, blurRadiusDp, overlayBlurEnabled, visibilityState.targetState) {
         if (!visibilityState.targetState) {
             backgroundBitmap = null
             usesNativeWindowBlur = SearchPanelOverlayWindow.updateBackgroundBlur(
@@ -414,14 +416,16 @@ fun SearchPanelScreen(
         usesNativeWindowBlur = SearchPanelOverlayWindow.updateBackgroundBlur(
             context,
             backgroundStyle,
-            blurRadiusDp,
+            // 总开关只作用于跨窗模糊：壁纸模糊（WALLPAPER_BLUR）仍用原始半径。
+            OverlayBlurGate.effectiveBlurRadiusDp(overlayBlurEnabled, blurRadiusDp),
         )
         when (backgroundStyle) {
             SearchPanelBackgroundStyle.WALLPAPER_BLUR -> {
                 backgroundBitmap = SystemWallpaperBlurHelper.loadBlurred(context, blurRadiusDp)
             }
             SearchPanelBackgroundStyle.BLUR -> {
-                if (usesNativeWindowBlur || blurRadiusDp <= 0) {
+                // 总开关关闭：跨窗模糊与截图兜底都不走，由卡片自身的实色底承担。
+                if (!overlayBlurEnabled || usesNativeWindowBlur || blurRadiusDp <= 0) {
                     backgroundBitmap = null
                     return@LaunchedEffect
                 }

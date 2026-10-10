@@ -809,6 +809,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setStashPanelBackgroundBlurRadiusDp(value: Int) =
         overlay.setStashPanelBackgroundBlurRadiusDp(value)
 
+    suspend fun setOverlayBlurEnabled(enabled: Boolean) =
+        overlay.setOverlayBlurEnabled(enabled)
+
     suspend fun setDefaultImageViewerPackage(packageName: String?) = overlay.setDefaultImageViewerPackage(packageName)
     suspend fun setImageEditorDelayDeleteEnabled(enabled: Boolean) = overlay.setImageEditorDelayDeleteEnabled(enabled)
 

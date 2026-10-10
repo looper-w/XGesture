@@ -13,6 +13,7 @@ import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.GestureActionType
 import com.slideindex.app.gesture.QuickWheelAnchorMode
 import com.slideindex.app.gesture.QuickWheelLaunchShape
+import com.slideindex.app.overlay.OverlayBlurGate
 import com.slideindex.app.overlay.OverlayCompose
 import com.slideindex.app.overlay.OverlayComposeOwner
 import com.slideindex.app.overlay.OverlayWindowTypes
@@ -316,9 +317,12 @@ object QuickWheelOverlayWindow {
         val canHostOpaqueOverlay = runCatching {
             PermissionHelper.canDrawOverlays(hostContext.applicationContext)
         }.getOrDefault(false)
-        val blurDp = QuickWheelLayoutEngine.clampBackdropBlurDp(wheel.backdropBlurDp)
+        val blurDp = OverlayBlurGate.effectiveBlurRadiusDp(
+            settings.overlayBlurEnabled,
+            QuickWheelLayoutEngine.clampBackdropBlurDp(wheel.backdropBlurDp),
+        )
         val blurAvailable = blurDp > 0 &&
-            runCatching { wm.isCrossWindowBlurEnabled }.getOrDefault(false)
+            OverlayBlurGate.isSystemBlurEnabled(wm)
 
         val params = OverlayWindowTypes.createPresentationParams(hostContext).apply {
             OverlayWindowTypes.applyFullScreen(this)
