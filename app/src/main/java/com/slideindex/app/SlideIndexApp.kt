@@ -28,7 +28,6 @@ import com.slideindex.app.util.HiddenApiBootstrap
 import com.slideindex.app.util.AppProcess
 import com.slideindex.app.util.AppLocaleApplier
 import com.slideindex.app.util.ForegroundNotificationChannels
-import com.slideindex.app.util.PredictiveBackHelper
 import com.slideindex.app.util.ServiceEnabledStore
 import com.slideindex.app.settings.AppUiLanguage
 import com.slideindex.app.update.UpdateCheckScheduler
@@ -87,6 +86,16 @@ class SlideIndexApp : Application(), androidx.work.Configuration.Provider {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(AppLocaleApplier.wrapContextIfNeeded(base))
+        // §0.16.25：**故意不在这里写"预测性返回"flag**。
+        // 试过在这里按"同步镜像"写入，但踩到两个坑：① 这一阶段 `Application` 还没 attach 完，
+        // 用 `applicationContext` 会直接 NPE（启动即崩）；② 这个时点反射调
+        // `setEnableOnBackInvokedCallback` 偶发 `NoSuchMethodException`，一旦按"失败=按 false 处理"
+        // 就会把 flag 写成关，而窗口若在那一瞬间创建，反而**亲手制造**出"系统按 OnBackInvoked 派发、
+        // 浮窗却只等注入按键"的不一致（正是闪退事故的成因）。
+        // 现在的分工：flag 保持 manifest 的 `true`（= 系统走 OnBackInvoked），运行时由
+        // MainActivity.applyPredictiveBackEnabled 按**真实设置快照**写入；而
+        // OverlayViewBackHandler 一律按系统真实口径装路（见 PredictiveBackHelper.resolveAppBackDispatch），
+        // 所以即使这次写入被 ROM 拦掉，两边也不会再对不上。
     }
 
     override fun onCreate() {
@@ -219,10 +228,11 @@ class SlideIndexApp : Application(), androidx.work.Configuration.Provider {
                 UpdateCheckScheduler.schedule(this@SlideIndexApp)
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val enabled = deps.settingsRepository.readSnapshot().predictiveBackEnabled
-            PredictiveBackHelper.applyEnabled(applicationInfo, enabled)
-        }
+        // §0.16.25：这里曾经还写一次"预测性返回"flag（读 settingsRepository.readSnapshot()），
+        // 已**整段删除** —— 那个读的是异步填充的缓存，进程刚起时还是默认值 false，
+        // 会把"用户其实开着"（本机就是开着）写成关；而这正是魅族返回键注入死循环的成因。
+        // 现在唯一权威写入点是 attachBaseContext（读同步镜像），运行时翻转仍走
+        // MainActivity.applyPredictiveBackEnabled。
             ocrEnginePackMigrationStartup.start()
             FreezerLauncherHelper.cleanupLegacyAlias(this)
         }

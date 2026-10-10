@@ -11,15 +11,22 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.slideindex.app.di.OverlayDependencyAccess
+import com.slideindex.app.util.PredictiveBackHelper
 
 /**
  * Routes system back (gesture + key) to overlay [ComposeView] windows.
  *
- * When predictive back is enabled for the app (API 33+), uses [OnBackInvokedCallback] only.
- * Flyme must not combine that with legacy key listeners: it registers
- * [android.view.ViewRootImpl.registerCompatOnBackInvokedCallback] for them, which loops
- * with [android.view.ViewRootImpl.injectBackKeyEvents].
+ * **走哪条路由系统说了算，不由用户设置猜**（§0.16.25）：本类按
+ * [PredictiveBackHelper.resolveAppBackDispatch] 读到的**系统真实口径**二选一 ——
+ * 系统走 `OnBackInvokedCallback` 时只装回调，系统走"兼容注入 `KEYCODE_BACK`"时只装按键监听。
+ *
+ * 为什么这么严：魅族（Flyme）上这两条**不能并存** —— 系统会为 legacy 监听装
+ * [android.view.ViewRootImpl.registerCompatOnBackInvokedCallback]，它与
+ * [android.view.ViewRootImpl.injectBackKeyEvents] 会互相触发。真机事故（§0.16.25，2026-10-10）：
+ * 两边口径对不上时，一次返回键在这个环里转了约 3900 圈，主线程栈 8MB 撑爆 → `StackOverflowError` 闪退。
+ * **按系统口径装路就是防它的主防线**：口径一致时，系统不会为我们注册那个兼容回调，
+ * 环也就没有了材料（app 侧无法打断系统内部的递归，所以不要在 app 层加"回声闸"去拦它 ——
+ * 试过：拦不住环，却会把"系统注入键送达到浮窗"这条正常路吃掉，让浮窗返回失效）。
  *
  * When predictive back is off at the app level, [OnBackInvokedCallback] is not dispatched;
  * legacy [OnUnhandledKeyEventListenerCompat] handles injected [KeyEvent.KEYCODE_BACK].
@@ -42,10 +49,15 @@ internal class OverlayViewBackHandler(
     private var keyFallbackInstalled = false
     private var handlingBack = false
     private var registerAttempts = 0
-    private var predictiveBackEnabled = false
+
+    /**
+     * §0.16.25：**系统真实口径**（不是用户设置）。决定装 `OnBackInvokedCallback` 还是按键监听，
+     * 装错一次就会在魅族上形成注入死循环（见类注释）。
+     */
+    private var appBackDispatch = PredictiveBackHelper.AppBackDispatch.NONE
 
     fun attach(requestViewFocus: Boolean = true) {
-        predictiveBackEnabled = resolvePredictiveBackEnabled(view.context)
+        refreshAppBackDispatch()
         if (requestViewFocus) {
             view.isFocusable = true
             view.isFocusableInTouchMode = true
@@ -60,7 +72,7 @@ internal class OverlayViewBackHandler(
 
     /** Retry registration after the overlay window becomes focusable or predictive-back toggles. */
     fun refresh() {
-        predictiveBackEnabled = resolvePredictiveBackEnabled(view.context)
+        refreshAppBackDispatch()
         detachInternal(clearHandlingFlag = false)
         if (shouldUseOnBackInvoked()) {
             registerAttempts = 0
@@ -68,6 +80,24 @@ internal class OverlayViewBackHandler(
         } else {
             registerUnhandledKeyBackListener()
         }
+    }
+
+    /**
+     * 重新读一次系统口径。
+     *
+     * ⚠️ 用户设置翻转时系统 flag 也变了（`MainActivity.applyPredictiveBackEnabled`），
+     * 但**已经装上的拦截路不会自己跟着换** —— 所以设置翻转那条路必须显式调 [refresh]；
+     * 这里保证 [attach] / [refresh] / [attachKeyFallback] 每次都读的是最新值。
+     */
+    private fun refreshAppBackDispatch() {
+        val resolved = PredictiveBackHelper.resolveAppBackDispatch(view.context)
+        if (resolved != appBackDispatch) {
+            Log.i(
+                TAG,
+                "返回键口径：${appBackDispatch.label} → ${resolved.label}（按系统实际派发装路，避免魅族注入死循环）",
+            )
+        }
+        appBackDispatch = resolved
     }
 
     /**
@@ -95,7 +125,7 @@ internal class OverlayViewBackHandler(
             view.setOnKeyListener(null)
             keyFallbackInstalled = false
         }
-        predictiveBackEnabled = resolvePredictiveBackEnabled(view.context)
+        refreshAppBackDispatch()
         if (shouldUseOnBackInvoked()) return
         keyFallbackInstalled = true
         view.setOnKeyListener { _, keyCode, event ->
@@ -107,7 +137,7 @@ internal class OverlayViewBackHandler(
     }
 
     private fun shouldUseOnBackInvoked(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && predictiveBackEnabled
+        appBackDispatch == PredictiveBackHelper.AppBackDispatch.ON_BACK_INVOKED
 
     private fun scheduleRegisterOnBackInvoked() {
         fun tryRegister() {
@@ -294,14 +324,5 @@ internal class OverlayViewBackHandler(
          * 键盘一般占 30%~45%，手势条/导航栏只有 2%~5%，取 15% 两头都安全。
          */
         private const val IME_MIN_HEIGHT_FRACTION = 0.15f
-
-        private fun resolvePredictiveBackEnabled(context: Context): Boolean {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return false
-            return OverlayDependencyAccess.overlayDependencies(context.applicationContext)
-                ?.settingsRepository
-                ?.readSnapshot()
-                ?.predictiveBackEnabled
-                ?: false
-        }
     }
 }

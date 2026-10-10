@@ -16,6 +16,7 @@ import com.slideindex.app.message.MessageSettings
 import com.slideindex.app.overlay.PanelSide
 import com.slideindex.app.shake.ShakeGestureType
 import com.slideindex.app.shell.ShellCommand
+import com.slideindex.app.util.PredictiveBackStartupStore
 import com.slideindex.app.util.ServiceEnabledStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -101,6 +102,15 @@ class SettingsRepository @Inject constructor(
                 .map { it.serviceEnabled }
                 .distinctUntilChanged()
                 .collect { enabled -> ServiceEnabledStore.write(context, enabled) }
+        }
+        // §0.16.25：预测性返回开关也落一个同步镜像：它在 Application.attachBaseContext
+        // 就要被读到（用来写 ApplicationInfo 的 FLAG_ENABLE_ON_BACK_INVOKED_CALLBACK），
+        // 而那个时点**不能**同步读 DataStore。详见 PredictiveBackStartupStore 的 KDoc。
+        cacheScope.launch {
+            settings
+                .map { it.predictiveBackEnabled }
+                .distinctUntilChanged()
+                .collect { enabled -> PredictiveBackStartupStore.write(context, enabled) }
         }
         // 圆环槽位面板引用的一次性归一化：只碰自己的键，不阻塞快照收集（上面那批修复会先写盘，
         // 若把这条也串进去会推迟 collect 启动，readSnapshot() 读到旧值的窗口跟着变大）。
@@ -973,9 +983,11 @@ class SettingsRepository @Inject constructor(
     suspend fun setCornerGestureLandscapePreventFalseTouch(enabled: Boolean) =
         overlay.setCornerGestureLandscapePreventFalseTouch(enabled)
     suspend fun setCornerGestureOverrideSystemNav(enabled: Boolean) = overlay.setCornerGestureOverrideSystemNav(enabled)
-    suspend fun setCornerGestureOuterDiameterDp(value: Float) = overlay.setCornerGestureOuterDiameterDp(value)
     suspend fun setCornerGestureInnerDiameterDp(value: Float) = overlay.setCornerGestureInnerDiameterDp(value)
+    suspend fun setCornerGestureRingSpacingDp(value: Float) = overlay.setCornerGestureRingSpacingDp(value)
     suspend fun setCornerGestureBubbleSizeDp(value: Float) = overlay.setCornerGestureBubbleSizeDp(value)
+    suspend fun setCornerGestureWheelLayerCount(value: Int) =
+        overlay.setCornerGestureWheelLayerCount(value)
     suspend fun setCornerGestureCancelOutsideWheel(enabled: Boolean) =
         overlay.setCornerGestureCancelOutsideWheel(enabled)
     suspend fun setCornerGestureProgressiveLayers(enabled: Boolean) =

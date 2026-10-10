@@ -345,8 +345,11 @@ class OverlaySidePanelHost(
             }
         } else {
             // 窗口刚变成可聚焦，注册得重来一次（`OnBackInvokedCallback` 要窗口有 dispatcher）。
+            // §0.16.25：`refresh()` **自己**会按最新口径决定装哪条路、并重装按键兜底
+            // （内部先 detach 再 attach）。这里**不要**再调 `attachKeyFallback()` ——
+            // 那会在系统走 OnBackInvoked 时把 legacy 按键监听也装上，两条路并存正是
+            // 魅族 compose 回调 ↔ 注入按键死循环的配方（真机闪退事故）。
             handler.refresh()
-            handler.attachKeyFallback()
         }
     }
 

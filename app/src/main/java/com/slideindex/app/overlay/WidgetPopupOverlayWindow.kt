@@ -248,6 +248,31 @@ object WidgetPopupOverlayWindow {
     activateBackHandling()
   }
 
+  /**
+   * §0.16.25：**外部"返回"请求**（手势里的"返回"动作）的入口 —— 与
+   * `FloatBallStashPanel.requestBackIfShowing()` 同语义。
+   *
+   * 为什么必须有它：本窗过去**没有接进手势返回链路**，全靠"系统注入 `KEYCODE_BACK`"来关
+   * （见 [activateBackHandling] 的注释）。而在应用级预测性返回（`enableOnBackInvokedCallback=true`）
+   * 的机器上，那次注入不再可靠，于是面板再也没有返回路径 —— 真机现象："小组件面板手势返回没反应"。
+   *
+   * ⚠️ **必须走本窗自己的返回漏斗** `OverlayViewBackHandler.dispatchBack()`（键盘优先在内），
+   * 不要在调用侧直接 `dismiss()` —— 那就把 §0.16.7 的"键盘弹着先收键盘、面板留着"抄漏了。
+   * handler 还没建起来才退回 [dismiss]（宁可关掉，也不要返回没反应）。
+   *
+   * @return true = 这次返回由本窗消费，调用方不要再落 `GLOBAL_ACTION_BACK`
+   */
+  fun requestBackIfVisible(): Boolean {
+    if (!isVisible || suspendedForPicker || isWidgetAddFlowActive) return false
+    val handler = backHandler
+    if (handler != null) {
+      handler.dispatchBack()
+      return true
+    }
+    dismiss()
+    return true
+  }
+
   fun dismiss() {
     if (Looper.myLooper() != Looper.getMainLooper()) {
       mainHandler.post { dismiss() }

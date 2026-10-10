@@ -14,6 +14,8 @@ import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.gesture.PointerSwipeConfig
 import com.slideindex.app.gesture.PointerSwipeDirection
 import com.slideindex.app.overlay.FloatBallStashPanel
+import com.slideindex.app.overlay.WidgetPickerOverlayWindow
+import com.slideindex.app.overlay.WidgetPopupOverlayWindow
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -66,6 +68,17 @@ internal object SlideIndexAccessibilityGestureInjector {
                 // 那等于把层级再抄一份，抄漏了就会出现"面板里弹着键盘/卡片展开着，返回却把整个面板关了"
                 // （§0.16.22 的真机回归）。
                 when {
+                    // §0.16.25：小组件面板浮窗 + 「添加小组件」浮窗页面也走手势返回链路。
+                    // 它们过去不在这里，靠"系统注入 KEYCODE_BACK"来关；而那个注入在预测性返回开着的机器上
+                    // 会被 SelfInjectedBackGuard 当回声消费掉（见该类 KDoc），于是"手势返回没反应"。
+                    // 顺序：添加页在最上层，先问它；再问小组件面板本体。
+                    // ⚠️ 这里**只做路由**、不复制键盘优先/子层判定：各窗自己的返回链
+                    // （OverlayViewBackHandler / dismissFromBack）仍然是唯一漏斗。
+                    WidgetPickerOverlayWindow.isShowing -> {
+                        // 走它自己的返回漏斗（键盘优先在内），不要在这里直接关页面。
+                        WidgetPickerOverlayWindow.requestBack()
+                    }
+                    WidgetPopupOverlayWindow.requestBackIfVisible() -> true
                     FloatBallStashPanel.requestBackIfShowing() -> true
                     ClipboardFloatService.isExpandedShowing() && !ClipboardFloatService.isPinned() ->
                         ClipboardFloatService.closeFromBack()
@@ -74,6 +87,13 @@ internal object SlideIndexAccessibilityGestureInjector {
                         // 返回 → 交回系统。这是唯一打 `consumed=false` 的地方：真机上看到它，就说明这次
                         // 返回漏给了下层 App（面板当时没显示），不是被面板吞掉了。
                         Log.i(BACK_DECISION_TAG, "back decision consumed=false branch=fallthrough")
+                        // §0.16.25：这里**故意不登记"自注入返回"**。
+                        // 曾经登记过（SelfInjectedBackGuard），想拦"系统把这次返回又注回来"的回环；但真机日志与
+                        // 崩溃栈证明那个回环发生在系统内部（`ViewRootImpl` 的兼容回调自己递归注入），
+                        // **根本没有跑回 app 的代码**，所以闸门拦不住它；反而把"系统注入键送达到浮窗"
+                        // 这条正常路吃掉了，导致小组件面板/添加页等浮窗"手势返回没反应"。
+                        // 拦不住的敌人、却误伤自己人 —— 因此撤掉闸门，改为把这些浮窗**直接接进手势返回链路**
+                        // （见上面 when 里的路由），让返回不再依赖系统回声。
                         service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     }
                 }

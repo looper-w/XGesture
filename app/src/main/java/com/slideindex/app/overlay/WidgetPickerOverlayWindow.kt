@@ -239,6 +239,29 @@ object WidgetPickerOverlayWindow {
     WidgetPopupOverlayWindow.resumeAfterPickerOverlay()
   }
 
+  /**
+   * §0.16.25：**外部"返回"请求**（手势里的"返回"动作）入口。
+   *
+   * ⚠️ **必须走本窗自己的返回漏斗** `OverlayViewBackHandler.dispatchBack()`，不能在调用侧直接
+   * [dismissFromBack] —— 那样会绕过**键盘优先（§0.16.7）**：搜索框弹着键盘时这一次返回应该只收键盘、
+   * 页面留着，直接关页面就是把规则抄漏了（真机回归：添加小组件页里点搜索框弹键盘后手势返回，
+   * 页面被整个关掉）。
+   *
+   * handler 还没建起来（窗口正在建/正在拆）才退回 [dismissFromBack]：宁可关掉，也不要返回没反应。
+   *
+   * @return true = 这次返回由本窗消费，调用方不要再落 `GLOBAL_ACTION_BACK`
+   */
+  fun requestBack(): Boolean {
+    if (!isShowing) return false
+    val handler = backHandler
+    if (handler != null) {
+      handler.dispatchBack()
+      return true
+    }
+    dismissFromBack()
+    return true
+  }
+
   fun dismissFromBack() {
     if (Looper.myLooper() != Looper.getMainLooper()) {
       mainHandler.post { dismissFromBack() }
