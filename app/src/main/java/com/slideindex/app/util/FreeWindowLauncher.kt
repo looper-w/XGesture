@@ -167,22 +167,41 @@ object FreeWindowLauncher {
         return bundle
     }
 
+    /**
+     * 启动用的 launch bounds，坐标语义对齐 LinkGo-X 的 `WindowConfig.calculateBounds`：
+     * 用户配置的百分比 = **真机上看得见的尺寸**，补偿系数只作用在发给系统的逻辑矩形上
+     * （小米的 freeform 会按 `original_scale` 把逻辑尺寸缩到约 0.7 再显示，见
+     * `MiuiMultiWindowUtils` 的 freeform args 档位表），所以逻辑尺寸 = 可见尺寸 / 补偿。
+     *
+     * 与 LinkGo-X 的唯一差别在这里：LinkGo-X 允许逻辑矩形溢出屏幕、也不夹 left/top，
+     * 结果小米的 fit-in-display（AOSP `LaunchParamsUtil.adjustBoundsToFitInDisplayArea`）
+     * 会把窗口整体推回屏内 —— 一旦溢出就贴左，位置配置等于失效。本实现先把**可见**
+     * 尺寸夹进屏幕，再反推逻辑尺寸，位置百分比因此始终生效。
+     */
     fun launchBounds(context: Context, settings: AppSettings): Rect {
         val metrics = context.resources.displayMetrics
+        val displayWidth = metrics.widthPixels.coerceAtLeast(1)
+        val displayHeight = metrics.heightPixels.coerceAtLeast(1)
         val isLandscape = context.isLandscapeConfiguration()
         val layout = settings.resolvedFreeWindowLayout(isLandscape)
-        val baseWidthPx = (metrics.widthPixels * layout.widthFraction).toInt().coerceAtLeast(1)
-        val baseHeightPx = (metrics.heightPixels * layout.heightFraction).toInt().coerceAtLeast(1)
 
+        // 用户想要看到的可见尺寸与位置（位置是左上角，左/上留白直接用配置值）。
+        val visualWidth = (displayWidth * layout.widthFraction).toInt()
+            .coerceIn(1, displayWidth)
+        val visualHeight = (displayHeight * layout.heightFraction).toInt()
+            .coerceIn(1, displayHeight)
+        val visualLeft = (displayWidth * layout.leftFraction).toInt()
+            .coerceIn(0, (displayWidth - visualWidth).coerceAtLeast(0))
+        val visualTop = (displayHeight * layout.topFraction).toInt()
+            .coerceIn(0, (displayHeight - visualHeight).coerceAtLeast(0))
+
+        // 逻辑尺寸 = 可见尺寸 / 补偿；再夹一次屏幕，保证逻辑矩形也不会溢屏。
         val scale = resolveScaleCompensation(settings, isLandscape)
-        val widthPx = (baseWidthPx / scale).roundToInt().coerceAtLeast(1)
-        val heightPx = (baseHeightPx / scale).roundToInt().coerceAtLeast(1)
+        val logicalWidth = (visualWidth / scale).roundToInt().coerceIn(1, displayWidth)
+        val logicalHeight = (visualHeight / scale).roundToInt().coerceIn(1, displayHeight)
 
-        val leftPx = (metrics.widthPixels * layout.leftFraction).toInt()
-            .coerceIn(0, (metrics.widthPixels - widthPx).coerceAtLeast(0))
-        val topPx = (metrics.heightPixels * layout.topFraction).toInt()
-            .coerceIn(0, (metrics.heightPixels - heightPx).coerceAtLeast(0))
-        return Rect(leftPx, topPx, leftPx + widthPx, topPx + heightPx)
+        // left/top 按可见坐标原样下发，不做溢出式夹取：可见尺寸已保证放得下。
+        return Rect(visualLeft, visualTop, visualLeft + logicalWidth, visualTop + logicalHeight)
     }
 
     private fun resolveScaleCompensation(settings: AppSettings, isLandscape: Boolean): Float {
