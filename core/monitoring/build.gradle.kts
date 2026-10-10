@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "com.slideindex.app.monitoring"
-    compileSdk = 37
+    compileSdk = 37
     compileSdkMinor = 1
 
     defaultConfig {

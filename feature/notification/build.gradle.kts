@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.slideindex.app.feature.notification"
-    compileSdk = 37
+    compileSdk = 37
     compileSdkMinor = 1
 
     defaultConfig {
