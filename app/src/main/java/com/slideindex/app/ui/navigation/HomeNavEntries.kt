@@ -431,8 +431,8 @@ fun NavEntryBuilder.homeNavEntries(ctx: MainNavContext) {
             onHideInLandscapeChange = viewModel::setCornerGestureHideInLandscape,
             onLandscapePreventFalseTouchChange = viewModel::setCornerGestureLandscapePreventFalseTouch,
             onOverrideSystemNavChange = viewModel::setCornerGestureOverrideSystemNav,
-            onOuterDiameterChange = viewModel::setCornerGestureOuterDiameterDp,
             onInnerDiameterChange = viewModel::setCornerGestureInnerDiameterDp,
+            onRingSpacingChange = viewModel::setCornerGestureRingSpacingDp,
             onBubbleSizeChange = viewModel::setCornerGestureBubbleSizeDp,
             onCancelOutsideWheelChange = viewModel::setCornerGestureCancelOutsideWheel,
             onProgressiveLayersChange = viewModel::setCornerGestureProgressiveLayers,
@@ -459,6 +459,7 @@ fun NavEntryBuilder.homeNavEntries(ctx: MainNavContext) {
             serviceEnabled = ctx.gestureActive(gestureSettings.serviceEnabled, permissions),
             onBack = { ctx.navigateBackTo(AppNavKey.HomeCornerGesture) },
             onUnifiedSlotsChange = viewModel::setCornerGestureUnifiedSlots,
+            onLayerCountChange = viewModel::setCornerGestureWheelLayerCount,
             onOpenInnerZoneActionPick = { ctx.navigate(AppNavKey.HomeCornerGestureInnerZoneActionPick) },
             onOpenLeftSlotActionPick = { slotIndex ->
                 ctx.navigate(AppNavKey.HomeCornerGestureSlotEditor("left", slotIndex))

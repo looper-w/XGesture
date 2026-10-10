@@ -718,9 +718,12 @@ internal object SettingsPreferenceKeys {
     val CORNER_GESTURE_LANDSCAPE_PREVENT_FALSE_TOUCH =
         booleanPreferencesKey("corner_gesture_landscape_prevent_false_touch")
     val CORNER_GESTURE_OVERRIDE_SYSTEM_NAV = booleanPreferencesKey("corner_gesture_override_system_nav")
-    val CORNER_GESTURE_OUTER_DIAMETER_DP = floatPreferencesKey("corner_gesture_outer_diameter_dp")
     val CORNER_GESTURE_INNER_DIAMETER_DP = floatPreferencesKey("corner_gesture_inner_diameter_dp")
+    /** 层与层之间的环间距（dp）。取代未发布的 corner_gesture_outer_diameter_dp。 */
+    val CORNER_GESTURE_RING_SPACING_DP = floatPreferencesKey("corner_gesture_ring_spacing_dp")
     val CORNER_GESTURE_BUBBLE_SIZE_DP = floatPreferencesKey("corner_gesture_bubble_size_dp")
+    /** 轮盘层数（3/4/5）。取代未发布的 corner_gesture_layer4_enabled / layer5_enabled 两个布尔键。 */
+    val CORNER_GESTURE_WHEEL_LAYER_COUNT = intPreferencesKey("corner_gesture_wheel_layer_count")
     val CORNER_GESTURE_LEFT_SLOTS = stringSetPreferencesKey("corner_gesture_left_slots")
     val CORNER_GESTURE_RIGHT_SLOTS = stringSetPreferencesKey("corner_gesture_right_slots")
     val CORNER_GESTURE_LEFT_SLOT_SUB_MENUS = stringSetPreferencesKey("corner_gesture_left_slot_sub_menus")

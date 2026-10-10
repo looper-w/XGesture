@@ -6,35 +6,48 @@ import com.slideindex.app.gesture.sanitizeForSlotPicker
 import com.slideindex.app.launcher.QuickLauncherItemCodec
 
 object CornerRadialMenuCodec {
-    /** 三层槽位：内 3 / 中 5 / 外 7，共 15。 */
-    const val SLOT_COUNT = 15
+    /**
+     * 五层槽位：内 3 / 5 / 7 / 9 / 11，共 35。
+     * 前三层始终启用；第 4、5 层由设置开关决定（见 [CornerGestureSettings.enabledLayerCount]）。
+     */
+    const val SLOT_COUNT = 35
     const val LEGACY_SLOT_COUNT = 8
-    val LAYER_SLOT_COUNTS = intArrayOf(3, 5, 7)
+
+    /** 始终启用的层数，第 4 层起需要用户显式开启。 */
+    const val BASE_LAYER_COUNT = 3
+    val LAYER_SLOT_COUNTS = intArrayOf(3, 5, 7, 9, 11)
+
+    private val LAYER_START_INDICES = IntArray(LAYER_SLOT_COUNTS.size).also { starts ->
+        var acc = 0
+        LAYER_SLOT_COUNTS.forEachIndexed { index, count ->
+            starts[index] = acc
+            acc += count
+        }
+    }
 
     private const val SEP = "\u001D"
 
-    fun layerOf(globalIndex: Int): Int = when {
-        globalIndex < 3 -> 0
-        globalIndex < 8 -> 1
-        globalIndex < SLOT_COUNT -> 2
-        else -> -1
+    fun layerCount(): Int = LAYER_SLOT_COUNTS.size
+
+    fun layerOf(globalIndex: Int): Int {
+        if (globalIndex !in 0 until SLOT_COUNT) return -1
+        return LAYER_START_INDICES.indexOfLast { it <= globalIndex }
     }
 
-    fun layerLocalIndex(globalIndex: Int): Int = when {
-        globalIndex < 3 -> globalIndex
-        globalIndex < 8 -> globalIndex - 3
-        globalIndex < SLOT_COUNT -> globalIndex - 8
-        else -> -1
+    fun layerLocalIndex(globalIndex: Int): Int {
+        val layer = layerOf(globalIndex)
+        return if (layer < 0) -1 else globalIndex - LAYER_START_INDICES[layer]
     }
 
-    fun layerStartIndex(layer: Int): Int = when (layer) {
-        0 -> 0
-        1 -> 3
-        2 -> 8
-        else -> 0
-    }
+    fun layerStartIndex(layer: Int): Int = LAYER_START_INDICES.getOrElse(layer) { 0 }
 
     fun slotCountInLayer(layer: Int): Int = LAYER_SLOT_COUNTS.getOrElse(layer) { 0 }
+
+    /** [layerCount] 层（含）以内的最后一个槽位下标。 */
+    fun lastSlotIndexInLayerCount(layerCount: Int): Int {
+        val layer = (layerCount - 1).coerceIn(0, LAYER_SLOT_COUNTS.size - 1)
+        return layerStartIndex(layer) + slotCountInLayer(layer) - 1
+    }
 
     fun defaultLeftSlots(): List<GestureAction> = listOf(
         // layer 1 — 3

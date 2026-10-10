@@ -1603,22 +1603,32 @@ class OverlaySettingsMutator @Inject constructor(
         it[SettingsPreferenceKeys.CORNER_GESTURE_OVERRIDE_SYSTEM_NAV] = enabled
     }
 
-    suspend fun setCornerGestureOuterDiameterDp(value: Float) = editor.edit { prefs ->
-        val outer = CornerGestureSettings.clampOuterDiameterDp(value)
-        prefs[SettingsPreferenceKeys.CORNER_GESTURE_OUTER_DIAMETER_DP] = outer
-        val inner = prefs[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] ?: 72f
-        prefs[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] =
-            CornerGestureSettings.clampInnerDiameterDp(inner, outer)
+    suspend fun setCornerGestureInnerDiameterDp(value: Float) = editor.edit {
+        it[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] =
+            CornerGestureSettings.clampInnerDiameterDp(value)
     }
 
-    suspend fun setCornerGestureInnerDiameterDp(value: Float) = editor.edit { prefs ->
-        val outer = prefs[SettingsPreferenceKeys.CORNER_GESTURE_OUTER_DIAMETER_DP] ?: 280f
-        prefs[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] =
-            CornerGestureSettings.clampInnerDiameterDp(value, outer)
+    suspend fun setCornerGestureRingSpacingDp(value: Float) = editor.edit { prefs ->
+        val bubble = CornerGestureSettings.clampBubbleSizeDp(
+            prefs[SettingsPreferenceKeys.CORNER_GESTURE_BUBBLE_SIZE_DP] ?: 24f,
+        )
+        prefs[SettingsPreferenceKeys.CORNER_GESTURE_RING_SPACING_DP] =
+            CornerGestureSettings.clampRingSpacingDp(value, bubble)
     }
 
-    suspend fun setCornerGestureBubbleSizeDp(value: Float) = editor.edit {
-        it[SettingsPreferenceKeys.CORNER_GESTURE_BUBBLE_SIZE_DP] = CornerGestureSettings.clampBubbleSizeDp(value)
+    /** 气泡调大时环间距下限跟着抬，否则相邻两环会叠。 */
+    suspend fun setCornerGestureBubbleSizeDp(value: Float) = editor.edit { prefs ->
+        val bubble = CornerGestureSettings.clampBubbleSizeDp(value)
+        prefs[SettingsPreferenceKeys.CORNER_GESTURE_BUBBLE_SIZE_DP] = bubble
+        val spacing = prefs[SettingsPreferenceKeys.CORNER_GESTURE_RING_SPACING_DP]
+            ?: CornerGestureSettings.DEFAULT_RING_SPACING_DP
+        prefs[SettingsPreferenceKeys.CORNER_GESTURE_RING_SPACING_DP] =
+            CornerGestureSettings.clampRingSpacingDp(spacing, bubble)
+    }
+
+    suspend fun setCornerGestureWheelLayerCount(value: Int) = editor.edit {
+        it[SettingsPreferenceKeys.CORNER_GESTURE_WHEEL_LAYER_COUNT] =
+            CornerGestureSettings.clampWheelLayerCount(value)
     }
 
     suspend fun setCornerGestureLeftSlotAction(index: Int, action: GestureAction) = editor.edit { prefs ->

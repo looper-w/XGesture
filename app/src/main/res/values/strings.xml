@@ -480,8 +480,9 @@
     <string name="corner_gesture_horizontal_edge_height">Horizontal edge height</string>
     <string name="corner_gesture_horizontal_edge_width">Horizontal edge width</string>
     <string name="corner_gesture_trigger_slop">Inward swipe distance</string>
-    <string name="corner_gesture_outer_diameter">Menu outer diameter</string>
     <string name="corner_gesture_inner_diameter">Menu inner diameter</string>
+    <string name="corner_gesture_ring_spacing">Ring spacing</string>
+    <string name="corner_gesture_ring_spacing_value">%1$d dp · edge ≈ %2$d dp</string>
     <string name="corner_gesture_bubble_size">Bubble size</string>
     <string name="corner_gesture_zone_dp_value">%1$d dp</string>
     <string name="corner_gesture_behavior_section">Behavior</string>
@@ -510,6 +511,10 @@
     <string name="corner_gesture_layer_inner">Inner layer (3)</string>
     <string name="corner_gesture_layer_middle">Middle layer (5)</string>
     <string name="corner_gesture_layer_outer">Outer layer (7)</string>
+    <string name="corner_gesture_layer_4">4th layer (9)</string>
+    <string name="corner_gesture_layer_5">5th layer (11)</string>
+    <string name="corner_gesture_layer_count">Wheel layers</string>
+    <string name="corner_gesture_layer_count_value">%1$d layers</string>
     <string name="corner_gesture_cancel_outside_wheel">Cancel outside wheel</string>
     <string name="corner_gesture_cancel_outside_wheel_desc">Clear highlight when finger leaves the fan; release does nothing</string>
     <string name="corner_gesture_progressive_layers">Progressive layers</string>

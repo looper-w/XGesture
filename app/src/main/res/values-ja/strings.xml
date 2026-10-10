@@ -396,8 +396,9 @@
     <string name="corner_gesture_horizontal_edge_height">横エッジの高さ</string>
     <string name="corner_gesture_horizontal_edge_width">横エッジの幅</string>
     <string name="corner_gesture_trigger_slop">内側スワイプ距離</string>
-    <string name="corner_gesture_outer_diameter">メニュー外径</string>
     <string name="corner_gesture_inner_diameter">メニュー内径</string>
+    <string name="corner_gesture_ring_spacing">レイヤー間隔</string>
+    <string name="corner_gesture_ring_spacing_value">%1$d dp · 外縁 約 %2$d dp</string>
     <string name="corner_gesture_bubble_size">バブルサイズ</string>
     <string name="corner_gesture_zone_dp_value">%1$d dp</string>
     <string name="corner_gesture_behavior_section">動作</string>
@@ -426,6 +427,10 @@
     <string name="corner_gesture_layer_inner">内側レイヤー (3)</string>
     <string name="corner_gesture_layer_middle">中間レイヤー (5)</string>
     <string name="corner_gesture_layer_outer">外側レイヤー (7)</string>
+    <string name="corner_gesture_layer_4">第 4 レイヤー (9)</string>
+    <string name="corner_gesture_layer_5">第 5 レイヤー (11)</string>
+    <string name="corner_gesture_layer_count">ホイールのレイヤー数</string>
+    <string name="corner_gesture_layer_count_value">%1$d レイヤー</string>
     <string name="corner_gesture_cancel_outside_wheel">ホイール外でキャンセル</string>
     <string name="corner_gesture_cancel_outside_wheel_desc">指が扇形から離れるとハイライト解除。離しても何も実行しません</string>
     <string name="corner_gesture_progressive_layers">段階的レイヤー</string>

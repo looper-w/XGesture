@@ -149,7 +149,7 @@ internal class CornerGestureOverlayView(
                     menuActive = true
                     activated = true
                     if (!isProgressiveReveal()) {
-                        activeLayerCount = 3
+                        activeLayerCount = cornerSettings.enabledLayerCount
                     } else {
                         val (anchorX, anchorY) = anchorCenter(anchor)
                         menuActivationRadDist = hypot(event.rawX - anchorX, event.rawY - anchorY)
@@ -285,7 +285,7 @@ internal class CornerGestureOverlayView(
         highlightedSlot = -1
         lastHapticHighlightedSlot = -1
         highlightedEditButton = false
-        activeLayerCount = 3
+        activeLayerCount = cornerSettings.enabledLayerCount
         menuRevealProgress = 1f
         editModeEntered = false
         maxInwardSlop = 0f
@@ -305,7 +305,7 @@ internal class CornerGestureOverlayView(
         highlightedSlot = -1
         lastHapticHighlightedSlot = -1
         highlightedEditButton = false
-        activeLayerCount = 3
+        activeLayerCount = cornerSettings.enabledLayerCount
         menuRevealProgress = 1f
         editModeEntered = true
         maxInwardSlop = 0f
@@ -437,14 +437,14 @@ internal class CornerGestureOverlayView(
             !wheelPinned
 
     private fun menuActiveLayerCount(): Int = when {
-        wheelPinned || sessionMode == SessionMode.EDIT -> 3
-        !isProgressiveReveal() -> 3
+        wheelPinned || sessionMode == SessionMode.EDIT -> cornerSettings.enabledLayerCount
+        !isProgressiveReveal() -> cornerSettings.enabledLayerCount
         else -> activeLayerCount
     }
 
     private fun updateActiveLayerCount(anchor: CornerAnchor, anchorX: Float, anchorY: Float, rawX: Float, rawY: Float) {
         if (!isProgressiveReveal()) {
-            activeLayerCount = 3
+            activeLayerCount = cornerSettings.enabledLayerCount
             return
         }
         if (isFingerInInnerZone(anchor, rawX, rawY)) {
@@ -493,7 +493,7 @@ internal class CornerGestureOverlayView(
             if (!editModeEntered) {
                 sessionMode = SessionMode.EDIT
                 editModeEntered = true
-                activeLayerCount = 3
+                activeLayerCount = cornerSettings.enabledLayerCount
                 HapticHelper.gestureStart(this, settings)
             }
             return
@@ -846,6 +846,7 @@ internal class CornerGestureOverlayView(
             activeLayerCount = CornerRadialMenuGeometry.displayLayerCount(
                 activeLayerCount = menuActiveLayerCount(),
                 highlightedSlot = highlightedSlot,
+                maxLayerCount = cornerSettings.enabledLayerCount,
             ),
             density = density,
             revealProgress = menuRevealProgress,

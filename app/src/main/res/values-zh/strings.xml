@@ -396,8 +396,9 @@
     <string name="corner_gesture_horizontal_edge_height">横边高度</string>
     <string name="corner_gesture_horizontal_edge_width">横边宽度</string>
     <string name="corner_gesture_trigger_slop">内滑触发距离</string>
-    <string name="corner_gesture_outer_diameter">轮盘外径</string>
     <string name="corner_gesture_inner_diameter">轮盘内径</string>
+    <string name="corner_gesture_ring_spacing">层间距</string>
+    <string name="corner_gesture_ring_spacing_value">%1$d dp · 外沿约 %2$d dp</string>
     <string name="corner_gesture_bubble_size">气泡大小</string>
     <string name="corner_gesture_zone_dp_value">%1$d dp</string>
     <string name="corner_gesture_behavior_section">行为</string>
@@ -426,6 +427,10 @@
     <string name="corner_gesture_layer_inner">内层（3）</string>
     <string name="corner_gesture_layer_middle">中层（5）</string>
     <string name="corner_gesture_layer_outer">外层（7）</string>
+    <string name="corner_gesture_layer_4">第 4 层（9）</string>
+    <string name="corner_gesture_layer_5">第 5 层（11）</string>
+    <string name="corner_gesture_layer_count">轮盘层数</string>
+    <string name="corner_gesture_layer_count_value">%1$d 层</string>
     <string name="corner_gesture_cancel_outside_wheel">轮盘外取消</string>
     <string name="corner_gesture_cancel_outside_wheel_desc">手指移到轮盘扇形外时取消高亮，松手不执行</string>
     <string name="corner_gesture_progressive_layers">径向渐进展层</string>

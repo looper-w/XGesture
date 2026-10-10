@@ -8,15 +8,18 @@ import androidx.compose.ui.res.stringResource
 import com.slideindex.app.R
 import com.slideindex.app.gesture.GestureAction
 import com.slideindex.app.settings.AppSettings
+import com.slideindex.app.settings.CornerGestureSettings
 import com.slideindex.app.settings.CornerRadialMenuCodec
 import com.slideindex.app.ui.miuix.CardItem
 import com.slideindex.app.ui.miuix.groupedCardItems
 import com.slideindex.app.ui.settings.components.SettingNavigationRow
 import com.slideindex.app.ui.settings.components.SettingSwitchRow
 import com.slideindex.app.ui.settings.components.SettingsScreenScaffold
+import com.slideindex.app.ui.settings.components.SettingsSliderRow
 import com.slideindex.app.ui.settings.components.settingsCardScopeItem
 import com.slideindex.app.ui.settings.components.settingsLazyTipCard
 import com.slideindex.app.ui.settings.components.settingsLazySmallTitle
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -25,6 +28,7 @@ fun CornerGestureSlotsSettingsScreen(
     serviceEnabled: Boolean,
     onBack: () -> Unit,
     onUnifiedSlotsChange: (Boolean) -> Unit,
+    onLayerCountChange: (Int) -> Unit,
     onOpenInnerZoneActionPick: () -> Unit,
     onOpenLeftSlotActionPick: (Int) -> Unit,
     onOpenRightSlotActionPick: (Int) -> Unit
@@ -39,20 +43,18 @@ fun CornerGestureSlotsSettingsScreen(
     val leftSlotsSectionTitle = stringResource(R.string.corner_gesture_left_slots_section)
     val rightSlotsSectionTitle = stringResource(R.string.corner_gesture_right_slots_section)
 
-    val layerTitles = listOf(
-        cornerLayerTitle(0),
-        cornerLayerTitle(1),
-        cornerLayerTitle(2)
-    )
-    val unifiedLayer0 = cornerLayerCardItems(0, corner.leftSlots, settings, slotsEnabled, onOpenLeftSlotActionPick)
-    val unifiedLayer1 = cornerLayerCardItems(1, corner.leftSlots, settings, slotsEnabled, onOpenLeftSlotActionPick)
-    val unifiedLayer2 = cornerLayerCardItems(2, corner.leftSlots, settings, slotsEnabled, onOpenLeftSlotActionPick)
-    val leftLayer0 = cornerLayerCardItems(0, corner.leftSlots, settings, slotsEnabledLeft, onOpenLeftSlotActionPick)
-    val leftLayer1 = cornerLayerCardItems(1, corner.leftSlots, settings, slotsEnabledLeft, onOpenLeftSlotActionPick)
-    val leftLayer2 = cornerLayerCardItems(2, corner.leftSlots, settings, slotsEnabledLeft, onOpenLeftSlotActionPick)
-    val rightLayer0 = cornerLayerCardItems(0, corner.rightSlots, settings, slotsEnabledRight, onOpenRightSlotActionPick)
-    val rightLayer1 = cornerLayerCardItems(1, corner.rightSlots, settings, slotsEnabledRight, onOpenRightSlotActionPick)
-    val rightLayer2 = cornerLayerCardItems(2, corner.rightSlots, settings, slotsEnabledRight, onOpenRightSlotActionPick)
+    // 只展示已启用的层；层数由卡片里的档位决定。
+    val layerCount = corner.enabledLayerCount
+    val layerTitles = (0 until layerCount).map { cornerLayerTitle(it) }
+    val unifiedLayerItems = (0 until layerCount).map {
+        cornerLayerCardItems(it, corner.leftSlots, settings, slotsEnabled, onOpenLeftSlotActionPick)
+    }
+    val leftLayerItems = (0 until layerCount).map {
+        cornerLayerCardItems(it, corner.leftSlots, settings, slotsEnabledLeft, onOpenLeftSlotActionPick)
+    }
+    val rightLayerItems = (0 until layerCount).map {
+        cornerLayerCardItems(it, corner.rightSlots, settings, slotsEnabledRight, onOpenRightSlotActionPick)
+    }
 
     SettingsScreenScaffold(
         title = stringResource(R.string.corner_gesture_slots_section),
@@ -80,13 +82,28 @@ fun CornerGestureSlotsSettingsScreen(
                         )
                     }
                 )
+                add(
+                    settingsCardScopeItem("wheel-layer-count") {
+                        SettingsSliderRow(
+                            title = stringResource(R.string.corner_gesture_layer_count),
+                            value = layerCount.toFloat(),
+                            valueRange = CornerGestureSettings.LAYER_COUNT_RANGE.first.toFloat()..
+                                CornerGestureSettings.LAYER_COUNT_RANGE.last.toFloat(),
+                            steps = CornerGestureSettings.LAYER_COUNT_RANGE.count() - 2,
+                            enabled = serviceEnabled && corner.enabled,
+                            label = stringResource(R.string.corner_gesture_layer_count_value, layerCount),
+                            snapValue = { it.roundToInt().toFloat() },
+                            onValueChange = { onLayerCountChange(it.roundToInt()) }
+                        )
+                    }
+                )
             }
         )
         if (corner.unifiedSlots) {
             emitCornerLayerSlots(
                 keyPrefix = "corner-unified",
                 layerTitles = layerTitles,
-                layerItems = listOf(unifiedLayer0, unifiedLayer1, unifiedLayer2)
+                layerItems = unifiedLayerItems
             )
         } else {
             settingsLazySmallTitle(
@@ -96,7 +113,7 @@ fun CornerGestureSlotsSettingsScreen(
             emitCornerLayerSlots(
                 keyPrefix = "corner-left",
                 layerTitles = layerTitles,
-                layerItems = listOf(leftLayer0, leftLayer1, leftLayer2)
+                layerItems = leftLayerItems
             )
             settingsLazySmallTitle(
                 key = "corner-right-slots-section",
@@ -105,7 +122,7 @@ fun CornerGestureSlotsSettingsScreen(
             emitCornerLayerSlots(
                 keyPrefix = "corner-right",
                 layerTitles = layerTitles,
-                layerItems = listOf(rightLayer0, rightLayer1, rightLayer2)
+                layerItems = rightLayerItems
             )
         }
         groupedCardItems(
@@ -137,7 +154,9 @@ fun CornerGestureSlotsSettingsScreen(
 private fun cornerLayerTitle(layer: Int): String = when (layer) {
     0 -> stringResource(R.string.corner_gesture_layer_inner)
     1 -> stringResource(R.string.corner_gesture_layer_middle)
-    else -> stringResource(R.string.corner_gesture_layer_outer)
+    2 -> stringResource(R.string.corner_gesture_layer_outer)
+    3 -> stringResource(R.string.corner_gesture_layer_4)
+    else -> stringResource(R.string.corner_gesture_layer_5)
 }
 
 @Composable

@@ -13,7 +13,30 @@ internal object CornerWheelLayout {
     fun bubbleRadiusPx(settings: CornerGestureSettings, density: Float): Float =
         settings.bubbleSizeDp * density
 
-    private val RING_CENTER_FRACTION = floatArrayOf(1f / 6f, 3f / 6f, 5f / 6f)
+    /**
+     * 环心半径（dp）：第一环紧贴内径空洞外缘（内径/2 + 气泡半径 + 8dp），
+     * 之后每环按 [CornerGestureSettings.ringSpacingDp] 往外推。
+     *
+     * 关键性质：**层数不参与计算**。加层只是往外接圈，已有环一格不动、环间距也不变
+     * （环间距下限由设置钳到 ≥ 气泡直径，所以径向永远不叠）。
+     */
+    fun layerRadiusDp(settings: CornerGestureSettings, layer: Int): Float {
+        val firstRing = settings.innerDiameterDp / 2f +
+            settings.bubbleSizeDp +
+            CornerGestureSettings.FIRST_RING_MARGIN_DP
+        val index = layer.coerceIn(0, CornerRadialMenuCodec.LAYER_SLOT_COUNTS.lastIndex)
+        return firstRing + index * settings.ringSpacingDp
+    }
+
+    /** 轮盘外沿到角的距离（dp）：最外层气泡中心 + 一个气泡半径。设置页用它显示"轮盘伸出多远"。 */
+    fun wheelOuterEdgeDp(settings: CornerGestureSettings): Float =
+        layerRadiusDp(settings, settings.enabledLayerCount - 1) + settings.bubbleSizeDp
+
+    fun layerRadiusPx(settings: CornerGestureSettings, density: Float, layer: Int): Float =
+        layerRadiusDp(settings, layer) * density
+
+    /** 当前已启用的最外层序号（第 4/5 层关着时就是 2）。 */
+    private fun outermostLayer(settings: CornerGestureSettings): Int = settings.enabledLayerCount - 1
 
     fun editButtonCenter(
         anchor: CornerAnchor,
@@ -22,7 +45,7 @@ internal object CornerWheelLayout {
         settings: CornerGestureSettings,
         density: Float,
     ): Offset {
-        val topOuterSlotIndex = CornerRadialMenuCodec.layerStartIndex(2)
+        val topOuterSlotIndex = CornerRadialMenuCodec.layerStartIndex(outermostLayer(settings))
         val topSlot = bubbleCenterForSlot(
             anchor = anchor,
             anchorX = anchorX,
@@ -31,7 +54,8 @@ internal object CornerWheelLayout {
             settings = settings,
             density = density,
         )
-        val visualOuter = layerRadiusPx(settings, density, 2) + bubbleRadiusPx(settings, density)
+        val visualOuter =
+            layerRadiusPx(settings, density, outermostLayer(settings)) + bubbleRadiusPx(settings, density)
         val editR = editButtonRadius(density)
         val centerX = when (anchor) {
             CornerAnchor.LEFT -> anchorX + visualOuter + editR * 0.42f
@@ -40,18 +64,9 @@ internal object CornerWheelLayout {
         return Offset(centerX, topSlot.y)
     }
 
-    fun layerRadiusPx(settings: CornerGestureSettings, density: Float, layer: Int): Float {
-        val inner = settings.innerDiameterDp * density / 2f
-        val outer = settings.outerDiameterDp * density / 2f
-        val bubble = bubbleRadiusPx(settings, density)
-        val minBand = bubble * 2.35f * 3.2f
-        val band = (outer - inner).coerceAtLeast(minBand)
-        return inner + band * RING_CENTER_FRACTION[layer.coerceIn(0, 2)]
-    }
-
-    /** 轮盘实际外缘（最外环气泡中心 + 余量），用于「轮盘外取消」判定。 */
+    /** 轮盘实际外缘（最外层气泡中心 + 余量），用于「轮盘外取消」判定。 */
     fun wheelOuterHitRadiusPx(settings: CornerGestureSettings, density: Float): Float =
-        layerRadiusPx(settings, density, 2) + bubbleRadiusPx(settings, density) * 1.5f
+        layerRadiusPx(settings, density, outermostLayer(settings)) + bubbleRadiusPx(settings, density) * 1.5f
 
     fun editButtonRadius(density: Float): Float = 24f * density
 
@@ -70,6 +85,10 @@ internal object CornerWheelLayout {
         return hypot(fingerX - center.x, fingerY - center.y) <= radius * 1.55f
     }
 
+    /**
+     * 渐进展开时已显示的层数，上限是当前启用的层数。
+     * 逐环比较手指到锚点的距离，越靠外的层需要滑得越远才出现。
+     */
     fun activeLayerCount(
         anchor: CornerAnchor,
         anchorX: Float,
@@ -81,28 +100,26 @@ internal object CornerWheelLayout {
         progressive: Boolean,
         activationRadDist: Float? = null,
     ): Int {
-        if (!progressive) return 3
+        val layerCount = settings.enabledLayerCount
+        if (!progressive) return layerCount
         val dist = hypot(fingerX - anchorX, fingerY - anchorY)
         val bubble = bubbleRadiusPx(settings, density)
-        val innerR = layerRadiusPx(settings, density, 0)
-        val middleR = layerRadiusPx(settings, density, 1)
-        val outerR = layerRadiusPx(settings, density, 2)
         val slop = bubble * 0.35f
+        val radii = List(layerCount) { layerRadiusPx(settings, density, it) }
+        var revealed = 1
         if (activationRadDist != null) {
             val expand = (dist - activationRadDist).coerceAtLeast(0f)
-            val bandInnerToMiddle = (middleR - innerR).coerceAtLeast(bubble)
-            val bandMiddleToOuter = (outerR - middleR).coerceAtLeast(bubble)
-            return when {
-                expand <= bandInnerToMiddle + slop -> 1
-                expand <= bandInnerToMiddle + bandMiddleToOuter + slop -> 2
-                else -> 3
+            var cumulative = 0f
+            for (index in 1 until layerCount) {
+                cumulative += (radii[index] - radii[index - 1]).coerceAtLeast(bubble)
+                if (expand > cumulative + slop) revealed = index + 1
             }
+            return revealed
         }
-        return when {
-            dist <= innerR + slop -> 1
-            dist <= middleR + slop -> 2
-            else -> 3
+        for (index in 1 until layerCount) {
+            if (dist > radii[index - 1] + slop) revealed = index + 1
         }
+        return revealed
     }
 
     fun bubbleCenterForSlot(

@@ -396,8 +396,9 @@
     <string name="corner_gesture_horizontal_edge_height">ارتفاع الحافة الأفقية</string>
     <string name="corner_gesture_horizontal_edge_width">عرض الحافة الأفقية</string>
     <string name="corner_gesture_trigger_slop">مسافة تشغيل الانزلاق الداخلي</string>
-    <string name="corner_gesture_outer_diameter">القطر الخارجي للعجلة</string>
     <string name="corner_gesture_inner_diameter">القطر الداخلي للعجلة</string>
+    <string name="corner_gesture_ring_spacing">المسافة بين الطبقات</string>
+    <string name="corner_gesture_ring_spacing_value">%1$d dp · الحافة ‏%2$d dp</string>
     <string name="corner_gesture_bubble_size">حجم الفقاعة</string>
     <string name="corner_gesture_zone_dp_value">%1$d dp</string>
     <string name="corner_gesture_behavior_section">السلوك</string>
@@ -426,6 +427,10 @@
     <string name="corner_gesture_layer_inner">الطبقة الداخلية (3)</string>
     <string name="corner_gesture_layer_middle">الطبقة الوسطى (5)</string>
     <string name="corner_gesture_layer_outer">الطبقة الخارجية (7)</string>
+    <string name="corner_gesture_layer_4">الطبقة الرابعة (9)</string>
+    <string name="corner_gesture_layer_5">الطبقة الخامسة (11)</string>
+    <string name="corner_gesture_layer_count">عدد طبقات العجلة</string>
+    <string name="corner_gesture_layer_count_value">%1$d طبقات</string>
     <string name="corner_gesture_cancel_outside_wheel">الإلغاء خارج العجلة</string>
     <string name="corner_gesture_cancel_outside_wheel_desc">عند نقل الإصبع خارج القطاع الدائري للعجلة، يتم إلغاء التمييز، ولا يتم التنفيذ عند الإفلات</string>
     <string name="corner_gesture_progressive_layers">طبقات شعاعية تقدمية</string>

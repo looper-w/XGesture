@@ -841,10 +841,23 @@ internal object SettingsSnapshotReader {
         )
 
     fun readCornerGestureSettings(prefs: Preferences): CornerGestureSettings {
-        val outer = prefs[SettingsPreferenceKeys.CORNER_GESTURE_OUTER_DIAMETER_DP] ?: 280f
-        val inner = prefs[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] ?: 72f
+        val inner = prefs[SettingsPreferenceKeys.CORNER_GESTURE_INNER_DIAMETER_DP] ?: 320f
         val legacyWidth = prefs[SettingsPreferenceKeys.CORNER_GESTURE_ZONE_WIDTH_DP]
         val legacyHeight = prefs[SettingsPreferenceKeys.CORNER_GESTURE_ZONE_HEIGHT_DP]
+        // 轮盘层数：3 层是历史默认，越界值（坏存档/手改）在这里钳回来。
+        val wheelLayerCount = CornerGestureSettings.clampWheelLayerCount(
+            prefs[SettingsPreferenceKeys.CORNER_GESTURE_WHEEL_LAYER_COUNT]
+                ?: CornerRadialMenuCodec.BASE_LAYER_COUNT,
+        )
+        val bubbleSizeDp = CornerGestureSettings.clampBubbleSizeDp(
+            prefs[SettingsPreferenceKeys.CORNER_GESTURE_BUBBLE_SIZE_DP] ?: 24f,
+        )
+        // 环间距下限跟着气泡直径，历史/手改出来的过小值在这里抬回来。
+        val ringSpacingDp = CornerGestureSettings.clampRingSpacingDp(
+            prefs[SettingsPreferenceKeys.CORNER_GESTURE_RING_SPACING_DP]
+                ?: CornerGestureSettings.DEFAULT_RING_SPACING_DP,
+            bubbleSizeDp,
+        )
         return CornerGestureSettings(
             enabled = prefs[SettingsPreferenceKeys.CORNER_GESTURE_ENABLED] ?: false,
             leftEnabled = prefs[SettingsPreferenceKeys.CORNER_GESTURE_LEFT_ENABLED] ?: true,
@@ -876,13 +889,12 @@ internal object SettingsSnapshotReader {
             landscapePreventFalseTouch = prefs[SettingsPreferenceKeys.CORNER_GESTURE_LANDSCAPE_PREVENT_FALSE_TOUCH]
                 ?: true,
             overrideSystemNav = prefs[SettingsPreferenceKeys.CORNER_GESTURE_OVERRIDE_SYSTEM_NAV] ?: false,
-            outerDiameterDp = CornerGestureSettings.clampOuterDiameterDp(outer),
-            innerDiameterDp = CornerGestureSettings.clampInnerDiameterDp(inner, outer),
-            bubbleSizeDp = CornerGestureSettings.clampBubbleSizeDp(
-                prefs[SettingsPreferenceKeys.CORNER_GESTURE_BUBBLE_SIZE_DP] ?: 17f,
-            ),
+            innerDiameterDp = CornerGestureSettings.clampInnerDiameterDp(inner),
+            ringSpacingDp = ringSpacingDp,
+            bubbleSizeDp = bubbleSizeDp,
+            wheelLayerCount = wheelLayerCount,
             cancelOutsideWheel = prefs[SettingsPreferenceKeys.CORNER_GESTURE_CANCEL_OUTSIDE_WHEEL] ?: true,
-            progressiveLayers = prefs[SettingsPreferenceKeys.CORNER_GESTURE_PROGRESSIVE_LAYERS] ?: true,
+            progressiveLayers = prefs[SettingsPreferenceKeys.CORNER_GESTURE_PROGRESSIVE_LAYERS] ?: false,
             slotHapticEnabled = prefs[SettingsPreferenceKeys.CORNER_GESTURE_SLOT_HAPTIC] ?: true,
             showSelectedName = prefs[SettingsPreferenceKeys.CORNER_GESTURE_SHOW_SELECTED_NAME] ?: true,
             showEditButton = prefs[SettingsPreferenceKeys.CORNER_GESTURE_SHOW_EDIT_BUTTON] ?: true,

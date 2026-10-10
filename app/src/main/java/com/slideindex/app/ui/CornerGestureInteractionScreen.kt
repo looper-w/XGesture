@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import com.slideindex.app.R
 import com.slideindex.app.gesture.SelectedHintMetrics
+import com.slideindex.app.overlay.corner.CornerWheelLayout
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.CornerGestureSettings
 import com.slideindex.app.ui.miuix.groupedCardItems
@@ -45,8 +46,8 @@ fun CornerGestureInteractionScreen(
     onHideInLandscapeChange: (Boolean) -> Unit,
     onLandscapePreventFalseTouchChange: (Boolean) -> Unit,
     onOverrideSystemNavChange: (Boolean) -> Unit,
-    onOuterDiameterChange: (Float) -> Unit,
     onInnerDiameterChange: (Float) -> Unit,
+    onRingSpacingChange: (Float) -> Unit,
     onBubbleSizeChange: (Float) -> Unit,
     onCancelOutsideWheelChange: (Boolean) -> Unit,
     onProgressiveLayersChange: (Boolean) -> Unit,
@@ -219,34 +220,47 @@ fun CornerGestureInteractionScreen(
                     }
                 )
                 add(
-                    settingsCardScopeItem("outer-diameter") {
-                        SettingsSliderRow(
-                            title = stringResource(R.string.corner_gesture_outer_diameter),
-                            value = corner.outerDiameterDp,
-                            valueRange = 180f..400f,
-                            steps = 21,
-                            enabled = serviceEnabled && corner.enabled,
-                            label = stringResource(
-                                R.string.corner_gesture_zone_dp_value,
-                                corner.outerDiameterDp.roundToInt()
-                            ),
-                            onValueChange = onOuterDiameterChange
-                        )
-                    }
-                )
-                add(
                     settingsCardScopeItem("inner-diameter") {
                         SettingsSliderRow(
                             title = stringResource(R.string.corner_gesture_inner_diameter),
                             value = corner.innerDiameterDp,
-                            valueRange = 40f..(corner.outerDiameterDp - 24f).coerceAtLeast(48f),
-                            steps = 15,
+                            valueRange = CornerGestureSettings.INNER_DIAMETER_RANGE_DP,
+                            // 固定 5dp 一档；量程不再跟着别的设置变。
+                            steps = (
+                                (CornerGestureSettings.INNER_DIAMETER_RANGE_DP.endInclusive -
+                                    CornerGestureSettings.INNER_DIAMETER_RANGE_DP.start) / 5f
+                                ).roundToInt() - 1,
                             enabled = serviceEnabled && corner.enabled,
                             label = stringResource(
                                 R.string.corner_gesture_zone_dp_value,
                                 corner.innerDiameterDp.roundToInt()
                             ),
                             onValueChange = onInnerDiameterChange
+                        )
+                    }
+                )
+                add(
+                    settingsCardScopeItem("ring-spacing") {
+                        // 下限 = 气泡直径：小于它相邻两环必然重叠。
+                        val spacingMinDp = (corner.bubbleSizeDp * 2f)
+                            .coerceAtMost(CornerGestureSettings.MAX_RING_SPACING_DP)
+                        SettingsSliderRow(
+                            title = stringResource(R.string.corner_gesture_ring_spacing),
+                            value = corner.ringSpacingDp.coerceIn(
+                                spacingMinDp,
+                                CornerGestureSettings.MAX_RING_SPACING_DP,
+                            ),
+                            valueRange = spacingMinDp..CornerGestureSettings.MAX_RING_SPACING_DP,
+                            // 1dp 一档：层间距是精调项，5dp 档对不齐 58dp 这类值。
+                            steps = (CornerGestureSettings.MAX_RING_SPACING_DP - spacingMinDp).roundToInt().coerceAtLeast(1) - 1,
+                            enabled = serviceEnabled && corner.enabled,
+                            // 顺带把推导出来的轮盘外沿显示出来，尺寸不再靠猜。
+                            label = stringResource(
+                                R.string.corner_gesture_ring_spacing_value,
+                                corner.ringSpacingDp.roundToInt(),
+                                CornerWheelLayout.wheelOuterEdgeDp(corner).roundToInt(),
+                            ),
+                            onValueChange = onRingSpacingChange
                         )
                     }
                 )

@@ -20,7 +20,6 @@ import com.slideindex.app.launcher.showsShellCommandBadge
 import com.slideindex.app.overlay.ShellCommandBadgeRenderer
 import com.slideindex.app.overlay.ShortcutBadgeRenderer
 import com.slideindex.app.settings.CornerGestureSettings
-import com.slideindex.app.settings.CornerRadialMenuCodec
 import com.slideindex.app.shell.ShellCommand
 import com.slideindex.app.ui.gesturepicker.gestureActionLabelText
 import com.slideindex.app.ui.gesturepicker.launchShortcutDisplayLabel
@@ -91,11 +90,8 @@ internal object CornerRadialMenuRenderer {
             typeface = Typeface.DEFAULT_BOLD
         }
 
-        val lastSlot = if (editMode) {
-            CornerRadialMenuCodec.SLOT_COUNT - 1
-        } else {
-            CornerRadialMenuGeometry.lastVisibleSlotIndex(activeLayerCount)
-        }
+        // 编辑模式由调用方把 activeLayerCount 传成"已启用的层数"，因此空槽位只在启用层内渲染。
+        val lastSlot = CornerRadialMenuGeometry.lastVisibleSlotIndex(activeLayerCount)
 
         for (slot in 0..lastSlot) {
             val action = slots.getOrElse(slot) { GestureAction.None }

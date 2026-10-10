@@ -27,11 +27,9 @@ internal object CornerRadialMenuGeometry {
         density = density,
     )
 
-    fun lastVisibleSlotIndex(activeLayerCount: Int): Int = when (activeLayerCount.coerceIn(1, 3)) {
-        1 -> 2
-        2 -> 7
-        else -> CornerRadialMenuCodec.SLOT_COUNT - 1
-    }
+    /** [activeLayerCount] 层以内最后一个可见槽位；层数上限是 5（第 4/5 层需用户开启）。 */
+    fun lastVisibleSlotIndex(activeLayerCount: Int): Int =
+        CornerRadialMenuCodec.lastSlotIndexInLayerCount(activeLayerCount)
 
     fun slotIndexAt(
         anchor: CornerAnchor,
@@ -46,11 +44,8 @@ internal object CornerRadialMenuGeometry {
         activeLayerCount: Int,
         revealProgress: Float = 1f,
     ): Int? {
-        val lastSlot = if (editMode) {
-            CornerRadialMenuCodec.SLOT_COUNT - 1
-        } else {
-            lastVisibleSlotIndex(activeLayerCount)
-        }
+        // 编辑模式下调用方传入的是"已启用的层数"，因此空槽位也只在启用层内可点。
+        val lastSlot = lastVisibleSlotIndex(activeLayerCount)
         val progress = revealProgress.coerceIn(0f, 1f)
         val hitScale = if (editMode) 1.55f else 1.35f
         var bestSlot = -1
@@ -73,10 +68,15 @@ internal object CornerRadialMenuGeometry {
         return bestSlot.takeIf { it >= 0 }
     }
 
-    fun displayLayerCount(activeLayerCount: Int, highlightedSlot: Int): Int {
-        if (highlightedSlot < 0) return activeLayerCount.coerceIn(1, 3)
+    fun displayLayerCount(
+        activeLayerCount: Int,
+        highlightedSlot: Int,
+        maxLayerCount: Int = CornerRadialMenuCodec.BASE_LAYER_COUNT,
+    ): Int {
+        val upperBound = maxLayerCount.coerceIn(1, CornerRadialMenuCodec.layerCount())
+        if (highlightedSlot < 0) return activeLayerCount.coerceIn(1, upperBound)
         val highlightLayer = CornerRadialMenuCodec.layerOf(highlightedSlot) + 1
-        return max(activeLayerCount, highlightLayer).coerceIn(1, 3)
+        return max(activeLayerCount, highlightLayer).coerceIn(1, upperBound)
     }
 
     fun isEditButtonHit(

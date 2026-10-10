@@ -432,16 +432,20 @@ class HomeDetailSettingsViewModel @Inject constructor(
         settingsRepository.setCornerGestureOverrideSystemNav(enabled)
     }
 
-    fun setCornerGestureOuterDiameterDp(value: Float) = launchSettingsWrite {
-        settingsRepository.setCornerGestureOuterDiameterDp(value)
-    }
-
     fun setCornerGestureInnerDiameterDp(value: Float) = launchSettingsWrite {
         settingsRepository.setCornerGestureInnerDiameterDp(value)
     }
 
+    fun setCornerGestureRingSpacingDp(value: Float) = launchSettingsWrite {
+        settingsRepository.setCornerGestureRingSpacingDp(value)
+    }
+
     fun setCornerGestureBubbleSizeDp(value: Float) = launchSettingsWrite {
         settingsRepository.setCornerGestureBubbleSizeDp(value)
+    }
+
+    fun setCornerGestureWheelLayerCount(value: Int) = launchSettingsWrite {
+        settingsRepository.setCornerGestureWheelLayerCount(value)
     }
 
     fun setCornerGestureCancelOutsideWheel(enabled: Boolean) = launchSettingsWrite {
