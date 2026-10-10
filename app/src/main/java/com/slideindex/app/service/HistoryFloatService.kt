@@ -32,6 +32,7 @@ import com.slideindex.app.overlay.OverlayCompose
 import com.slideindex.app.overlay.OverlayComposeOwner
 import com.slideindex.app.overlay.OverlayWindowTypes
 import com.slideindex.app.overlay.history.HistoryFloatContent
+import com.slideindex.app.overlay.history.HistoryHandleCaptureVisibility
 import com.slideindex.app.overlay.history.HistoryNoteSlotWindow
 import com.slideindex.app.overlay.history.HistorySavePeekWindow
 import com.slideindex.app.overlay.history.HistorySaveSignal
@@ -93,8 +94,10 @@ class HistoryFloatService : Service() {
     private val reconcilingExpiredReminders = AtomicBoolean(false)
     /** [HistorySaveSignal] 的普通回调（Service 里没有组合上下文）。 */
     private val saveListener: (String) -> Unit = { text ->
-        // 把手自己都被藏起来时（全屏/横屏/息屏）不要凭空冒出一个预览。
-        if (!hiddenForFullscreen && !hiddenForLandscape && !hiddenForScreenOff) {
+        // 把手自己都被藏起来时（全屏/横屏/息屏/截图）不要凭空冒出一个预览。
+        if (!hiddenForFullscreen && !hiddenForLandscape && !hiddenForScreenOff &&
+            !HistoryHandleCaptureVisibility.isSuppressed
+        ) {
             ensurePeekWindow().show(text, handleCenterY())
         }
     }
@@ -149,6 +152,8 @@ class HistoryFloatService : Service() {
             }
         }
         HistorySaveSignal.addListener(saveListener)
+        // 截图期临时隐藏把手：截图链路与本服务之间没有引用，靠这个进程级对象传一个"重新算可见性"的动作。
+        HistoryHandleCaptureVisibility.setApplier { applyFloatVisibility() }
         runCatching {
             ContextCompat.registerReceiver(
                 this,
@@ -190,6 +195,8 @@ class HistoryFloatService : Service() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(fullscreenCheckRunnable)
+        // 窗马上要摘了：清空截图钩子并复位状态，避免下次启动带着陈旧的隐藏态。
+        HistoryHandleCaptureVisibility.detachApplier()
         runCatching { unregisterReceiver(screenOffReceiver) }
         HistorySaveSignal.removeListener(saveListener)
         slotWindow?.destroy()
@@ -465,7 +472,9 @@ class HistoryFloatService : Service() {
 
     private fun applyFloatVisibility() {
         val view = composeView ?: return
-        val hidden = hiddenForFullscreen || hiddenForLandscape || hiddenForScreenOff
+        val hidden = hiddenForFullscreen || hiddenForLandscape || hiddenForScreenOff ||
+            // 截图期（取词 / 屏内搜索）也要藏：不藏就会被 takeScreenshot 拍进全屏截图。
+            HistoryHandleCaptureVisibility.isSuppressed
         val expectedFlags = if (hidden) {
             BASE_WINDOW_FLAGS or LayoutParams.FLAG_NOT_TOUCHABLE
         } else {

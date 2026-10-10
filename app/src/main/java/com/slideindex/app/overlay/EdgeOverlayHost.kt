@@ -349,6 +349,14 @@ class EdgeOverlayHost(
         overlayManager?.resumeAllEdgeOverlays()
     }
 
+    fun suppressCaptureVisuals() {
+        overlayManager?.suppressCaptureVisuals()
+    }
+
+    fun resumeCaptureVisuals() {
+        overlayManager?.resumeCaptureVisuals()
+    }
+
     fun suspendEdgeCapturesForPassthrough() {
         overlayManager?.suspendEdgeCapturesForPassthrough()
     }

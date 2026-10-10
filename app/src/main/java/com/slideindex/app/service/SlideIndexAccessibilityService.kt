@@ -699,6 +699,18 @@ class SlideIndexAccessibilityService : AccessibilityService() {
             instance?.edgeOverlayHost?.resumeAllEdgeOverlays()
         }
 
+        /**
+         * 取词/截图前隐藏边缘触钮：触钮是画在触钮窗上的，不隐藏就会被 takeScreenshot 拍进全屏截图。
+         * 只隐藏绘制、不摘窗口，用完必须 [restoreEdgeChromeAfterCapture]。
+         */
+        fun suppressEdgeChromeForCapture() {
+            instance?.edgeOverlayHost?.suppressCaptureVisuals()
+        }
+
+        fun restoreEdgeChromeAfterCapture() {
+            instance?.edgeOverlayHost?.resumeCaptureVisuals()
+        }
+
         fun suspendEdgeCapturesForPassthrough() {
             instance?.edgeOverlayHost?.suspendEdgeCapturesForPassthrough()
         }

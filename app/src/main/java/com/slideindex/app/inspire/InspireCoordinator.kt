@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.Choreographer
 import com.slideindex.app.barcode.ZxingBarcodeScanner
 import com.slideindex.app.ocr.OcrDependencyAccess
 import com.slideindex.app.ocr.OcrEngines
@@ -17,11 +18,14 @@ import com.slideindex.app.overlay.FloatBallPickResultPanel
 import com.slideindex.app.overlay.FloatingPointerOverlayWindow
 import com.slideindex.app.overlay.PickResultTextSource
 import com.slideindex.app.overlay.RegionalScreenshotCrop
+import com.slideindex.app.overlay.history.HistoryHandleCaptureVisibility
 import com.slideindex.app.perf.PickPerf
 import com.slideindex.app.service.RegionalScreenshotOcr
+import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.service.AccessibilityTextExtractor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +35,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -39,6 +44,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object InspireCoordinator {
     private const val CAPTURE_HIDE_DELAY_MS = 50L
+    /** [awaitCaptureFrame] 的兜底上限：Choreographer 回调丢了也不能把取词卡住。 */
+    private const val CAPTURE_FRAME_TIMEOUT_MS = 150L
     private const val TRANSITION_MAX_WAIT_MS = 250L
     private const val SCREENSHOT_TIMEOUT_MS = 2_000L
     /** Regional / preview a11y: abandon waiting after this (work may continue in background). */
@@ -664,7 +671,14 @@ object InspireCoordinator {
             FloatingPointerOverlayWindow.suppressForScreenshotCapture()
             FloatBallOverlay.suppressForScreenshotCapture()
             InspireFloating.hide()
+            // 边缘触钮画在触钮窗上，不隐藏同样会被 takeScreenshot 拍进全屏截图。
+            SlideIndexAccessibilityService.suppressEdgeChromeForCapture()
+            // 贴边收纳把手是另一个常驻窗（HistoryFloatService），也会被拍进去。
+            HistoryHandleCaptureVisibility.suppress()
         }
+        // 上面全是 View/窗口操作：要等它们真的合成过一帧再按快门。
+        // 只 delay 一个固定值时，主线程一卡顿就会拍在"浮层还没撤下去"的那一帧上（偶发遮挡）。
+        awaitCaptureFrame()
         delay(CAPTURE_HIDE_DELAY_MS)
         return try {
             block()
@@ -673,11 +687,28 @@ object InspireCoordinator {
                 scope.launch(Dispatchers.Main.immediate) {
                     FloatingPointerOverlayWindow.restoreAfterScreenshotCapture()
                     FloatBallOverlay.restoreAfterScreenshotCapture()
+                    SlideIndexAccessibilityService.restoreEdgeChromeAfterCapture()
+                    HistoryHandleCaptureVisibility.restore()
                 }
             } else {
                 withContext(Dispatchers.Main.immediate) {
                     FloatingPointerOverlayWindow.restoreAfterScreenshotCapture()
                     FloatBallOverlay.restoreAfterScreenshotCapture()
+                    SlideIndexAccessibilityService.restoreEdgeChromeAfterCapture()
+                    HistoryHandleCaptureVisibility.restore()
+                }
+            }
+        }
+    }
+
+    /** 等一次合成帧（对齐 [SlideIndexAccessibilityService.performSmartScreenshot] 的写法）；回调丢失时最多等 150ms。 */
+    private suspend fun awaitCaptureFrame() {
+        withContext(Dispatchers.Main.immediate) {
+            withTimeoutOrNull(CAPTURE_FRAME_TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    Choreographer.getInstance().postFrameCallback {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
                 }
             }
         }

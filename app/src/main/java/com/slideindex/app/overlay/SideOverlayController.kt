@@ -75,7 +75,8 @@ class SideOverlayController(
         return metrics.widthPx to metrics.heightPx
     }
 
-    internal fun shouldShowRuntimeVisuals(): Boolean = !runtimeVisualsSuppressed && !previewMode
+    internal fun shouldShowRuntimeVisuals(): Boolean =
+        !runtimeVisualsSuppressed && !captureVisualsSuppressed && !previewMode
 
     internal fun syncRuntimeVisuals() {
         if (shouldShowRuntimeVisuals()) {
@@ -181,6 +182,20 @@ class SideOverlayController(
 
     internal var runtimeVisualsSuppressed = false
         private set
+
+    /**
+     * 截图期的临时压制（只隐藏触钮的绘制，不动窗口）。
+     *
+     * 和 [runtimeVisualsSuppressed] 分开记：那个是应用级显隐（预览、隐藏应用等），
+     * 截图恢复时只能清自己这一位，否则会把别人压制的触钮误显出来。
+     */
+    private var captureVisualsSuppressed = false
+
+    fun setCaptureVisualsSuppressed(suppressed: Boolean) {
+        if (captureVisualsSuppressed == suppressed) return
+        captureVisualsSuppressed = suppressed
+        syncRuntimeVisuals()
+    }
 
     fun setRuntimeVisualsSuppressed(suppressed: Boolean) {
         runtimeVisualsSuppressed = suppressed

@@ -563,6 +563,15 @@ internal fun GestureSession.dispatchQuickLauncherAction(
         }
         else -> {
             if (confirmHaptic) sessionCallbacks.hapticConfirmLaunch()
+            // 全屏截图取词会在几十毫秒内按快门。这里必须**先**把快速启动器面板收起来再执行动作：
+            // 面板画在 presentation 窗里且自带磨砂模糊，晚一帧收就会被拍进全屏截图
+            // （表现为"截图里有一块被快速启动器模糊遮挡"，且只在卡顿时偶发）。
+            // 会话已经在上面收掉了，返回 false 让调用方不要再收一次。
+            if (action == GestureAction.FullscreenScreenshotPick) {
+                endSession()
+                sessionActionExecutor.execute(action, sessionSettings, anchorRawY = rawY)
+                return false
+            }
             sessionActionExecutor.execute(action, sessionSettings, anchorRawY = rawY)
             return true
         }

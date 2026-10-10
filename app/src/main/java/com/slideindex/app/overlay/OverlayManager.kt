@@ -536,6 +536,25 @@ class OverlayManager(
         topController?.resumeEdgeOverlay()
     }
 
+    /**
+     * 截图前临时隐藏边缘触钮（只隐藏绘制，不摘窗口），截完必须用 [resumeCaptureVisuals] 恢复。
+     * 与 [suspendAllEdgeOverlays] 的区别：那条路会把触钮窗一起摘掉，恢复依赖 trampoline 等状态，
+     * 截图这种"几十毫秒"的短窗口用不起。
+     */
+    fun suppressCaptureVisuals() {
+        leftController?.setCaptureVisualsSuppressed(true)
+        rightController?.setCaptureVisualsSuppressed(true)
+        bottomController?.setCaptureVisualsSuppressed(true)
+        topController?.setCaptureVisualsSuppressed(true)
+    }
+
+    fun resumeCaptureVisuals() {
+        leftController?.setCaptureVisualsSuppressed(false)
+        rightController?.setCaptureVisualsSuppressed(false)
+        bottomController?.setCaptureVisualsSuppressed(false)
+        topController?.setCaptureVisualsSuppressed(false)
+    }
+
     fun suspendEdgeCapturesForPassthrough() {
         leftController?.suspendCaptureForPassthrough()
         rightController?.suspendCaptureForPassthrough()
