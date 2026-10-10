@@ -8,9 +8,10 @@
 # AGENTS.md 的红线把行尾规范成 LF（scripts/normalize-eol.py --write）。
 * text=auto eol=lf
 
-# Windows 批处理历史上需要 CRLF（cmd.exe 解析）
-*.bat  text eol=crlf
-*.cmd  text eol=crlf
+# 说明：本仓库唯一的批处理文件 gradlew.bat 一直以 LF 存储且可正常工作（Gradle wrapper），
+# 因此不设 eol=crlf 例外——否则下次 `git add gradlew.bat` 会静默把它翻成 CRLF，
+# 反而制造一次"整文件改写"的假 diff（正是本文件要避免的情况）。
+# 若将来新增必须用 CRLF 的 .bat/.cmd，请在此单独加一行 `*.bat text eol=crlf` 并同时规范化该文件。
 
 # 二进制：不做任何行尾转换
 *.png    binary
