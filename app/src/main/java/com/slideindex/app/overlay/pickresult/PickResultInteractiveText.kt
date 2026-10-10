@@ -107,6 +107,8 @@ internal fun PickResultInteractiveTextSection(
     textSizeSp: Float = 15f,
     textSource: PickResultTextSource = PickResultTextSource.A11Y,
     ocrAvailable: Boolean = false,
+    /** 屏幕取词：OCR 不可用时也让这颗来源芯片留在左上角（置灰），而不是整颗消失。 */
+    forceOcrChip: Boolean = false,
     ocrLoading: Boolean = false,
     showBackgroundOcrAction: Boolean = false,
     onBackgroundOcr: () -> Unit = {},
@@ -496,6 +498,7 @@ internal fun PickResultInteractiveTextSection(
                         allSelected = allSelected,
                         activeSource = textSource,
                         ocrAvailable = ocrAvailable,
+                        forceOcrChip = forceOcrChip,
                         ocrLoading = ocrLoading,
                         a11yAvailable = a11yAvailable,
                         barcodeResults = barcodeResults,
@@ -568,6 +571,7 @@ internal fun PickResultInteractiveTextSection(
                         allSelected = allSelected,
                         activeSource = textSource,
                         ocrAvailable = ocrAvailable,
+                        forceOcrChip = forceOcrChip,
                         ocrLoading = ocrLoading,
                         a11yAvailable = a11yAvailable,
                         barcodeResults = barcodeResults,
@@ -772,6 +776,8 @@ internal fun PickResultTextToolbar(
     allSelected: Boolean,
     activeSource: PickResultTextSource,
     ocrAvailable: Boolean,
+    /** 屏幕取词：OCR 不可用时也保留这颗芯片（置灰），避免左上角空出一块。 */
+    forceOcrChip: Boolean = false,
     ocrLoading: Boolean = false,
     a11yAvailable: Boolean = true,
     barcodeResults: List<BarcodeScanResult> = emptyList(),
@@ -803,10 +809,13 @@ internal fun PickResultTextToolbar(
     ) {
         // Left side: Section title or Multi-source micro tags
         val showA11yChip = a11yAvailable
-        val showOcrChip = ocrAvailable || ocrLoading
+        // 屏幕取词（点词/截图）时 OCR 这颗常驻：识别开关没开或模型没装就置灰，而不是整颗消失。
+        // 其余入口（分享图片、剪贴板/收纳等）仍按可用性出现。
+        val showOcrChip = ocrAvailable || ocrLoading || forceOcrChip
         val showBarcodeChip = barcodeResults.isNotEmpty()
-        val availableSourceCount = (if (showA11yChip) 1 else 0) + (if (showOcrChip) 1 else 0) + (if (showBarcodeChip) 1 else 0)
-        val hasMultipleSources = showSourceChips && availableSourceCount > 1
+        val visibleSourceCount = (if (showA11yChip) 1 else 0) + (if (showOcrChip) 1 else 0) + (if (showBarcodeChip) 1 else 0)
+        // 1 颗也要画：以前要求 ≥2 才画整行，导致只有无障碍（纯文本）或只有 OCR（纯图片）时左上角空着。
+        val hasVisibleSources = showSourceChips && visibleSourceCount > 0
 
         if (sectionTitle != null) {
             Text(
@@ -814,7 +823,7 @@ internal fun PickResultTextToolbar(
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.5.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        } else if (hasMultipleSources) {
+        } else if (hasVisibleSources) {
             Row(
                 modifier = Modifier
                     .height(36.dp)
@@ -828,7 +837,8 @@ internal fun PickResultTextToolbar(
                     PickResultSourceChip(
                         label = stringResource(R.string.float_ball_pick_source_a11y),
                         selected = activeSource == PickResultTextSource.A11Y,
-                        enabled = true,
+                        // 以前写死 true：单颗来源时这颗不会出现所以看不出来，常驻后必须跟随可用性置灰。
+                        enabled = a11yAvailable,
                         compact = true,
                         onClick = { onSourceChange(PickResultTextSource.A11Y) },
                     )

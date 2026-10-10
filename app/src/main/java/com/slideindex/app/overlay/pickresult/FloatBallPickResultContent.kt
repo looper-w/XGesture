@@ -132,6 +132,12 @@ internal fun FloatBallPickResultContent(
     val showTextSection = hasTextSection || isEditMode
     val hasImageContent = panelImages.isNotEmpty() || screenshot != null
     val textFirstPanelEnabled = appSettings.floatBallPickTextFirstPanel
+    // 屏幕取词入口（悬浮球点词/拖选、区域截图、指针悬停、触钮、通用复制）左上角保留一颗 OCR 来源芯片：
+    // 识别开关没开或模型没装时置灰，而不是消失。分享图片 OCR 与剪贴板/收纳入口不适用，
+    // 它们各自按可用性只显示对应那一颗。
+    val forceOcrSourceChip =
+        contentOrigin == PickResultContentOrigin.SCREEN_PICK && !isShareImageOcr &&
+            !ocrAvailable && !ocrLoading
     val reserveImageSectionPlaceholder = textFirstPanelEnabled &&
         contentOrigin == PickResultContentOrigin.SCREEN_PICK &&
         !hasImageContent
@@ -374,7 +380,11 @@ internal fun FloatBallPickResultContent(
 
     val overlayImeBottom = rememberOverlayImeBottomHeight()
     val hasAuxiliaryCollapse = showImageSection || hasSearchGrid
-    val panelContentHeight = maxPanelHeight - overlayImeBottom
+    // 高度上限按「整屏可用高度」算，键盘让位交给下游各自让一次：
+    // 居中落位由本函数外层的 `padding(bottom = ime)` 让，贴底落位由 PickResultPanelLayout 内层让。
+    // 真机实测（MEIZU 21，居中落位）：键盘弹出时 containerSize 不缩（一直 851dp），ime 读到 320dp；
+    // 若在这里先减一次 ime，卡片只能长到 275dp，反而填不满键盘上方那块空间。
+    val panelContentHeight = maxPanelHeight
 
     val isTabPaged = appSettings.floatBallPickPanelStyle == com.slideindex.app.settings.PickResultPanelStyle.TAB_PAGED && !landscapeDualColumn
     val showTabBar = isTabPaged && hasImageContent && showTextSection
@@ -534,6 +544,7 @@ internal fun FloatBallPickResultContent(
                 textSource = textSource,
                 textSizeSp = textSizeSp,
                 ocrAvailable = ocrAvailable,
+                forceOcrChip = forceOcrSourceChip,
                 a11yAvailable = a11yAvailable,
                 ocrLoading = ocrLoading,
                 isShareImageOcr = isShareImageOcr,

@@ -542,6 +542,7 @@ internal fun PickResultPanelTextSlot(
     ocrAvailable: Boolean,
     a11yAvailable: Boolean,
     ocrLoading: Boolean,
+    forceOcrChip: Boolean = false,
     barcodeResults: List<BarcodeScanResult>,
     showingTranslation: Boolean,
     translateLoading: Boolean,
@@ -619,6 +620,7 @@ internal fun PickResultPanelTextSlot(
                 textSizeSp = textSizeSp,
                 textSource = textSource,
                 ocrAvailable = ocrAvailable,
+                forceOcrChip = forceOcrChip,
                 a11yAvailable = a11yAvailable,
                 ocrLoading = ocrLoading,
                 barcodeResults = barcodeResults,
@@ -785,6 +787,7 @@ internal fun PickResultCollapsePanelColumn(
     ocrAvailable: Boolean,
     a11yAvailable: Boolean,
     ocrLoading: Boolean,
+    forceOcrChip: Boolean = false,
     isShareImageOcr: Boolean,
     barcodeResults: List<BarcodeScanResult>,
     showingTranslation: Boolean,
@@ -960,8 +963,21 @@ internal fun PickResultCollapsePanelColumn(
 
     val useWeightedTextLayout = isEditMode
 
+    // 键盘让位只能让一次。居中落位时外层 [FloatBallPickResultContent] 已经用 `padding(bottom = ime)`
+    // 把整块卡片抬到键盘之上（卡片底边 = 键盘顶边），内层再让一次就等于在卡片里白留一整个键盘高度：
+    // 真机实测 530dp 的卡片里有 320dp 是空白，正文被挤到最小、动作栏顶到正文下面而不是贴卡片底边。
+    // 贴底落位没有外层让位，这一层必须保留。
+    val innerImeBottom =
+        if (appSettings.floatBallPickPanelPlacement ==
+            com.slideindex.app.settings.PickResultPanelPlacement.CENTER
+        ) {
+            0.dp
+        } else {
+            overlayImeBottom
+        }
+
     val fixedPanelHeight = when {
-        isEditMode -> panelContentHeight + overlayImeBottom
+        isEditMode -> panelContentHeight + innerImeBottom
         else -> null
     }
 
@@ -1141,6 +1157,7 @@ internal fun PickResultCollapsePanelColumn(
             textSource = textSource,
             textSizeSp = textSizeSp,
             ocrAvailable = ocrAvailable,
+            forceOcrChip = forceOcrChip,
             a11yAvailable = a11yAvailable,
             ocrLoading = ocrLoading,
             barcodeResults = barcodeResults,
@@ -1238,7 +1255,7 @@ internal fun PickResultCollapsePanelColumn(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = overlayImeBottom)
+            .padding(bottom = innerImeBottom)
             .then(
                 if (fixedPanelHeight != null) {
                     Modifier.height(fixedPanelHeight)
