@@ -1,0 +1,36 @@
+# 仓库文本文件统一 LF（工作区与索引都用 LF），避免 CRLF 造成"整文件改写"的假 diff。
+#
+# 背景：本仓库 core.autocrlf=false（.git/config）。曾经有工具/AI 编辑器把工作区文件整体
+# 写成 CRLF，导致 git add 产出 132/132、447/447 这种整文件假 diff。此文件让 Git 在比较与
+# 读写时统一按 LF 规范化，任何工具翻车都不再污染 diff。
+#
+# 注意：属性只影响 Git 的读写与比较，不会阻止工具往磁盘写 CRLF。提交前仍需按
+# AGENTS.md 的红线把行尾规范成 LF（scripts/normalize-eol.py --write）。
+* text=auto eol=lf
+
+# Windows 批处理历史上需要 CRLF（cmd.exe 解析）
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 二进制：不做任何行尾转换
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.gif    binary
+*.bmp    binary
+*.ico    binary
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
+*.jar    binary
+*.so     binary
+*.dex    binary
+*.apk    binary
+*.aab    binary
+*.zip    binary
+*.jks    binary
+*.keystore binary
+*.onnx   binary
+*.tflite binary
