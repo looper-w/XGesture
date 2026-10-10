@@ -108,7 +108,25 @@ def git_changed_files() -> list[str]:
     return files
 
 
-def process(path: Path, write: bool) -> tuple[str, dict[str, int] | None]:
+def index_blob_for(path: str) -> bytes | None:
+    """返回该路径在 Git 索引里的原始字节；不在索引中则返回 None。"""
+    try:
+        rev = subprocess.run(
+            ["git", "rev-parse", f":{path}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    try:
+        return subprocess.run(
+            ["git", "cat-file", "blob", rev],
+            check=True, capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def process(path: Path, write: bool, index_blob: bytes | None = None) -> tuple[str, dict[str, int] | None]:
     try:
         raw = path.read_bytes()
     except OSError as exc:
@@ -120,6 +138,9 @@ def process(path: Path, write: bool) -> tuple[str, dict[str, int] | None]:
     if fixed == raw:
         return "已是 LF", {"crlf": 0, "lone_cr": 0}
 
+    if index_blob is not None and fixed != index_blob:
+        return "跳过：规范化后与索引内容不一致（疑似有内容改动，未写入）", None
+
     if write:
         # 原子替换：仅内容变化，属性（权限/时间之外）不变
         path.write_bytes(fixed)
@@ -130,6 +151,23 @@ def process(path: Path, write: bool) -> tuple[str, dict[str, int] | None]:
     )
 
 
+def expand_at_files(targets: list[str]) -> list[str]:
+    """把 @路径 展开为文件里逐行列出的路径（用于超长文件列表）。"""
+    expanded: list[str] = []
+    for item in targets:
+        if not item.startswith("@"):
+            expanded.append(item)
+            continue
+        list_path = Path(item[1:])
+        try:
+            lines = list_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            print(f"无法读取列表文件 {list_path}: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        expanded.extend(line.strip() for line in lines if line.strip())
+    return expanded
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="把文本文件行尾规范成 LF（字节级，不重新编码）",
@@ -137,10 +175,12 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="只检查，不写文件")
     group.add_argument("--write", action="store_true", help="就地规范化")
+    parser.add_argument("--require-index-match", action="store_true",
+                        help="仅当规范化后的内容与索引内容完全一致时才写入（防丢改动）")
     parser.add_argument("files", nargs="*", help="文件路径；省略则用 git 当前改动的文件")
     args = parser.parse_args(argv)
 
-    targets = args.files or git_changed_files()
+    targets = expand_at_files(args.files) if args.files else git_changed_files()
     if not targets:
         print("没有需要处理的文件。")
         return 0
@@ -153,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[跳过] {name}: 不是普通文件")
             skipped += 1
             continue
-        message, stats = process(path, args.write)
+        index_blob = index_blob_for(name) if args.require_index_match else None
+        message, stats = process(path, args.write, index_blob)
         print(f"[{ '写' if args.write else '查' }] {name}: {message}")
         if stats is not None and (stats["crlf"] or stats["lone_cr"]) and not args.write:
             need_fix += 1
