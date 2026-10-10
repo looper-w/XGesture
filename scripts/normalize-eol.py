@@ -126,7 +126,8 @@ def index_blob_for(path: str) -> bytes | None:
         return None
 
 
-def process(path: Path, write: bool, index_blob: bytes | None = None) -> tuple[str, dict[str, int] | None]:
+def process(path: Path, write: bool, index_blob: bytes | None = None,
+            allow_index_diff: bool = False) -> tuple[str, dict[str, int] | None]:
     try:
         raw = path.read_bytes()
     except OSError as exc:
@@ -138,7 +139,7 @@ def process(path: Path, write: bool, index_blob: bytes | None = None) -> tuple[s
     if fixed == raw:
         return "已是 LF", {"crlf": 0, "lone_cr": 0}
 
-    if index_blob is not None and fixed != index_blob:
+    if index_blob is not None and fixed != index_blob and not allow_index_diff:
         return "跳过：规范化后与索引内容不一致（疑似有内容改动，未写入）", None
 
     if write:
@@ -177,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--write", action="store_true", help="就地规范化")
     parser.add_argument("--require-index-match", action="store_true",
                         help="仅当规范化后的内容与索引内容完全一致时才写入（防丢改动）")
+    parser.add_argument("--allow-index-diff", action="store_true",
+                        help="允许索引里本来就存着 CRLF 的文件也写入（用于把老 CRLF 提交收进 LF）")
     parser.add_argument("files", nargs="*", help="文件路径；省略则用 git 当前改动的文件")
     args = parser.parse_args(argv)
 
@@ -194,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
             skipped += 1
             continue
         index_blob = index_blob_for(name) if args.require_index_match else None
-        message, stats = process(path, args.write, index_blob)
+        message, stats = process(path, args.write, index_blob, args.allow_index_diff)
         print(f"[{ '写' if args.write else '查' }] {name}: {message}")
         if stats is not None and (stats["crlf"] or stats["lone_cr"]) and not args.write:
             need_fix += 1
