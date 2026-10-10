@@ -157,6 +157,11 @@ internal class GestureSessionThresholdTracker(
     }
 
     fun reset() {
+        // 峰值必须跟"已提示"标记一起归零。它记的是"本次手势滑到过的最远处"，
+        // 跨手势留着会让下一次手指刚按下去（当次距离远低于阈值）就同时越过短/长两档，
+        // 在同一帧连发两声震动（实测：上次滑到 501，下次只滑 91px 也双响）。
+        peakPrimaryDistance = 0f
+        peakCompoundDistance = 0f
         wasAboveShortThreshold = false
         wasAboveLongThreshold = false
         wasAboveCompoundShortThreshold = false
