@@ -21,6 +21,13 @@
 5. **提交前把该文件行尾规范成 LF。**
    - 本仓库存在"HEAD 存 LF、工作区是 CRLF"的文件（`core.autocrlf=false`），直接 `git add` 会产出"整文件改写"的假 diff。
    - 规范方式：只删掉多余 CR（不动编码 / BOM），使 diff 只含真实改动。
+   - 工具：`python scripts/normalize-eol.py --check <文件...>` 查，`--write` 改。
+6. **每次编辑文件后必须当场自检行尾（AI 工具尤其容易踩）。**
+   - 部分 AI 编辑工具在 Windows 上会把**整个文件**重写成 CRLF（不只是改动的行），因此"我只加了几行"也会产出整文件假 diff。
+   - 每次改完文件，立即跑：`python scripts/normalize-eol.py --check <改过的文件>`；报 `需要规范化` 就立刻 `--write` 修回来。
+   - 修改前后各跑一次 `git diff --numstat -- <文件>`：**删除行数必须等于实际改动行数**，出现"整文件行数"即说明被翻了行尾。
+   - 还原行尾只能删 CR：**禁止** `git checkout -- <file>` / `git restore <file>` 从 HEAD 恢复（会丢掉用户改动），也不要借机改编码 / BOM / 代码逻辑。
+   - 汇报时附上该文件的行尾自检结果（改动行数 vs `git diff` 行数）。
 
 ## 二、构建与验证
 
