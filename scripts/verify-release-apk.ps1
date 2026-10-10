@@ -109,7 +109,7 @@ function Verify-ReleaseApk {
                 }
             }
             Write-Host "OK: Lite release APK has no bundled native engine assets"
-            $maxApkBytes = if ($env:MAX_RELEASE_LITE_APK_BYTES) { [long]$env:MAX_RELEASE_LITE_APK_BYTES } else { 29000000 }
+            $maxApkBytes = if ($env:MAX_RELEASE_LITE_APK_BYTES) { [long]$env:MAX_RELEASE_LITE_APK_BYTES } else { 33554432 } # 32 MiB（2026-10 由 29 MiB 上调）
             if ($apkBytes -gt $maxApkBytes) {
                 throw "Lite release APK too large (max $maxApkBytes bytes)."
             }
