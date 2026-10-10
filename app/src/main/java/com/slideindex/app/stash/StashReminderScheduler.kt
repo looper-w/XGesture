@@ -1,9 +1,11 @@
 package com.slideindex.app.stash
 
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /**
  * 闪念条目的「到点提醒」。
@@ -22,6 +24,8 @@ import android.content.Intent
  * 否则重启后补排的是过期状态。
  */
 internal object StashReminderScheduler {
+    private const val TAG = "StashReminderSched"
+
     private const val REQUEST_CODE_BASE = 24_000
 
     /** 「稍后 N 分钟」通知按钮的 `PendingIntent` request code 段位（与闹钟本体错开）。 */
@@ -50,14 +54,41 @@ internal object StashReminderScheduler {
             text = text,
             flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         ) ?: return
-        runCatching {
-            if (alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, pendingIntent)
-            } else {
-                // 没有精确闹钟权限时退化成不精确闹钟：提醒晚几分钟好过完全不响。
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, pendingIntent)
+        setAlarmDegradingToInexact(alarmManager, atEpochMs, pendingIntent)
+    }
+
+    /**
+     * 排一条闹钟：**优先精确，被系统拒绝时退化成不精确**。
+     *
+     * 精确 / 不精确两条路都收在这里，是因为 `canScheduleExactAlarms()` 只是**调用前**的快照：
+     * 权限可能在"判定"与"调用"之间被撤销，个别 ROM 也会口是心非直接抛 `SecurityException`。
+     * 老实现（本文件与 [StashReminderReceiver.snooze] 各写一份 `runCatching { 精确 else 不精确 }`）
+     * 在精确那条一抛时会把 `else` 分支整段跳过 —— 结果是"这次提醒**完全没有闹钟**"，
+     * 而正确结果是"晚几分钟响"。这两者的差别是"功能在不在"，不是体面问题。
+     *
+     * ⚠️ 这里抑制 `MissingPermission` 的理由与 `RemindAlarmScheduler.scheduleExactAlarm` /
+     * `ForegroundAppTracker` 同款：lint 认不出 `canScheduleExactAlarms()` 这种"特殊访问"守卫
+     * （它只认内联的 `checkSelfPermission` 或显式 `catch (SecurityException)`）；
+     * 下面两个 `catch` 是**真的**兜底，不是为了糊弄 lint 才写的。
+     */
+    @SuppressLint("MissingPermission")
+    internal fun setAlarmDegradingToInexact(
+        alarmManager: AlarmManager,
+        triggerAtMs: Long,
+        pendingIntent: PendingIntent,
+    ) {
+        if (alarmManager.canScheduleExactAlarms()) {
+            try {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
+                return
+            } catch (t: Throwable) {
+                Log.w(TAG, "精确闹钟排不上，退化成不精确闹钟 triggerAt=$triggerAtMs", t)
             }
         }
+        // 没有精确闹钟权限时退化成不精确闹钟：提醒晚几分钟好过完全不响。
+        runCatching {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
+        }.onFailure { Log.e(TAG, "不精确闹钟也排不上，这条提醒这次不会响 triggerAt=$triggerAtMs", it) }
     }
 
     /**

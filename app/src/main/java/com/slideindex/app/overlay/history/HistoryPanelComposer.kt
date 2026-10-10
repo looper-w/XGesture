@@ -789,7 +789,12 @@ internal fun DraftBlockEditorSurface(
                                     }
                                 },
                                 focusRequester = focusRequester,
-                                ownFocusRequester = focusRequesters.getOrPut(block.id) { FocusRequester() },
+                                // lint（RememberInComposition）：`FocusRequester()` 不能在组合期直接 new，
+                                // 必须挂在 `remember` 上 —— 按 block.id 记住即可（这份映射本身只增不删，
+                                // 所以 remember 里的实例不会和映射里的漂移）。
+                                ownFocusRequester = remember(block.id) {
+                                    focusRequesters.getOrPut(block.id) { FocusRequester() }
+                                },
                                 pendingCursor = pendingCursor,
                                 onSubmitKey = onSubmitKey,
                                 focusDelegation = focusDelegation,

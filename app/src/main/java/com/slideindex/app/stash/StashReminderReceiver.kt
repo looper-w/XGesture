@@ -1,5 +1,6 @@
 package com.slideindex.app.stash
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,9 +8,12 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.slideindex.app.R
 import com.slideindex.app.overlay.history.StashReminderPendingState
 import com.slideindex.app.service.StashClipboardTrampolineActivity
@@ -68,6 +72,18 @@ class StashReminderReceiver : BroadcastReceiver() {
             Log.w(TAG, "onReceive: 通知总开关是关的（areNotificationsEnabled=false）→ 什么都不发")
             return
         }
+        // ⚠️ lint 的 MissingPermission 只认**内联**的 checkSelfPermission（抽成 helper 它就认不出来，
+        // 见 PermissionHelper.hasNotificationPermission 的同一判据、以及 UpdateNotifications /
+        // OcrModelDownloadNotifications 两处 notifyIfPermitted 的同款写法）。
+        // 上面的 areNotificationsEnabled() 在 13+ 已经涵盖 POST_NOTIFICATIONS，这里是把"权限"这一层
+        // 显式写成 lint 能看见的形状：判据完全等价，不是多一道多余的门。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "onReceive: POST_NOTIFICATIONS 未授权 → 什么都不发")
+            return
+        }
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
@@ -123,14 +139,11 @@ class StashReminderReceiver : BroadcastReceiver() {
             buildIntent(context, entryId, text).apply { removeExtra(EXTRA_SNOOZE_MINUTES) },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        runCatching {
-            if (alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-            } else {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-            }
-            Log.i(TAG, "snooze: entryId=$entryId 已重排到 +${minutes}min")
-        }.onFailure { Log.e(TAG, "snooze 失败 entryId=$entryId", it) }
+        // 排闹钟这一步与 [StashReminderScheduler.schedule] 共用同一份"精确优先、被拒退化"的实现：
+        // 以前两处各写一份 `runCatching { 精确 else 不精确 }`，精确那条一抛，`else` 分支就被整段跳过 ——
+        // 用户点了「稍后」，系统里却**一个闹钟都没有**。
+        StashReminderScheduler.setAlarmDegradingToInexact(alarmManager, at, pending)
+        Log.i(TAG, "snooze: entryId=$entryId 已重排到 +${minutes}min")
         // 镜像写成新时间：重启后补排用的就是它（不然补排会拿 meta 里的旧时间来排，立刻响一次）。
         // ⚠️ 放在排闹钟之后（不放进 runCatching）：排闹钟失败也该把用户点的"稍后"记下来，
         // 否则这次点击在数据上等于没发生。
