@@ -26,6 +26,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.lifecycleScope
 import com.slideindex.app.di.OverlayDependencyAccess
+import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.util.PermissionHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,11 +84,58 @@ class OverlaySidePanelHost(
 
     override val isUserVisible: Boolean
         get() = panelHost.isAttached &&
+            hasLivePanelWindow &&
             panelVisibilityState?.currentState == true &&
             panelHost.isViewVisible()
 
     /** User-visible panel; use [isAttached] for warm-up / attach guards. */
     val isShowing: Boolean get() = isUserVisible
+
+    /**
+     * 壳子（ComposeView）是否**真的挂在窗口上**。
+     *
+     * 为什么不能只看 `panelHost.isAttached`：它只判引用在不在，而系统摘窗（切前台 App / 拉起相册 /
+     * 无障碍实例被重建）之后，`OverlayFullScreenPanelHost` 的 detach 回调是**尽力而为**的兜底 ——
+     * 一旦没兜住，宿主就攥着一个"已经没有窗口的壳子"（真机上连 `isAttachedToWindow` 都跟着骗人，
+     * 所以这里还要求建窗时那一代无障碍实例仍在，见 [attachedGeneration]），于是：
+     * - 本属性让 [isUserVisible] / [isShowing] 立刻回到 false（否则 `beginDragReveal` 里那句
+     *   `if (sideHost.isShowing) return false` 会把跟手拉出**永久**挡掉）；
+     * - [show] / [attachHidden] 开头的 [dropStalePanelShell] 会把壳子丢掉，下一次
+     *   `attachPanelWindow` 自然重建窗口（同仓库的内容面板早有这条兜底，见
+     *   `SearchPanelOverlayWindow.show` 的 stale shell 重建）。
+     */
+    private val hasLivePanelWindow: Boolean
+        get() = panelHost.composeView?.isAttachedToWindow == true &&
+            attachedGeneration == SlideIndexAccessibilityService.overlayHostGeneration()
+
+    /**
+     * 建这个壳子时，依赖的是哪一代无障碍实例（见 `SlideIndexAccessibilityService.overlayHostGeneration`）。
+     *
+     * 这是本文件里**唯一可靠的"窗口还活着吗"判据**：`isAttachedToWindow` 在真机上会骗人 ——
+     * 无障碍实例被系统重建时，窗口在 WindowManager 侧整片摘掉，而客户端**没收到 detach**
+     * （实测：`dumpsys window` 里已经没有面板窗，`isAttachedToWindow` 仍为 true）。
+     */
+    private var attachedGeneration = -1
+
+    /**
+     * 壳子还在手里、窗口却已经没了 → 丢掉它（**必须主线程调用**：[destroy] 自己就是主线程语义）。
+     *
+     * 这是"收纳面板点不开 / 拉不出"那条死状态的唯一出口：不丢的话 [show] 会一直走
+     * `if (panelHost.isAttached)` 那条"已经开着"的分支，只去给一个不存在的窗口设可见性 ——
+     * 零日志、零 toast、窗口永远不出现（§0.16.26）。
+     */
+    private fun dropStalePanelShell(where: String) {
+        val view = panelHost.composeView ?: return
+        val current = SlideIndexAccessibilityService.overlayHostGeneration()
+        val generationStale = attachedGeneration != current
+        if (!generationStale && view.isAttachedToWindow) return
+        Log.w(
+            tag,
+            "$where: stale panel shell (attachedGeneration=$attachedGeneration current=$current " +
+                "attachedToWindow=${view.isAttachedToWindow}) -> drop it, next attach rebuilds",
+        )
+        destroy()
+    }
 
     /**
      * Pre-attaches the panel window (GONE) so float-ball chrome added later stays on top
@@ -109,6 +157,8 @@ class OverlaySidePanelHost(
         dragReveal: () -> Boolean = { false },
         revealProgress: () -> Float = { 0f }
     ): Boolean {
+        // §0.16.26：先把"已经没有窗口的壳子"丢掉，否则下面那条 isAttached 会当成"已经挂着"直接返回。
+        dropStalePanelShell("attachHidden")
         if (panelHost.isAttached) {
             attachedBelowChrome = true
             return true
@@ -172,6 +222,11 @@ class OverlaySidePanelHost(
         }
         dragRevealQuery = dragReveal
         revealProgressQuery = revealProgress
+
+        // §0.16.26：壳子还在手里、窗口已经没了（系统摘窗 / 无障碍实例被重建）→ 先丢掉再重建。
+        // 不这么做的话，下面那条 `if (panelHost.isAttached)` 会把这次"打开"当成"已经开着"，
+        // 只去给一个不存在的窗口设可见性：零日志、零 toast、窗口永远不出来（用户报的"又打不开了"）。
+        dropStalePanelShell("show")
 
         val now = SystemClock.elapsedRealtime()
         if (now - lastShowAttemptElapsedMs < SHOW_DEBOUNCE_MS) {
@@ -309,6 +364,9 @@ class OverlaySidePanelHost(
         } ?: return false
 
         val composeView = panelHost.composeView ?: return false
+        // 记住"这扇窗是挂在哪一代无障碍实例上的"：实例被系统换掉后它的窗口 token 会被整片摘掉，
+        // 而客户端不一定收到 detach，只能靠代次判断（见 [attachedGeneration] / [dropStalePanelShell]）。
+        attachedGeneration = SlideIndexAccessibilityService.overlayHostGeneration()
         backHandler?.detach()
         backHandler = OverlayViewBackHandler(composeView, ::handlePanelBack).also {
             it.attach(requestViewFocus = false)

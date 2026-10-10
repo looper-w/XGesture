@@ -122,6 +122,20 @@ class SlideIndexAccessibilityService : AccessibilityService() {
         @Volatile
         private var instance: SlideIndexAccessibilityService? = null
 
+        /**
+         * 无障碍实例代次：每绑定 / 重绑一个新实例就 +1。
+         *
+         * 为什么需要它：无障碍实例的窗口在实例销毁时会被系统**整片摘掉**，而客户端**不保证**收到
+         * `onViewDetachedFromWindow`（真机实测：`dumpsys window windows` 里已经没有那扇窗，
+         * `View.isAttachedToWindow` 仍是 true）。浮层宿主只能靠"代次变没变"来判断
+         * "我建窗时依赖的那个实例还在不在" —— 见 `OverlaySidePanelHost.attachedGeneration`。
+         */
+        @Volatile
+        private var instanceGeneration: Int = 0
+
+        /** 当前无障碍实例代次（浮层宿主用来丢弃"挂在旧实例窗口上的壳子"）。 */
+        fun overlayHostGeneration(): Int = instanceGeneration
+
         private val mainHandler = Handler(Looper.getMainLooper())
 
         fun dispatchExternalGestureAction(
@@ -840,6 +854,7 @@ class SlideIndexAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        instanceGeneration++
         startOverlayHostLease()
         com.slideindex.app.overlay.OverlayStatePort.publish(this, "onServiceConnected")
         watchdog = SlideIndexAccessibilityWatchdog(this) { edgeOverlayHost }
@@ -945,6 +960,7 @@ class SlideIndexAccessibilityService : AccessibilityService() {
         super.onRebind(intent)
         Log.i(TAG, "onRebind: accessibility service rebound by system")
         instance = this
+        instanceGeneration++
         startOverlayHostLease()
         com.slideindex.app.overlay.OverlayStatePort.publish(this, "onRebind")
         if (edgeOverlayHost == null) {

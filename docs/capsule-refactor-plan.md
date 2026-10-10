@@ -1404,3 +1404,61 @@ detach 时清 `composeViewRef`/`ownerRef`/`layoutParams`/`windowManager`、注�
 
 **验证**：`assembleFullDebug` + `testFullDebugUnitTest` 通过（109 套 / 623 条 / 0 失败），装机无新崩溃。
 端到端待用户手动验：**重启后仍响** · 通知「完成」 · 点稍后后卡片 ⏰ 变成 +10 分钟。
+
+---
+
+### 0.16.26 事故：「收纳面板又打不开了」—— 无障碍实例重建后宿主攥着一个已失效的壳子（已修 + 装机验证）
+
+**现象**（用户报的）：装完包之后，收纳面板从**任何入口**（贴边把手 / 悬浮球 / 手势 / 桌面快捷方式 /
+通知）都打不开 —— 点了没有任何反应，也没有 toast。**同一时刻搜索面板正常**；无障碍在
+`dumpsys accessibility` 里是绑着的（在 `Bound services`、`Crashed services:{}`），
+`enabled_accessibility_services` 里也有本应用。
+
+**现场客观信号（adb 实测）**：
+
+- `dumpsys window windows` 里**本应用没有任何带 `FLAG_ALT_FOCUSABLE_IM` 的窗口** —— 这是侧栏窗的专属指纹
+  （`OverlayPanelLayoutParams.stashClipboardSidePanel`）。它本该在宿主就绪时由
+  `FloatBallOverlay.ensureWindows → FloatBallStashPanel.warmUpBelowChrome` 预建成 GONE 壳子。
+- 用 README 里登记的两条官方路径（`OPEN_STASH_PANEL` / `OPEN_CLIPBOARD_PANEL` → 中转 Activity）连试多次：
+  **窗口始终不出现，而 `FloatBallStashPanel` / `OverlaySidePanelHost` 一条日志都没有**。
+- `OverlaySidePanelHost.show()` 里**唯一**"不建窗、不打日志、直接 `return true`"的分支就是
+  `if (panelHost.isAttached) { … return true }`；而 `OverlayFullScreenPanelHost.isAttached` 只判
+  `composeView != null`。⇒ 宿主攥着一个**已经没有窗口的壳子**，把每次"打开"都当成"已经开着"，
+  只去给一个不存在的窗设可见性。
+
+**根因（真机实测坐实）**：**无障碍实例被系统重建**（装包后系统重绑、`OverlayGuard` /
+`recoverAccessibilityBinding` 的 nudge 重绑都会触发）时，该实例窗口 token 上的窗口被系统**整片摘掉**，
+而客户端**收不到 `onViewDetachedFromWindow`** —— 于是连 `View.isAttachedToWindow` 都还是 `true`。
+实测证据（修复后同一复现路径打出的判读日志）：
+
+```
+W/FloatBallStashPanel: show: stale panel shell
+    (attachedGeneration=1 current=2 attachedToWindow=true) -> drop it, next attach rebuilds
+```
+
+⚠️ 教训：**只判 `View.isAttachedToWindow` 也不够**（客户端会撒谎），必须判"我建窗时依赖的那一代
+无障碍实例还在不在"。第一版兜底就是这么被打回的。
+
+**改法（2 个文件）**：
+
+1. `SlideIndexAccessibilityService`：新增 `instanceGeneration`（`onServiceConnected` / `onRebind` 自增）
+   + `overlayHostGeneration()`。
+2. `OverlaySidePanelHost`：新增 `attachedGeneration`（建窗时那一代）；`show()` / `attachHidden()` 进门前
+   `dropStalePanelShell()` —— 代次不符（或壳子不挂在窗口上）就 `destroy()`、下一次 attach 重建窗口；
+   `isUserVisible` 同时要求代次仍在（否则 `beginDragReveal` 里那句 `if (sideHost.isShowing) return false`
+   会把**跟手拉出永久挡掉**）。
+
+**验证（装机实测，同一条复现路径）**：
+
+1. 装包 → 冷启 → 深链打开：面板正常（`mViewVisibility=0x0 mHasSurface=true` + `ALT_FOCUSABLE_IM`）。
+2. 复现：临时把本应用从 `enabled_accessibility_services` 摘掉 1.5s，再按**原值**写回
+   （= App 自己 `nudgeAccessibilityRebind` 做的同一件事）→ 日志 `onUnbind` → `onServiceConnected`（代次 +1）。
+3. 再打开面板：**面板当场出现**，并打印上面那行 `stale panel shell (attachedGeneration=1 current=2 …)`。
+   修复前同一条路径的表现是"面板永远不出现，只能强停 App / 重启手机"。
+
+**遗留（本轮未做）**：
+
+- `SearchPanelOverlayWindow`（stale shell 那段在 `:121`）与 `FloatBallPickResultPanel` 用的是同一套会撒谎的
+  `isAttachedToWindow` 判据，同一次无障碍重建后可能变成幽灵窗 —— 同样该接代次判据。
+- 中转 Activity 是 `noHistory="true"`、打开序列跑在 `lifecycleScope`（`syncFromSettings` 最坏等 5s）：
+  Activity 被系统收掉会**静默取消**整条打开序列（无日志、无 toast）。本轮**没动**。
