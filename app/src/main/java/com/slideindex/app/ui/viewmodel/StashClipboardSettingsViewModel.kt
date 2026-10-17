@@ -7,6 +7,7 @@ import com.slideindex.app.service.HistoryFloatLifecycle
 import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.ClipboardFloatEntryClickAction
+import com.slideindex.app.settings.ClipboardFloatEntryHoldAction
 import com.slideindex.app.settings.ClipboardFloatEntryLongPressAction
 import com.slideindex.app.settings.ClipboardMonitoringMode
 import com.slideindex.app.settings.ClipboardMonitoringCapture
@@ -232,6 +233,15 @@ class StashClipboardSettingsViewModel @Inject constructor(
             },
         ) {
             settingsRepository.setClipboardFloatCardEntryLongPressAction(action)
+        }
+
+    fun setClipboardFloatCardEntryHoldAction(action: ClipboardFloatEntryHoldAction) =
+        launchOptimisticSettingsWrite(
+            optimisticUpdate = {
+                it.copy(clipboard = it.clipboard.copy(clipboardFloatCardEntryHoldAction = action))
+            },
+        ) {
+            settingsRepository.setClipboardFloatCardEntryHoldAction(action)
         }
 
     fun setClipboardFloatListStyle(style: com.slideindex.app.settings.ClipboardFloatListStyle) = launchOptimisticSettingsWrite(

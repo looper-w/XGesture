@@ -17,6 +17,15 @@ object ClipboardFloatEntryGesturePrefs {
         return prefs[key]?.let { ClipboardFloatEntryClickAction.fromStorage(it) } ?: legacy ?: ClipboardFloatEntryClickAction.PASTE
     }
 
+    /**
+     * 「长按条目」（**原地按住不动**）动作 —— 只有多行卡片样式有这一项
+     * （单行样式不拆"原地长按 / 按住拖动"）。
+     */
+    fun readHoldAction(prefs: Preferences): ClipboardFloatEntryHoldAction =
+        prefs[SettingsPreferenceKeys.CLIPBOARD_FLOAT_ENTRY_HOLD_ACTION_CARD]
+            ?.let { ClipboardFloatEntryHoldAction.fromStorage(it) }
+            ?: ClipboardFloatEntryHoldAction.OPERATE_ENTRY
+
     fun readLongPressAction(
         prefs: Preferences,
         style: ClipboardFloatListStyle,

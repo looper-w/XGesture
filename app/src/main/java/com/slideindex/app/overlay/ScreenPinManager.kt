@@ -24,13 +24,16 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -73,7 +76,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEvent
@@ -89,6 +96,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.slideindex.app.R
@@ -168,6 +176,13 @@ private const val DROP_TARGET_EXIT_HIDE_DELAY_MS = DROP_TARGET_ENTER_MS + 40L
 /** 通知标题用钉图内容 OCR：大图必须先降采样，标题也限长。 */
 private const val NOTIFICATION_OCR_MAX_EDGE_PX = 1280
 private const val NOTIFICATION_TITLE_MAX_CHARS = 24
+/** 右下角手柄拖动缩放的上下限：宽按屏宽、高按屏高；保持比例时按"宽"这一口径统一夹取。 */
+private const val PIN_RESIZE_MIN_WIDTH_DP = 80f
+private const val PIN_RESIZE_MIN_HEIGHT_DP = 60f
+private const val PIN_RESIZE_MAX_WIDTH_FRACTION = 0.95f
+private const val PIN_RESIZE_MAX_HEIGHT_FRACTION = 0.9f
+/** 右下角缩放手柄：视觉圆弧半径（dp）。触摸区按它 +12dp、且不小于 28dp。 */
+private const val PIN_RESIZE_HANDLE_RADIUS_DP = 12f
 
 private fun pinOverlayFlags(): Int {
     return WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -732,8 +747,12 @@ object ScreenPinManager {
                 ScreenPinContent(
                     instance = instance,
                     onTap = { onPinTap(instance.id) },
-                    onDoubleTap = { togglePinDoubleTapZoom(instance.id) },
+                    // 双击 = 直接关掉这颗钉图（原来双击是「放大 / 还原」，按需求取消）。
+                    onDoubleTap = { removePin(instance.id) },
                     onZoom = { zoomFactor -> zoomPin(instance.id, zoomFactor) },
+                    // 右下角手柄拖动改尺寸（与双指缩放共用同一套显示尺寸字段）。
+                    onResize = { dx, dy -> resizePinByDrag(instance.id, dx, dy) },
+                    // 长按拖动挪窗口：拖影用上游那套「先录一份钉图快照」（见 HistoryCardSnapshot）。
                     onLongPressDrag = {
                         dragScope.launch { startPinDrag(instance, dragSnapshot.capture()) }
                     },
@@ -788,39 +807,48 @@ object ScreenPinManager {
         runCatching { windowManager?.updateViewLayout(instance.composeView, instance.params) }
     }
 
-    private fun togglePinDoubleTapZoom(pinId: String) {
+    /**
+     * 右下角手柄拖动 → 调整钉住内容的显示尺寸。
+     *
+     * - 图片钉图：**保持图片原始宽高比**，把「当前尺寸 + 本次拖动增量」当成候选框，横竖两个方向
+     *   都参与决定最终大小（比例由 [resolvePinResizeByDrag] 保证）；
+     * - 文字 / 富内容：宽高各自随拖动变化（不约束比例）。
+     * 与双指缩放共用 `display*` / `expanded*` 四个字段，口径完全一致。
+     */
+    private fun resizePinByDrag(pinId: String, dx: Float, dy: Float) {
         val instance = pins[pinId] ?: return
         if (instance.uiState.isEdgeDocked.value) return
         val context = appContext ?: return
         val metrics = context.resources.displayMetrics
 
-        val baseW = if (instance.uiState.initialWidthPx > 0) instance.uiState.initialWidthPx else instance.uiState.expandedWidthPx
-        val baseH = if (instance.uiState.initialHeightPx > 0) instance.uiState.initialHeightPx else instance.uiState.expandedHeightPx
-        if (baseW <= 0 || baseH <= 0) return
-
-        val currentW = instance.uiState.displayWidthPx.intValue
-        val isZoomedIn = currentW > (baseW * 1.25f)
-
-        val targetW: Int
-        val targetH: Int
-        if (isZoomedIn) {
-            targetW = baseW
-            targetH = baseH
-        } else {
-            val maxW = (metrics.widthPixels * 0.95f).roundToInt()
-            val aspectRatio = baseW.toFloat() / baseH.toFloat()
-            targetW = (baseW * 1.8f).roundToInt().coerceAtMost(maxW)
-            targetH = (targetW / aspectRatio).roundToInt().coerceAtLeast(1)
-        }
-
-        animatePinLayout(
-            instance = instance,
-            targetX = instance.params.x,
-            targetY = instance.params.y,
-            targetDisplayW = targetW,
-            targetDisplayH = targetH
+        val currentW = instance.uiState.displayWidthPx.intValue.coerceAtLeast(1)
+        val currentH = instance.uiState.displayHeightPx.intValue.coerceAtLeast(1)
+        val (newW, newH) = resolvePinResizeByDrag(
+            currentW = currentW,
+            currentH = currentH,
+            deltaW = dx,
+            deltaH = dy,
+            naturalAspect = pinNaturalAspect(instance),
+            minW = (PIN_RESIZE_MIN_WIDTH_DP * metrics.density).roundToInt().coerceAtLeast(1),
+            maxW = (metrics.widthPixels * PIN_RESIZE_MAX_WIDTH_FRACTION).roundToInt().coerceAtLeast(1),
+            minH = (PIN_RESIZE_MIN_HEIGHT_DP * metrics.density).roundToInt().coerceAtLeast(1),
+            maxH = (metrics.heightPixels * PIN_RESIZE_MAX_HEIGHT_FRACTION).roundToInt().coerceAtLeast(1),
         )
+        if (newW == currentW && newH == currentH) return
+
+        instance.uiState.displayWidthPx.intValue = newW
+        instance.uiState.displayHeightPx.intValue = newH
+        instance.uiState.expandedWidthPx = newW
+        instance.uiState.expandedHeightPx = newH
+        applyPinWindowLayout(instance)
+        runCatching { windowManager?.updateViewLayout(instance.composeView, instance.params) }
     }
+
+    /** 需要保持比例的钉图：只有纯图片有「原始比例」；文字 / 富内容返回 null（自由缩放）。 */
+    private fun pinNaturalAspect(instance: PinInstance): Float? =
+        (instance.content as? PinContent.Image)
+            ?.bitmap
+            ?.let { it.width.toFloat() / it.height.coerceAtLeast(1) }
 
     private fun undockForDrag(instance: PinInstance) {
         instance.uiState.animator?.cancel()
@@ -1605,6 +1633,8 @@ private fun ScreenPinContent(
     onTap: () -> Unit,
     onDoubleTap: () -> Unit,
     onZoom: (zoomFactor: Float) -> Unit,
+    /** 右下角手柄拖动增量（px）：改内容显示尺寸，比例约束由 [ScreenPinManager] 处理。 */
+    onResize: (dx: Float, dy: Float) -> Unit,
     onLongPressDrag: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (dx: Float, dy: Float, localX: Float, localY: Float) -> Unit,
@@ -1678,105 +1708,126 @@ private fun ScreenPinContent(
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        when (val content = instance.content) {
-            is PinContent.Text -> {
-                val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
-                val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
-                Box(
-                    modifier = Modifier
-                        .size(contentW, contentH)
-                        .alpha(alpha)
-                        .shadow(6.dp, RoundedCornerShape(10.dp))
-                        .clip(RoundedCornerShape(10.dp))
-                        // 整块内容录一份：长按拖拽时钉图原样跟着手指（见 HistoryCardSnapshot）。
-                        .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = content.body,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
+        // 内容区 + 右下角缩放手柄：手柄叠在内容之上（自己的 pointerInput 并 consume 拖动，
+        // 因此父级「拖动挪窗口」不会同时生效）；贴边细条时不显示。
+        Box {
+            when (val content = instance.content) {
+                is PinContent.Text -> {
+                    val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
+                    val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
+                    Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(scrollState, enabled = scrollEnabled)
-                    )
+                            .size(contentW, contentH)
+                            .alpha(alpha)
+                            .shadow(6.dp, RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(10.dp))
+                            // 整块内容录一份：长按拖拽时钉图原样跟着手指（见 HistoryCardSnapshot）。
+                            .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = content.body,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState, enabled = scrollEnabled)
+                        )
+                    }
                 }
-            }
-            is PinContent.Image -> {
-                val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
-                val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
-                // ⚠️ 这里多包一层 Box 只为一件事：让"录一份"的那层**包住图片本身** ——
-                // 直接把修饰符挂在 `Image` 上不一定录得到（图片是 Image 内部画的）。
-                Box(
-                    modifier = Modifier
-                        .size(contentW, contentH)
-                        .alpha(alpha)
-                        .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
-                ) {
-                    Image(
-                        bitmap = content.bitmap.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = if (content.screenRect != null) {
-                            val bmpAspect =
-                                content.bitmap.width.toFloat() / content.bitmap.height.coerceAtLeast(1)
-                            val boxAspect = displayW.toFloat() / displayH.coerceAtLeast(1)
-                            if (kotlin.math.abs(bmpAspect - boxAspect) <= 0.02f) {
-                                ContentScale.FillBounds
+
+                is PinContent.Image -> {
+                    val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
+                    val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
+                    // ⚠️ 这里多包一层 Box 只为一件事：让"录一份"的那层**包住图片本身** ——
+                    // 直接把修饰符挂在 `Image` 上不一定录得到（图片是 Image 内部画的）。
+                    Box(
+                        modifier = Modifier
+                            .size(contentW, contentH)
+                            .alpha(alpha)
+                            .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
+                    ) {
+                        Image(
+                            bitmap = content.bitmap.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // 钉在屏幕上时给图片描一圈细灰边（原来图片是裸图，容易和背景糊在一起）。
+                                .border(
+                                    width = 0.8.dp,
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                ),
+                            contentScale = if (content.screenRect != null) {
+                                val bmpAspect =
+                                    content.bitmap.width.toFloat() / content.bitmap.height.coerceAtLeast(1)
+                                val boxAspect = displayW.toFloat() / displayH.coerceAtLeast(1)
+                                if (kotlin.math.abs(bmpAspect - boxAspect) <= 0.02f) {
+                                    ContentScale.FillBounds
+                                } else {
+                                    ContentScale.Fit
+                                }
                             } else {
                                 ContentScale.Fit
                             }
-                        } else {
-                            ContentScale.Fit
-                        }
-                    )
+                        )
+                    }
                 }
-            }
-            is PinContent.Rich -> {
-                val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
-                val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
-                Box(
-                    modifier = Modifier
-                        .size(contentW, contentH)
-                        .alpha(alpha)
-                        .shadow(6.dp, RoundedCornerShape(10.dp))
-                        .clip(RoundedCornerShape(10.dp))
-                        // 整块内容录一份：长按拖拽时钉图原样跟着手指（见 HistoryCardSnapshot）。
-                        .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(12.dp)
-                ) {
-                    Column(
+
+                is PinContent.Rich -> {
+                    val contentW = with(density) { displayW.toDp().coerceAtLeast(1.dp) }
+                    val contentH = with(density) { displayH.toDp().coerceAtLeast(1.dp) }
+                    Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(scrollState, enabled = scrollEnabled),
-                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            .size(contentW, contentH)
+                            .alpha(alpha)
+                            .shadow(6.dp, RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(10.dp))
+                            // 整块内容录一份：长按拖拽时钉图原样跟着手指（见 HistoryCardSnapshot）。
+                            .then(if (snapshot != null) Modifier.recordHistoryCardSnapshot(snapshot) else Modifier)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(12.dp)
                     ) {
-                        content.blocks.forEach { block ->
-                            when (block) {
-                                is PinDisplayBlock.Text -> {
-                                    Text(
-                                        text = block.body,
-                                        fontSize = 15.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                is PinDisplayBlock.Image -> {
-                                    Image(
-                                        bitmap = block.bitmap.asImageBitmap(),
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(max = RICH_PIN_IMAGE_MAX_HEIGHT_DP.dp)
-                                            .clip(RoundedCornerShape(8.dp)),
-                                        contentScale = ContentScale.Fit
-                                    )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState, enabled = scrollEnabled),
+                            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                        ) {
+                            content.blocks.forEach { block ->
+                                when (block) {
+                                    is PinDisplayBlock.Text -> {
+                                        Text(
+                                            text = block.body,
+                                            fontSize = 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    is PinDisplayBlock.Image -> {
+                                        Image(
+                                            bitmap = block.bitmap.asImageBitmap(),
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = RICH_PIN_IMAGE_MAX_HEIGHT_DP.dp)
+                                                .clip(RoundedCornerShape(8.dp)),
+                                            contentScale = ContentScale.Fit
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            if (!isDocked) {
+                PinResizeCornerHandle(
+                    color = MaterialTheme.colorScheme.primary,
+                    // 图片是直角裸图 → 手柄画直角折角；文字/富内容有 10dp 圆角 → 保留圆弧。
+                    squareCorner = instance.content is PinContent.Image,
+                    onResize = onResize,
+                )
             }
         }
         if (!isDocked) {
@@ -1795,6 +1846,69 @@ private fun ScreenPinContent(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 钉住窗口右下角的拖拽缩放手柄。
+ *
+ * 视觉与交互对齐剪贴板小窗的 `ClipboardFloatResizeCornerHandle`：右下角一圈 90° 圆弧，
+ * 外加一个比图形更大的透明触摸区（≥28dp）。拖动只回传增量，尺寸计算（含保持图片比例）
+ * 交给 [ScreenPinManager.resizePinByDrag]。
+ */
+@Composable
+private fun BoxScope.PinResizeCornerHandle(
+    color: Color,
+    /** true = 直角折角（图片钉图：图片本身是直角裸图）；false = 圆弧（文字/富内容带圆角）。 */
+    squareCorner: Boolean,
+    onResize: (dx: Float, dy: Float) -> Unit,
+) {
+    val cornerRadius = PIN_RESIZE_HANDLE_RADIUS_DP.dp
+    val touchSize = (PIN_RESIZE_HANDLE_RADIUS_DP + 12f).coerceAtLeast(28f).dp
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .size(touchSize)
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onResize(dragAmount.x, dragAmount.y)
+                }
+            },
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+        Canvas(modifier = Modifier.size(cornerRadius)) {
+            val radius = size.minDimension
+            val strokeWidth = 2.dp.toPx()
+            val inset = strokeWidth / 2f
+            if (squareCorner) {
+                // 直角折角：贴着右下角画两条互相垂直的短线，与图片的直角边缘对齐。
+                drawLine(
+                    color = color,
+                    start = Offset(inset, radius - inset),
+                    end = Offset(radius - inset, radius - inset),
+                    strokeWidth = strokeWidth,
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = color,
+                    start = Offset(radius - inset, inset),
+                    end = Offset(radius - inset, radius - inset),
+                    strokeWidth = strokeWidth,
+                    cap = StrokeCap.Round,
+                )
+            } else {
+                drawArc(
+                    color = color,
+                    startAngle = 0f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft = Offset(-radius + inset, -radius + inset),
+                    size = Size((radius - inset) * 2f, (radius - inset) * 2f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+                )
             }
         }
     }

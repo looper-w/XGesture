@@ -617,6 +617,7 @@ internal object SettingsSnapshotReader {
                 prefs,
                 ClipboardFloatListStyle.CARD,
             ),
+            clipboardFloatCardEntryHoldAction = ClipboardFloatEntryGesturePrefs.readHoldAction(prefs),
             clipboardFloatListStyleId = prefs[SettingsPreferenceKeys.CLIPBOARD_FLOAT_LIST_STYLE]
                 ?: ClipboardFloatListStyle.SINGLE_LINE.id,
             clipboardFloatPortraitGeometry = ClipboardFloatGeometryPrefs.readOrientationGeometry(

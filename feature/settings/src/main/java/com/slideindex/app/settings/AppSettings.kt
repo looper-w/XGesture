@@ -368,6 +368,7 @@ data class AppSettings(
     val clipboardFloatSingleLineEntryLongPressAction get() = clipboard.clipboardFloatSingleLineEntryLongPressAction
     val clipboardFloatCardEntryClickAction get() = clipboard.clipboardFloatCardEntryClickAction
     val clipboardFloatCardEntryLongPressAction get() = clipboard.clipboardFloatCardEntryLongPressAction
+    val clipboardFloatCardEntryHoldAction get() = clipboard.clipboardFloatCardEntryHoldAction
     val clipboardFloatListStyleId get() = clipboard.clipboardFloatListStyleId
     val clipboardFloatListStyle get() = ClipboardFloatListStyle.fromId(clipboardFloatListStyleId)
     val clipboardFloatPortraitGeometry get() = clipboard.clipboardFloatPortraitGeometry

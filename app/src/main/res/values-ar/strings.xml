@@ -4240,6 +4240,8 @@
     <string name="float_ball_pick_image_toolbar_position_right">يمين</string>
     <string name="clipboard_float_gesture_click">الضغط على عنصر</string>
     <string name="clipboard_float_gesture_long_press">الضغط المطوّل على عنصر</string>
+    <string name="clipboard_float_gesture_hold_drag">الضغط مع السحب</string>
+    <string name="clipboard_float_hold_action_operate_entry">إجراءات العنصر</string>
     <string name="clipboard_float_long_press_action_word_tap">اختيار الكلمة / التقسيم</string>
     <string name="clipboard_float_long_press_action_drag_drop">السحب والإفلات</string>
     <string name="clipboard_float_long_press_action_none">بلا</string>

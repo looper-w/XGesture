@@ -61,6 +61,43 @@ fun resolvePinImageDisplaySizePx(
     return max((bmpW * scale).roundToInt(), 1) to max((bmpH * scale).roundToInt(), 1)
 }
 
+/**
+ * 右下角手柄拖动 → 新的内容显示尺寸（px）。
+ *
+ * [naturalAspect] 非空（图片钉图）时**保持该宽高比**：把「当前尺寸 + 拖动增量」当成候选框，
+ * 两轴各自算出的缩放**取平均**（拖哪个方向都有效，横竖两个方向都会参与决定最终大小）；
+ * 为空（文字 / 富内容）时宽高各自随拖动变化。
+ *
+ * 夹取时统一换算到「宽」这一个口径（[minW]/[minH]、[maxW]/[maxH] 同时满足），
+ * 保证保持比例时不会把任一边挤到上下限之外。
+ */
+fun resolvePinResizeByDrag(
+    currentW: Int,
+    currentH: Int,
+    deltaW: Float,
+    deltaH: Float,
+    naturalAspect: Float?,
+    minW: Int,
+    maxW: Int,
+    minH: Int,
+    maxH: Int,
+): Pair<Int, Int> {
+    val safeW = currentW.coerceAtLeast(1)
+    val safeH = currentH.coerceAtLeast(1)
+    val candidateW = (safeW + deltaW.roundToInt()).coerceAtLeast(1)
+    val candidateH = (safeH + deltaH.roundToInt()).coerceAtLeast(1)
+
+    val aspect = naturalAspect?.takeIf { it.isFinite() && it > 0f }
+        ?: return candidateW.coerceIn(minW, maxW) to candidateH.coerceIn(minH, maxH)
+
+    val scale = (candidateW.toFloat() / safeW + candidateH.toFloat() / safeH) / 2f
+    val driveLo = maxOf(minW.toFloat(), minH * aspect)
+    val driveHi = minOf(maxW.toFloat(), maxH * aspect)
+    val targetW = (safeW * scale).coerceIn(minOf(driveLo, driveHi), maxOf(driveLo, driveHi))
+    return targetW.roundToInt().coerceAtLeast(1) to
+        (targetW / aspect).roundToInt().coerceAtLeast(1)
+}
+
 fun buildScreenshotLayoutMeta(
     bitmap: Bitmap,
     screenWidthPx: Int,

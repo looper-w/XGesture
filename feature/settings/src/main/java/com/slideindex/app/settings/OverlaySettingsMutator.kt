@@ -1224,6 +1224,10 @@ class OverlaySettingsMutator @Inject constructor(
         it[SettingsPreferenceKeys.CLIPBOARD_FLOAT_ENTRY_LONG_PRESS_ACTION_CARD] = action.storageValue
     }
 
+    suspend fun setClipboardFloatCardEntryHoldAction(action: ClipboardFloatEntryHoldAction) = editor.edit {
+        it[SettingsPreferenceKeys.CLIPBOARD_FLOAT_ENTRY_HOLD_ACTION_CARD] = action.storageValue
+    }
+
     suspend fun setClipboardFloatListStyle(style: ClipboardFloatListStyle) = editor.edit {
         it[SettingsPreferenceKeys.CLIPBOARD_FLOAT_LIST_STYLE] = style.id
     }

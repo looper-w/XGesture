@@ -3859,6 +3859,8 @@
     <string name="clipboard_float_click_action_title">单击条目</string>
     <string name="clipboard_float_gesture_click">单击条目</string>
     <string name="clipboard_float_gesture_long_press">长按条目</string>
+    <string name="clipboard_float_gesture_hold_drag">按住拖动</string>
+    <string name="clipboard_float_hold_action_operate_entry">操作条目</string>
     <string name="clipboard_float_long_press_action_word_tap">取词分词</string>
     <string name="clipboard_float_long_press_action_drag_drop">拖拽投放</string>
     <string name="clipboard_float_long_press_action_none">无</string>
