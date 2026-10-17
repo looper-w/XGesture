@@ -19,6 +19,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -39,17 +41,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.ViewHeadline
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,6 +66,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.ui.unit.sp
+import com.slideindex.app.settings.ClipboardFloatEntryHoldAction
 import com.slideindex.app.settings.ClipboardFloatEntryLongPressAction
 import com.slideindex.app.settings.ClipboardFloatListStyle
 import androidx.compose.runtime.Composable
@@ -72,6 +82,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,16 +92,21 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -120,8 +136,10 @@ import com.slideindex.app.overlay.history.rememberHistoryCardSnapshot
 import com.slideindex.app.settings.ClipboardFloatWindowMetrics
 import com.slideindex.app.ui.theme.OverlayAwareModuleTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -232,6 +250,7 @@ fun ClipboardFloatRoot(
     windowWidthDp: Int,
     listStyle: ClipboardFloatListStyle,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    entryHoldAction: ClipboardFloatEntryHoldAction,
     onOpenExpanded: () -> Unit,
     onTogglePin: () -> Unit,
     onAlphaChange: (Float) -> Unit = {},
@@ -248,6 +267,7 @@ fun ClipboardFloatRoot(
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
+    onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
     onUserInteraction: () -> Unit = {}
 ) {
     val glass = rememberClipboardFloatGlass(
@@ -255,16 +275,23 @@ fun ClipboardFloatRoot(
         initialRadiusDp = blurRadiusDp,
     )
     OverlayAwareModuleTheme {
+        // 「操作条目」那排按钮的展开状态（列表级）：只要按下点不在按钮上，就收起。
+        val actionRow = remember { ClipboardFloatActionRowState() }
+        // 上游新增的玻璃层容器：必须保留，否则卡片/chip 的模糊会整体失效。
         CompositionLocalProvider(LocalClipboardFloatGlass provides glass) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
+                    .pointerInput(actionRow) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 if (event.type == PointerEventType.Press) {
                                     onUserInteraction()
+                                    val pressPosition = event.changes.firstOrNull()?.position
+                                    if (pressPosition != null && !actionRow.contains(pressPosition)) {
+                                        actionRow.collapse()
+                                    }
                                 }
                             }
                         }
@@ -284,6 +311,8 @@ fun ClipboardFloatRoot(
                         windowWidthDp = windowWidthDp,
                         listStyle = listStyle,
                         entryLongPressAction = entryLongPressAction,
+                        entryHoldAction = entryHoldAction,
+                        actionRow = actionRow,
                         onTogglePin = onTogglePin,
                         onAlphaChange = onAlphaChange,
                         onOpenStashPanel = onOpenStashPanel,
@@ -299,6 +328,7 @@ fun ClipboardFloatRoot(
                         onEntryLongClick = onEntryLongClick,
                         onEntryDragStart = onEntryDragStart,
                         onEntryDragEnd = onEntryDragEnd,
+                        onEntryAction = onEntryAction,
                     )
                 }
             }
@@ -412,6 +442,8 @@ private fun ClipboardFloatExpandedChrome(
     windowWidthDp: Int,
     listStyle: ClipboardFloatListStyle,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    entryHoldAction: ClipboardFloatEntryHoldAction,
+    actionRow: ClipboardFloatActionRowState,
     onTogglePin: () -> Unit,
     onAlphaChange: (Float) -> Unit,
     onOpenStashPanel: () -> Unit,
@@ -427,6 +459,7 @@ private fun ClipboardFloatExpandedChrome(
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
+    onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
 ) {
     val scheme = MiuixTheme.colorScheme
     val glass = LocalClipboardFloatGlass.current
@@ -619,10 +652,13 @@ private fun ClipboardFloatExpandedChrome(
                     windowWidthDp = windowWidthDp,
                     listStyle = listStyle,
                     entryLongPressAction = entryLongPressAction,
+                    entryHoldAction = entryHoldAction,
+                    actionRow = actionRow,
                     onEntryClick = onEntryClick,
                     onEntryLongClick = onEntryLongClick,
                     onEntryDragStart = onEntryDragStart,
                     onEntryDragEnd = onEntryDragEnd,
+                    onEntryAction = onEntryAction,
                 )
             }
             }
@@ -677,10 +713,13 @@ private fun ClipboardFloatContentSection(
     windowWidthDp: Int,
     listStyle: ClipboardFloatListStyle,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    entryHoldAction: ClipboardFloatEntryHoldAction,
+    actionRow: ClipboardFloatActionRowState,
     onEntryClick: (ClipboardEntry) -> Unit,
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
+    onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
 ) {
     val entries by listController.filteredEntries.collectAsState()
     val loading by listController.loading.collectAsState()
@@ -718,10 +757,13 @@ private fun ClipboardFloatContentSection(
                 windowWidthDp = windowWidthDp,
                 columnCount = columnCount,
                 entryLongPressAction = entryLongPressAction,
+                entryHoldAction = entryHoldAction,
+                actionRow = actionRow,
                 onEntryClick = onEntryClick,
                 onEntryLongClick = onEntryLongClick,
                 onEntryDragStart = onEntryDragStart,
                 onEntryDragEnd = onEntryDragEnd,
+                onEntryAction = onEntryAction,
             )
         }
         ClipboardFloatListStyle.SINGLE_LINE -> {
@@ -907,12 +949,22 @@ private fun ClipboardFloatGrid(
     windowWidthDp: Int,
     columnCount: Int,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    entryHoldAction: ClipboardFloatEntryHoldAction,
+    actionRow: ClipboardFloatActionRowState,
     onEntryClick: (ClipboardEntry) -> Unit,
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
+    onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
 ) {
+    val gridState = rememberLazyGridState()
+    // 滚动列表也是"其他交互" → 收起操作按钮。
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.isScrollInProgress }
+            .collect { scrolling -> if (scrolling) actionRow.collapse() }
+    }
     LazyVerticalGrid(
+        state = gridState,
         columns = GridCells.Fixed(columnCount),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(10.dp),
@@ -925,8 +977,24 @@ private fun ClipboardFloatGrid(
                 columnCount = columnCount,
                 windowWidthDp = windowWidthDp,
                 entryLongPressAction = entryLongPressAction,
-                onClick = { onEntryClick(entry) },
-                onWordTapLongClick = { onEntryLongClick(entry) },
+                entryHoldAction = entryHoldAction,
+                actionRowVisible = actionRow.entryId == entry.id,
+                onActionRowBounds = { bounds -> actionRow.boundsInWindow = bounds },
+                onClick = {
+                    actionRow.collapse()
+                    onEntryClick(entry)
+                },
+                onWordTapLongClick = {
+                    actionRow.collapse()
+                    onEntryLongClick(entry)
+                },
+                onStationaryLongPress = {
+                    if (entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY) {
+                        actionRow.entryId = entry.id
+                    }
+                },
+                onDragStartAction = { actionRow.collapse() },
+                onEntryAction = { action -> onEntryAction(entry, action) },
                 onEntryDragStart = onEntryDragStart,
                 onEntryDragEnd = onEntryDragEnd,
             )
@@ -941,8 +1009,18 @@ private fun ClipboardFloatEntryCard(
     columnCount: Int,
     windowWidthDp: Int,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    entryHoldAction: ClipboardFloatEntryHoldAction,
+    /** 「操作条目」那排按钮是否展开（由列表级状态决定）。 */
+    actionRowVisible: Boolean,
+    /** 把这排按钮的窗口坐标回报给列表级状态（"点别处即收起"的命中判断用）。 */
+    onActionRowBounds: (Rect) -> Unit,
     onClick: () -> Unit,
     onWordTapLongClick: () -> Unit,
+    /** 原地长按（按住不动）：展开操作按钮。 */
+    onStationaryLongPress: () -> Unit,
+    /** 「按住拖动」真的开始拖动：先收起操作按钮。 */
+    onDragStartAction: () -> Unit,
+    onEntryAction: (ClipboardFloatEntryAction) -> Unit,
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
 ) {
@@ -982,24 +1060,38 @@ private fun ClipboardFloatEntryCard(
             .fillMaxWidth()
             // 整张卡录一份：长按拖拽时"把整张卡拿起来"（见 HistoryCardSnapshot）。
             .recordHistoryCardSnapshot(dragSnapshot)
-            .clipboardFloatEntryGestures(
-                entryLongPressAction = entryLongPressAction,
+            .clipboardFloatCardGestures(
+                dragAction = entryLongPressAction,
                 onClick = onClick,
-                onWordTapLongClick = onWordTapLongClick,
-                onDragLongClick = {
-                    // ⚠️ 先起协程：快照是 suspend 抓的（得先让这一帧画进 GraphicsLayer）。
-                    dragScope.launch {
-                        startClipboardFloatEntryDrag(
-                            view = view,
-                            context = context,
-                            entry = entry,
-                            thumbnail = thumbnail,
-                            onDragStart = onEntryDragStart,
-                            onDragEnd = onEntryDragEnd,
-                            snapshot = dragSnapshot.capture(),
-                        )
+                onStationaryLongPress = {
+                    // 「长按条目」= 原地按住不动 → 展开操作按钮（目前只有这一档动作）。
+                    if (entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY) {
+                        onStationaryLongPress()
                     }
-                }
+                },
+                onDragAction = {
+                    // 「按住拖动」：任何拖动都先收起操作按钮。
+                    onDragStartAction()
+                    when (entryLongPressAction) {
+                        ClipboardFloatEntryLongPressAction.DRAG_DROP -> {
+                            // ⚠️ 先起协程：快照是 suspend 抓的（得先让这一帧画进 GraphicsLayer）。
+                            dragScope.launch {
+                                startClipboardFloatEntryDrag(
+                                    view = view,
+                                    context = context,
+                                    entry = entry,
+                                    thumbnail = thumbnail,
+                                    onDragStart = onEntryDragStart,
+                                    onDragEnd = onEntryDragEnd,
+                                    snapshot = dragSnapshot.capture(),
+                                )
+                            }
+                        }
+
+                        ClipboardFloatEntryLongPressAction.WORD_TAP -> onWordTapLongClick()
+                        ClipboardFloatEntryLongPressAction.NONE -> Unit
+                    }
+                },
             ),
         shape = RoundedCornerShape(12.dp),
         color = clipboardFloatCardColor(LocalClipboardFloatGlass.current.active),
@@ -1098,10 +1190,222 @@ private fun ClipboardFloatEntryCard(
                     )
                 }
             }
+
+            // 「长按条目」→ 操作条目：卡片底部展开的一排操作按钮。
+            // 这一排自己会 consume 按下的 down（见 ClipboardFloatEntryActionRow），
+            // 所以点按钮不会顺带触发卡片的单击 / 拖动。
+            AnimatedVisibility(
+                visible = actionRowVisible,
+                enter = fadeIn(tween(120)) + expandVertically(tween(160)),
+                exit = fadeOut(tween(100)) + shrinkVertically(tween(140)),
+            ) {
+                ClipboardFloatEntryActionRow(
+                    showSaveImage = hasImage,
+                    onActionRowBounds = onActionRowBounds,
+                    onAction = onEntryAction,
+                )
+            }
         }
     }
 }
 
+/** 卡片样式「长按条目（原地不动）」与「按住拖动」之间的抖动死区。 */
+private const val CARD_HOLD_DEAD_ZONE_DP = 12f
+
+/**
+ * 「操作条目」那排按钮的**列表级状态**。
+ *
+ * - [entryId]：当前展开到哪一条（null = 没展开）；
+ * - [boundsInWindow]：这排按钮在窗口里的位置，用于"按下的点不在按钮上就收起"的命中判断。
+ *
+ * 收起规则（按需求）：长按出按钮后，**只有真的按到这排按钮才保留**；单击条目、拖动、
+ * 滚动列表、点浮窗其它地方、长按另一条——任何其它交互都会让它收起。
+ */
+private class ClipboardFloatActionRowState {
+    var entryId by mutableStateOf<String?>(null)
+    var boundsInWindow by mutableStateOf<Rect?>(null)
+
+    fun collapse() {
+        entryId = null
+    }
+
+    fun contains(position: Offset): Boolean = boundsInWindow?.contains(position) == true
+}
+
+/**
+ * 卡片样式条目的手势：把原来的"长按"拆成**原地长按**（操作条目）与**按住拖动**（原长按动作）。
+ *
+ * ```
+ * 按下 ──未超死区就抬手────────────────▶ 单击条目（[onClick]）
+ *   ├── 超过长按阈值且没动 ────────────▶ [onStationaryLongPress]（展开操作按钮）
+ *   ├── 长按成立前移动 > 死区 ─────────▶ 什么都不做：让列表滚动接手
+ *   └── 长按成立后移动 > 死区 ─────────▶ [onDragAction]（按住拖动；动作为"无"时只是收起按钮）
+ * ```
+ *
+ * 单行列表样式不走这里（继续用 [clipboardFloatEntryGestures] 的 `combinedClickable`）。
+ */
+@Composable
+private fun Modifier.clipboardFloatCardGestures(
+    dragAction: ClipboardFloatEntryLongPressAction,
+    onClick: () -> Unit,
+    onStationaryLongPress: () -> Unit,
+    onDragAction: () -> Unit,
+): Modifier {
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnStationary by rememberUpdatedState(onStationaryLongPress)
+    val currentOnDrag by rememberUpdatedState(onDragAction)
+    return pointerInput(dragAction) {
+        val longPressTimeoutMs = viewConfiguration.longPressTimeoutMillis
+        val deadZonePx = CARD_HOLD_DEAD_ZONE_DP.dp.toPx()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            // 这排操作按钮会先 consume 按下的 down —— 那种情况不算卡片手势。
+            if (down.isConsumed) return@awaitEachGesture
+            val pointerId = down.id
+            var movedBeforeLongPress = false
+            var liftedBeforeLongPress = false
+
+            val longPressReached = try {
+                withTimeout(longPressTimeoutMs) {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointerId }
+                        if (change == null || !change.pressed) {
+                            liftedBeforeLongPress = true
+                            break
+                        }
+                        if ((change.position - down.position).getDistance() > deadZonePx) {
+                            movedBeforeLongPress = true
+                            break
+                        }
+                    }
+                }
+                false
+            } catch (_: PointerEventTimeoutCancellationException) {
+                true
+            } catch (_: TimeoutCancellationException) {
+                true
+            }
+
+            // 长按成立前就动了：交给列表滚动，不触发任何动作。
+            if (movedBeforeLongPress) return@awaitEachGesture
+            if (!longPressReached) {
+                if (liftedBeforeLongPress) currentOnClick()
+                return@awaitEachGesture
+            }
+
+            // 原地长按成立 → 展开操作按钮。
+            currentOnStationary()
+
+            // 长按之后继续跟：移动超过死区 = 「按住拖动」（并收起操作按钮）。
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                if (change == null || !change.pressed) break
+                if ((change.position - down.position).getDistance() > deadZonePx) {
+                    if (dragAction != ClipboardFloatEntryLongPressAction.NONE) {
+                        change.consume()
+                    }
+                    currentOnDrag()
+                    break
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 「操作条目」展开的一排按钮（复制 / 暂存 / 钉在屏幕 / 分享 / 保存图片 / 取词 / 删除）。
+ *
+ * ⚠️ 这排会 consume 按下的 down（见 [consumePressForParentGestures]），
+ * 所以点按钮不会顺带触发卡片本体的单击 / 长按 / 拖动。
+ */
+@Composable
+private fun ClipboardFloatEntryActionRow(
+    /** 有图才给"保存图片"这一颗（与侧栏卡片一致）。 */
+    showSaveImage: Boolean,
+    onActionRowBounds: (Rect) -> Unit,
+    onAction: (ClipboardFloatEntryAction) -> Unit,
+) {
+    val scheme = MiuixTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(scheme.surfaceContainer.copy(alpha = 0.55f))
+            .consumePressForParentGestures()
+            .onGloballyPositioned { coords -> onActionRowBounds(coords.boundsInWindow()) }
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ClipboardFloatEntryActionIcon(Icons.Filled.ContentCopy, R.string.clipboard_history_float_copy) {
+            onAction(ClipboardFloatEntryAction.COPY)
+        }
+        ClipboardFloatEntryActionIcon(Icons.Outlined.Archive, R.string.float_ball_action_stash) {
+            onAction(ClipboardFloatEntryAction.STASH)
+        }
+        ClipboardFloatEntryActionIcon(MiuixIcons.Medium.Pin, R.string.stash_action_pin) {
+            onAction(ClipboardFloatEntryAction.PIN)
+        }
+        ClipboardFloatEntryActionIcon(Icons.Filled.Share, R.string.float_ball_action_share) {
+            onAction(ClipboardFloatEntryAction.SHARE)
+        }
+        if (showSaveImage) {
+            ClipboardFloatEntryActionIcon(Icons.Outlined.Save, R.string.clipboard_action_save_image) {
+                onAction(ClipboardFloatEntryAction.SAVE_IMAGE)
+            }
+        }
+        ClipboardFloatEntryActionIcon(Icons.Outlined.TextFields, R.string.stash_action_open_pick) {
+            onAction(ClipboardFloatEntryAction.OPEN_PICK)
+        }
+        ClipboardFloatEntryActionIcon(
+            icon = Icons.Filled.Delete,
+            contentDescriptionRes = R.string.stash_action_delete,
+            destructive = true,
+        ) {
+            onAction(ClipboardFloatEntryAction.DELETE)
+        }
+    }
+}
+
+/**
+ * 让这一排按钮吃掉"按下"，父级卡片的手势就不会把这次按压当成单击 / 长按 / 拖动。
+ *
+ * 只 consume `pressed` 的 down（不碰抬手），所以子级按钮自己的点击判定照常；
+ * 而卡片手势拿到的是已消费的 down，[clipboardFloatCardGestures] 会直接放弃。
+ */
+private fun Modifier.consumePressForParentGestures(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Main)
+            event.changes.forEach { change ->
+                if (change.pressed && !change.isConsumed) change.consume()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipboardFloatEntryActionIcon(
+    icon: ImageVector,
+    contentDescriptionRes: Int,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val scheme = MiuixTheme.colorScheme
+    IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = stringResource(contentDescriptionRes),
+            tint = if (destructive) scheme.error else scheme.onSurface,
+            modifier = Modifier.size(19.dp),
+        )
+    }
+}
+
+/** 单行列表样式沿用 `combinedClickable` 的老手势（卡片样式已换成 [clipboardFloatCardGestures]）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Modifier.clipboardFloatEntryGestures(

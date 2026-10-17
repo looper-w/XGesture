@@ -33,7 +33,13 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.slideindex.app.R
 import com.slideindex.app.clipboard.ClipboardAccess
+import com.slideindex.app.clipboard.ClipboardEntry
+import com.slideindex.app.clipboard.ClipboardImageStore
+import com.slideindex.app.clipboard.ClipboardThumbnailCache
+import com.slideindex.app.clipboard.ClipboardWriter
 import com.slideindex.app.clipboard.hasImageContent
+import com.slideindex.app.clipboard.hasRichPinContent
+import com.slideindex.app.clipboardfloat.ClipboardFloatEntryAction
 import com.slideindex.app.clipboardfloat.ClipboardFloatDisplayMode
 import com.slideindex.app.clipboardfloat.ClipboardFloatListController
 import com.slideindex.app.clipboardfloat.ClipboardFloatRoot
@@ -46,6 +52,7 @@ import com.slideindex.app.di.AppDependencies
 import com.slideindex.app.overlay.FloatBallPickResult
 import com.slideindex.app.overlay.FloatBallPickResultPanel
 import com.slideindex.app.overlay.FloatBallStashPanel
+import com.slideindex.app.overlay.FloatBallTextPick
 import com.slideindex.app.overlay.MessageOverlayHost
 import com.slideindex.app.overlay.OverlayCompose
 import com.slideindex.app.overlay.OverlayComposeOwner
@@ -57,10 +64,12 @@ import com.slideindex.app.overlay.PickResultTextSource
 import com.slideindex.app.overlay.StashPanelInitialTab
 import com.slideindex.app.overlay.pickresult.PickResultTextMode
 import com.slideindex.app.settings.ClipboardFloatEntryClickAction
+import com.slideindex.app.settings.ClipboardFloatEntryHoldAction
 import com.slideindex.app.settings.ClipboardFloatEntryLongPressAction
 import com.slideindex.app.settings.ClipboardFloatListStyle
 import com.slideindex.app.settings.ClipboardFloatOrientationGeometry
 import com.slideindex.app.settings.ClipboardFloatWindowMetrics
+import com.slideindex.app.stash.StashCoordinator
 import com.slideindex.app.util.LockScreenState
 import com.slideindex.app.util.PermissionHelper
 import dagger.hilt.android.AndroidEntryPoint
@@ -68,6 +77,7 @@ import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner {
@@ -96,6 +106,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
     private var singleLineLongPressAction by mutableStateOf(ClipboardFloatEntryLongPressAction.WORD_TAP)
     private var cardClickAction by mutableStateOf(ClipboardFloatEntryClickAction.PASTE)
     private var cardLongPressAction by mutableStateOf(ClipboardFloatEntryLongPressAction.DRAG_DROP)
+    private var cardHoldAction by mutableStateOf(ClipboardFloatEntryHoldAction.OPERATE_ENTRY)
     private var pasteHapticEnabled by mutableStateOf(false)
     private var panelAlpha by mutableFloatStateOf(1.0f)
     private var autoDimWhenUnfocused by mutableStateOf(false)
@@ -280,6 +291,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
         singleLineLongPressAction = snapshot.clipboardFloatSingleLineEntryLongPressAction
         cardClickAction = snapshot.clipboardFloatCardEntryClickAction
         cardLongPressAction = snapshot.clipboardFloatCardEntryLongPressAction
+        cardHoldAction = snapshot.clipboardFloatCardEntryHoldAction
         listStyle = snapshot.clipboardFloatListStyle
         pasteHapticEnabled = snapshot.clipboardFloatPasteHapticEnabled
         panelAlpha = snapshot.clipboardFloatAlpha
@@ -492,6 +504,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
                     windowWidthDp = panelWidthDp,
                     listStyle = listStyle,
                     entryLongPressAction = entryLongPressActionForListStyle(),
+                    entryHoldAction = entryHoldActionForListStyle(),
                     onOpenExpanded = ::expandWindow,
                     onTogglePin = ::togglePin,
                     onAlphaChange = ::updateAlpha,
@@ -508,6 +521,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
                     onEntryLongClick = ::onEntryLongClick,
                     onEntryDragStart = ::onEntryDragStart,
                     onEntryDragEnd = ::onEntryDragEnd,
+                    onEntryAction = ::onEntryAction,
                     onUserInteraction = ::onUserInteraction
                 )
             }
@@ -934,6 +948,86 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
     private fun entryLongPressActionForListStyle(): ClipboardFloatEntryLongPressAction = when (listStyle) {
         ClipboardFloatListStyle.SINGLE_LINE -> singleLineLongPressAction
         ClipboardFloatListStyle.CARD -> cardLongPressAction
+    }
+
+    /** 「长按条目」（原地按住不动）只有卡片样式用得上；单行样式给个默认值即可。 */
+    private fun entryHoldActionForListStyle(): ClipboardFloatEntryHoldAction = when (listStyle) {
+        ClipboardFloatListStyle.SINGLE_LINE -> ClipboardFloatEntryHoldAction.OPERATE_ENTRY
+        ClipboardFloatListStyle.CARD -> cardHoldAction
+    }
+
+    /**
+     * 「长按条目 → 操作条目」那排按钮的落地。
+     *
+     * 动作种类与侧栏剪贴板卡片（`HistoryEntryCards.kt` 的 `HistoryClipboardEntryCard`）对齐，
+     * 复用同一套 API，保证同一个动作在两个入口行为一致。
+     */
+    private fun onEntryAction(entry: ClipboardEntry, action: ClipboardFloatEntryAction) {
+        resetAutoCloseTimer()
+        val bodyText = entry.text.trim().ifBlank { entry.uri.orEmpty() }
+        when (action) {
+            ClipboardFloatEntryAction.COPY -> {
+                ClipboardWriter.write(this, entry)
+                Toast.makeText(this, R.string.float_ball_text_copied, Toast.LENGTH_SHORT).show()
+            }
+
+            ClipboardFloatEntryAction.STASH -> StashCoordinator.addFromClipboard(this, entry) { success ->
+                Toast.makeText(
+                    this,
+                    if (success) R.string.stash_saved else R.string.stash_save_failed,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+
+            ClipboardFloatEntryAction.PIN -> when {
+                entry.hasRichPinContent() -> StashCoordinator.pinRichFromClipboard(this, entry)
+                entry.hasImageContent() -> lifecycleScope.launch(Dispatchers.IO) {
+                    val bitmap = ClipboardImageStore.loadEntryThumbnail(this@ClipboardFloatService, entry)
+                    withContext(Dispatchers.Main) {
+                        if (bitmap != null) {
+                            StashCoordinator.pinImageToScreen(this@ClipboardFloatService, bitmap)
+                        }
+                    }
+                }
+
+                bodyText.isNotBlank() -> StashCoordinator.pinTextToScreen(this, bodyText)
+            }
+
+            ClipboardFloatEntryAction.SHARE -> if (entry.hasImageContent()) {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val bitmap = ClipboardImageStore.loadEntryThumbnail(this@ClipboardFloatService, entry)
+                    withContext(Dispatchers.Main) {
+                        if (bitmap != null) {
+                            FloatBallTextPick.shareScreenshot(this@ClipboardFloatService, bitmap)
+                        }
+                    }
+                }
+            } else if (bodyText.isNotBlank()) {
+                FloatBallTextPick.shareText(this, bodyText)
+            }
+
+            ClipboardFloatEntryAction.SAVE_IMAGE -> lifecycleScope.launch(Dispatchers.IO) {
+                val bitmap = ClipboardImageStore.loadEntryThumbnail(this@ClipboardFloatService, entry)
+                val saved = bitmap != null &&
+                    FloatBallTextPick.saveScreenshot(this@ClipboardFloatService, bitmap)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@ClipboardFloatService,
+                        if (saved) R.string.float_ball_screenshot_saved else R.string.float_ball_action_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+
+            ClipboardFloatEntryAction.OPEN_PICK -> onEntryLongClick(entry)
+
+            ClipboardFloatEntryAction.DELETE -> {
+                ClipboardThumbnailCache.evictEntry(entry)
+                lifecycleScope.launch(Dispatchers.IO) {
+                    deps.clipboardHistoryRepository.delete(entry.id)
+                }
+            }
+        }
     }
 
     private fun onEntryClick(entry: com.slideindex.app.clipboard.ClipboardEntry) {

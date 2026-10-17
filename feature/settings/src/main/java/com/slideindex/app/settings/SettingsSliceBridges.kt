@@ -265,6 +265,7 @@ fun OverlaySettings.toMinimalAppSettings(): AppSettings = AppSettings(
         clipboardFloatSingleLineEntryLongPressAction = clipboardFloatSingleLineEntryLongPressAction,
         clipboardFloatCardEntryClickAction = clipboardFloatCardEntryClickAction,
         clipboardFloatCardEntryLongPressAction = clipboardFloatCardEntryLongPressAction,
+        clipboardFloatCardEntryHoldAction = clipboardFloatCardEntryHoldAction,
         clipboardFloatListStyleId = clipboardFloatListStyleId,
         clipboardFloatPortraitGeometry = clipboardFloatPortraitGeometry,
         clipboardFloatLandscapeGeometry = clipboardFloatLandscapeGeometry,

@@ -4223,6 +4223,8 @@
     <string name="settings_backup_preview_cloud_config">クラウドOCR/翻訳のAPIキー、インターフェース、プロンプトを含む</string>
     <string name="clipboard_float_gesture_click">項目をタップ</string>
     <string name="clipboard_float_gesture_long_press">項目をロングタップ</string>
+    <string name="clipboard_float_gesture_hold_drag">押したままドラッグ</string>
+    <string name="clipboard_float_hold_action_operate_entry">項目を操作</string>
     <string name="clipboard_float_long_press_action_word_tap">単語抽出・分かち書き</string>
     <string name="clipboard_float_long_press_action_drag_drop">ドラッグ＆ドロップ</string>
     <string name="clipboard_float_long_press_action_none">なし</string>

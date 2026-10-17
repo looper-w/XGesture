@@ -656,6 +656,10 @@ internal object SettingsPreferenceKeys {
         stringPreferencesKey("clipboard_float_entry_long_press_action_single_line")
     val CLIPBOARD_FLOAT_ENTRY_LONG_PRESS_ACTION_CARD =
         stringPreferencesKey("clipboard_float_entry_long_press_action_card")
+
+    /** 卡片模式「长按条目」（**原地按住不动**）动作；与「按住拖动」分开，见 [ClipboardFloatEntryHoldAction]。 */
+    val CLIPBOARD_FLOAT_ENTRY_HOLD_ACTION_CARD =
+        stringPreferencesKey("clipboard_float_entry_hold_action_card")
     val CLIPBOARD_FLOAT_LIST_STYLE = intPreferencesKey("clipboard_float_list_style")
     /** @deprecated Legacy shared geometry; migrated to panel keys on read. */
     val CLIPBOARD_FLOAT_WIDTH_DP = intPreferencesKey("clipboard_float_width_dp")

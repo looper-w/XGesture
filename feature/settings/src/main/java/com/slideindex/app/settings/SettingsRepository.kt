@@ -787,6 +787,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setClipboardFloatCardEntryLongPressAction(action: ClipboardFloatEntryLongPressAction) =
         overlay.setClipboardFloatCardEntryLongPressAction(action)
 
+    suspend fun setClipboardFloatCardEntryHoldAction(action: ClipboardFloatEntryHoldAction) =
+        overlay.setClipboardFloatCardEntryHoldAction(action)
+
     suspend fun setClipboardFloatListStyle(style: ClipboardFloatListStyle) =
         overlay.setClipboardFloatListStyle(style)
 

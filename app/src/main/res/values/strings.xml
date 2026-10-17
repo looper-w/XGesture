@@ -3883,6 +3883,8 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="clipboard_float_click_action_title">Tap entry</string>
     <string name="clipboard_float_gesture_click">Tap entry</string>
     <string name="clipboard_float_gesture_long_press">Long-press entry</string>
+    <string name="clipboard_float_gesture_hold_drag">Press and drag</string>
+    <string name="clipboard_float_hold_action_operate_entry">Entry actions</string>
     <string name="clipboard_float_long_press_action_word_tap">Word pick / segment</string>
     <string name="clipboard_float_long_press_action_drag_drop">Drag and drop</string>
     <string name="clipboard_float_long_press_action_none">None</string>

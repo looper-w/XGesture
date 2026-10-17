@@ -182,6 +182,9 @@ data class OverlaySettings(
     val clipboardFloatCardEntryClickAction: ClipboardFloatEntryClickAction = ClipboardFloatEntryClickAction.PASTE,
     val clipboardFloatCardEntryLongPressAction: ClipboardFloatEntryLongPressAction =
         ClipboardFloatEntryLongPressAction.DRAG_DROP,
+    /** 卡片模式「长按条目」（原地按住不动）动作；只有卡片样式有这一项。 */
+    val clipboardFloatCardEntryHoldAction: ClipboardFloatEntryHoldAction =
+        ClipboardFloatEntryHoldAction.OPERATE_ENTRY,
     val clipboardFloatListStyleId: Int = ClipboardFloatListStyle.SINGLE_LINE.id,
     val clipboardFloatPortraitGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
     val clipboardFloatLandscapeGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
@@ -416,6 +419,7 @@ data class OverlaySettings(
             clipboardFloatSingleLineEntryLongPressAction = settings.clipboardFloatSingleLineEntryLongPressAction,
             clipboardFloatCardEntryClickAction = settings.clipboardFloatCardEntryClickAction,
             clipboardFloatCardEntryLongPressAction = settings.clipboardFloatCardEntryLongPressAction,
+            clipboardFloatCardEntryHoldAction = settings.clipboardFloatCardEntryHoldAction,
             clipboardFloatListStyleId = settings.clipboardFloatListStyleId,
             clipboardFloatPortraitGeometry = settings.clipboardFloatPortraitGeometry,
             clipboardFloatLandscapeGeometry = settings.clipboardFloatLandscapeGeometry,

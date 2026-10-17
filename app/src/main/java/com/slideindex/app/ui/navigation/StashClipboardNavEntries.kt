@@ -123,6 +123,7 @@ fun NavEntryBuilder.stashClipboardNavEntries(ctx: MainNavContext) {
                 viewModel::setClipboardFloatSingleLineEntryLongPressAction,
             onClipboardFloatCardEntryClickActionChange = viewModel::setClipboardFloatCardEntryClickAction,
             onClipboardFloatCardEntryLongPressActionChange = viewModel::setClipboardFloatCardEntryLongPressAction,
+            onClipboardFloatCardEntryHoldActionChange = viewModel::setClipboardFloatCardEntryHoldAction,
             onClipboardFloatListStyleChange = viewModel::setClipboardFloatListStyle,
             onClipboardFloatPasteHapticEnabledChange = viewModel::setClipboardFloatPasteHapticEnabled,
             onClipboardFloatAlphaChange = viewModel::setClipboardFloatAlpha,
