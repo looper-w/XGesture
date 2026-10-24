@@ -3893,6 +3893,22 @@ Questions: open a GitHub Issue on the project repository.</string>
     <string name="clipboard_float_click_action_copy_and_paste">Copy and paste</string>
     <string name="clipboard_float_reset_layout">Reset panel and chip layout</string>
     <string name="clipboard_float_title">Clipboard</string>
+    <!-- 来源应用 / 按来源筛选 / 多选删除 -->
+    <string name="clipboard_float_source_unknown">Unknown source</string>
+    <string name="clipboard_float_source_self">This app</string>
+    <string name="clipboard_float_source_picked">Picked</string>
+    <string name="clipboard_float_source_screenshot">Screenshot</string>
+    <string name="clipboard_float_filter_source">Filter by source app</string>
+    <string name="clipboard_float_filter_all">All</string>
+    <string name="clipboard_float_select">Select entries</string>
+    <string name="clipboard_float_selected_count">%1$d selected</string>
+    <string name="clipboard_float_select_all">Select all</string>
+    <string name="clipboard_float_delete">Delete</string>
+    <string name="clipboard_float_delete_confirm">Delete %1$d entries?</string>
+    <string name="clipboard_float_deleted_count">Deleted %1$d entries</string>
+    <string name="clipboard_float_cancel">Cancel</string>
+    <string name="clipboard_float_entry_expand">Expand</string>
+    <string name="clipboard_float_entry_collapse">Collapse</string>
     <string name="clipboard_float_open">Open clipboard</string>
     <string name="clipboard_float_keep_visible">Keep visible when keyboard hides</string>
     <string name="clipboard_float_open_stash_panel">Open side panel</string>

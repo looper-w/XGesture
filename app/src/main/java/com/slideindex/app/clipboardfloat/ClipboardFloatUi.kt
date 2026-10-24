@@ -22,6 +22,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.Canvas
@@ -43,14 +44,19 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -107,6 +113,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -261,6 +268,9 @@ fun ClipboardFloatRoot(
     onDragWindow: (Float, Float) -> Unit,
     onDragWindowStart: () -> Unit,
     onDragWindowEnd: () -> Unit,
+    /** 右下角把手真正开始拖动时调用一次。 */
+    onResizeStart: () -> Unit = {},
+    /** 面板右下角的**目标位置**（窗口坐标 px）：严格跟随手指。 */
     onResizeWindow: (Float, Float) -> Unit,
     onSearchActiveChanged: (Boolean) -> Unit,
     onEntryClick: (ClipboardEntry) -> Unit,
@@ -268,6 +278,8 @@ fun ClipboardFloatRoot(
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
     onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
+    /** 多选删除：一次性删掉这批条目（service 负责清缩略图缓存 + 落库）。 */
+    onDeleteEntries: (List<ClipboardEntry>) -> Unit,
     onUserInteraction: () -> Unit = {}
 ) {
     val glass = rememberClipboardFloatGlass(
@@ -322,6 +334,7 @@ fun ClipboardFloatRoot(
                         onDragWindow = onDragWindow,
                         onDragWindowStart = onDragWindowStart,
                         onDragWindowEnd = onDragWindowEnd,
+                        onResizeStart = onResizeStart,
                         onResizeWindow = onResizeWindow,
                         onSearchActiveChanged = onSearchActiveChanged,
                         onEntryClick = onEntryClick,
@@ -329,6 +342,7 @@ fun ClipboardFloatRoot(
                         onEntryDragStart = onEntryDragStart,
                         onEntryDragEnd = onEntryDragEnd,
                         onEntryAction = onEntryAction,
+                        onDeleteEntries = onDeleteEntries,
                     )
                 }
             }
@@ -453,6 +467,7 @@ private fun ClipboardFloatExpandedChrome(
     onDragWindow: (Float, Float) -> Unit,
     onDragWindowStart: () -> Unit,
     onDragWindowEnd: () -> Unit,
+    onResizeStart: () -> Unit,
     onResizeWindow: (Float, Float) -> Unit,
     onSearchActiveChanged: (Boolean) -> Unit,
     onEntryClick: (ClipboardEntry) -> Unit,
@@ -460,6 +475,7 @@ private fun ClipboardFloatExpandedChrome(
     onEntryDragStart: () -> Unit,
     onEntryDragEnd: () -> Unit,
     onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
+    onDeleteEntries: (List<ClipboardEntry>) -> Unit,
 ) {
     val scheme = MiuixTheme.colorScheme
     val glass = LocalClipboardFloatGlass.current
@@ -467,6 +483,14 @@ private fun ClipboardFloatExpandedChrome(
     var searchExpanded by remember { mutableStateOf(false) }
     var showAlphaSlider by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+
+    // 来源筛选 + 多选删除（选择态由标题栏「选择」按钮进入，避免和长按手势冲突）。
+    val availableSources by listController.availableSources.collectAsState()
+    val sourceFilter by listController.sourceFilter.collectAsState()
+    val entries by listController.filteredEntries.collectAsState()
+    val selection = remember { ClipboardFloatSelectionState() }
+    var showSourceFilter by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(searchExpanded) {
         onSearchActiveChanged(searchExpanded)
@@ -514,14 +538,33 @@ private fun ClipboardFloatExpandedChrome(
                     .clipboardFloatDragHandle(onDragWindowStart, onDragWindow, onDragWindowEnd),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onTogglePin, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        // 已钉住时换成「取消钉住」（Unpin），点一下就知道能取消；
-                        // 之前只换粗细（Medium/Regular）差别太细，看着像没变。
-                        imageVector = if (pinned) MiuixIcons.Medium.Unpin else MiuixIcons.Medium.Pin,
-                        contentDescription = stringResource(R.string.clipboard_float_keep_visible),
-                        modifier = Modifier.size(18.dp)
-                    )
+                IconButton(
+                    onClick = onTogglePin,
+                    // 触摸区仍是 32dp（好点），但蓝色底只画在图标外一圈 24dp，
+                    // 避免底色撑满 32dp 后压到相邻按钮、视觉上也超出面板。
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .then(
+                                if (pinned) {
+                                    Modifier
+                                        .clip(CircleShape)
+                                        .background(scheme.primary)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = MiuixIcons.Medium.Pin,
+                            contentDescription = stringResource(R.string.clipboard_float_keep_visible),
+                            tint = if (pinned) scheme.onPrimary else scheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
                 IconButton(
                     onClick = { showAlphaSlider = !showAlphaSlider },
@@ -550,6 +593,36 @@ private fun ClipboardFloatExpandedChrome(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                IconButton(
+                    onClick = { showSourceFilter = !showSourceFilter },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = stringResource(R.string.clipboard_float_filter_source),
+                        tint = if (showSourceFilter || sourceFilter != null) scheme.primary else scheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        if (selection.active) {
+                            selection.exit()
+                            confirmDelete = false
+                        } else {
+                            selection.enter()
+                            confirmDelete = false
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = if (selection.active) Icons.Default.Done else Icons.Default.Checklist,
+                        contentDescription = stringResource(R.string.clipboard_float_select),
+                        tint = if (selection.active) scheme.primary else scheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
                 IconButton(
                     onClick = {
                         if (searchExpanded) {
@@ -637,6 +710,40 @@ private fun ClipboardFloatExpandedChrome(
                 hintResId = R.string.clipboard_search_hint,
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
+            AnimatedVisibility(
+                visible = showSourceFilter,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                ClipboardFloatSourceFilterRow(
+                    packages = availableSources,
+                    selected = sourceFilter,
+                    onSelect = listController::setSourceFilter,
+                )
+            }
+            AnimatedVisibility(
+                visible = selection.active,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                ClipboardFloatSelectionBar(
+                    selectedCount = selection.ids.size,
+                    totalCount = entries.size,
+                    confirming = confirmDelete,
+                    onSelectAll = { selection.replaceAll(entries.map { it.id }) },
+                    onRequestDelete = { confirmDelete = true },
+                    onConfirmDelete = {
+                        val selected = entries.filter { it.id in selection.ids }
+                        confirmDelete = false
+                        selection.exit()
+                        if (selected.isNotEmpty()) onDeleteEntries(selected)
+                    },
+                    onCancel = {
+                        confirmDelete = false
+                        selection.exit()
+                    },
+                )
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -654,6 +761,7 @@ private fun ClipboardFloatExpandedChrome(
                     entryLongPressAction = entryLongPressAction,
                     entryHoldAction = entryHoldAction,
                     actionRow = actionRow,
+                    selection = selection,
                     onEntryClick = onEntryClick,
                     onEntryLongClick = onEntryLongClick,
                     onEntryDragStart = onEntryDragStart,
@@ -665,7 +773,10 @@ private fun ClipboardFloatExpandedChrome(
             ClipboardFloatResizeCornerHandle(
                 cornerRadius = ClipboardFloatPanelCornerRadius,
                 color = scheme.primary,
-                onResizeWindow = onResizeWindow
+                onResizeStart = onResizeStart,
+                onResizeWindow = onResizeWindow,
+                // 长按把手 = 点左上角的钉住按钮（同一个回调，图标状态自动同步）。
+                onLongPress = onTogglePin,
             )
         }
     }
@@ -675,17 +786,84 @@ private fun ClipboardFloatExpandedChrome(
 private fun BoxScope.ClipboardFloatResizeCornerHandle(
     cornerRadius: Dp,
     color: Color,
-    onResizeWindow: (Float, Float) -> Unit
+    /** 真正开始拖动时通知一次。 */
+    onResizeStart: () -> Unit,
+    /** 传**手指在窗口坐标里的位置**（px），作为面板右下角的目标位置（严格跟随）。 */
+    onResizeWindow: (Float, Float) -> Unit,
+    /** 长按把手：与左上角「钉住」按钮同一个动作（切换钉住状态）。 */
+    onLongPress: () -> Unit,
 ) {
     val touchSize = (cornerRadius.value + 12f).coerceAtLeast(28f).dp
+    // 把手在**窗口里的位置**。窗口缩放时把手会跟着右下角一起移动，而 `change.position` 是
+    // 相对把手自身的局部坐标 —— 手指不动、把手在动，局部坐标也会变，直接拿它算累计位移会形成
+    // "缩→把手左移→局部坐标变大→又放大→把手右移→…" 的反馈，表现为窗口闪烁。
+    // 加上这个偏移换算成窗口坐标后，手指静止时坐标就恒定了。
+    val nodeWindowOffset = remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = Modifier
             .align(Alignment.BottomEnd)
+            .onGloballyPositioned { nodeWindowOffset.value = it.positionInWindow() }
             .size(touchSize)
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onResizeWindow(dragAmount.x, dragAmount.y)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+                    val slop = viewConfiguration.touchSlop
+                    var moved = false
+                    // 先等「长按成立」或「移动超过死区」，谁先到就走谁的分支：
+                    // - 先动 → 进入拖拽调尺寸；
+                    // - 到点 → **立刻**切换钉住（不等抬手），然后吞掉这次按压剩下的所有事件，
+                    //   避免同一次按压既切了钉住又去调尺寸。
+                    val longPressReached = try {
+                        withTimeout(longPressTimeout) {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                if ((change.position - down.position).getDistance() > slop) {
+                                    moved = true
+                                    break
+                                }
+                            }
+                        }
+                        false
+                    } catch (_: PointerEventTimeoutCancellationException) {
+                        true
+                    } catch (_: TimeoutCancellationException) {
+                        true
+                    }
+
+                    if (longPressReached) {
+                        // 按够时间就直接生效（窗口钉住状态 + 顶部按钮同时变），不需要等松手。
+                        onLongPress()
+                        // 之后的移动不再调尺寸，等手指抬起结束这次按压。
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                            if (event.changes.none { it.pressed }) break
+                        }
+                        return@awaitEachGesture
+                    }
+
+                    // 没到长按也没拖动（轻点 / 很快就抬手）：什么都不做。
+                    if (!moved) return@awaitEachGesture
+
+                    // 锚定式缩放：以"进入拖拽后的第一个位置"为原点，之后传累计位移。
+                    // 这样缩到最小/最大后继续拖的溢出量不会被记下来，反向时手指必须先回到
+                    // 原来的位置，窗口才开始变化 —— 边缘不会跑到手指前面。
+                    // 注意：位移必须在**窗口坐标**里算（见上面的 nodeWindowOffset），
+                    // 否则窗口一缩放，把手自身移动会让局部坐标漂移，形成闪烁。
+                    // 严格跟随：把手指位置（窗口坐标）**直接当作面板右下角的目标位置**，
+                    // 不做"相对抓取点"的偏移补偿，因此没有任何死区：
+                    //   - 拖动中手指始终压在面板角落上（1:1）；
+                    //   - 缩到最小/放到最大后，角落停在边界，手指必须先回到边界位置，
+                    //     窗口才会继续变化（不会因为之前多划的那段而在反向时立刻变大）。
+                    onResizeStart()
+                    drag(down.id) { change ->
+                        val fingerInWindow = change.position + nodeWindowOffset.value
+                        change.consume()
+                        onResizeWindow(fingerInWindow.x, fingerInWindow.y)
+                    }
                 }
             },
         contentAlignment = Alignment.BottomEnd
@@ -715,6 +893,7 @@ private fun ClipboardFloatContentSection(
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
     entryHoldAction: ClipboardFloatEntryHoldAction,
     actionRow: ClipboardFloatActionRowState,
+    selection: ClipboardFloatSelectionState,
     onEntryClick: (ClipboardEntry) -> Unit,
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
@@ -759,6 +938,7 @@ private fun ClipboardFloatContentSection(
                 entryLongPressAction = entryLongPressAction,
                 entryHoldAction = entryHoldAction,
                 actionRow = actionRow,
+                selection = selection,
                 onEntryClick = onEntryClick,
                 onEntryLongClick = onEntryLongClick,
                 onEntryDragStart = onEntryDragStart,
@@ -771,6 +951,7 @@ private fun ClipboardFloatContentSection(
                 entries = entries,
                 windowWidthDp = windowWidthDp,
                 entryLongPressAction = entryLongPressAction,
+                selection = selection,
                 onEntryClick = onEntryClick,
                 onEntryLongClick = onEntryLongClick,
                 onEntryDragStart = onEntryDragStart,
@@ -785,6 +966,7 @@ private fun ClipboardFloatSingleLineList(
     entries: List<ClipboardEntry>,
     windowWidthDp: Int,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    selection: ClipboardFloatSelectionState,
     onEntryClick: (ClipboardEntry) -> Unit,
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
@@ -799,8 +981,12 @@ private fun ClipboardFloatSingleLineList(
             ClipboardFloatSingleLineRow(
                 entry = entry,
                 entryLongPressAction = entryLongPressAction,
-                onClick = { onEntryClick(entry) },
-                onWordTapLongClick = { onEntryLongClick(entry) },
+                selectionActive = selection.active,
+                selected = entry.id in selection.ids,
+                onClick = {
+                    if (selection.active) selection.toggle(entry.id) else onEntryClick(entry)
+                },
+                onWordTapLongClick = { if (!selection.active) onEntryLongClick(entry) },
                 onEntryDragStart = onEntryDragStart,
                 onEntryDragEnd = onEntryDragEnd,
             )
@@ -813,6 +999,8 @@ private fun ClipboardFloatSingleLineList(
 private fun ClipboardFloatSingleLineRow(
     entry: ClipboardEntry,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
+    selectionActive: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
     onWordTapLongClick: () -> Unit,
     onEntryDragStart: () -> Unit,
@@ -831,14 +1019,18 @@ private fun ClipboardFloatSingleLineRow(
     } else {
         entry.text.trim().ifBlank { entry.uri.orEmpty() }
     }
-    val isLong = rawText.length > 30 || rawText.contains('\n') || hasImage
     var expanded by remember(entry.id) { mutableStateOf(false) }
+    // 同卡片样式：用真实溢出判定，避免"1 行放不下但字数没到 30"导致没有展开按钮。
+    var textOverflow by remember(entry.id) { mutableStateOf(false) }
+    val isLong = hasImage || textOverflow
 
     val density = LocalDensity.current
     val thumbHeightPx = with(density) { 60.dp.roundToPx() }
     // 长按拖拽：把**整张卡**当拖影。抓图是 suspend 的，所以要起协程。
     val dragSnapshot = rememberHistoryCardSnapshot()
     val dragScope = rememberCoroutineScope()
+    // 单行样式没有"滚动中"的判断，只按动作类型决定是否录制（每帧离屏渲染很贵）。
+    val snapshotEnabled = entryLongPressAction == ClipboardFloatEntryLongPressAction.DRAG_DROP
     val thumbnail = rememberClipboardFloatThumbnail(
         entry = entry,
         enabled = hasImage && expanded,
@@ -850,7 +1042,9 @@ private fun ClipboardFloatSingleLineRow(
         modifier = Modifier
             .fillMaxWidth()
             // 整张卡录一份：长按拖拽时"把整张卡拿起来"（见 HistoryCardSnapshot）。
-            .recordHistoryCardSnapshot(dragSnapshot)
+            .then(
+                if (snapshotEnabled) Modifier.recordHistoryCardSnapshot(dragSnapshot) else Modifier
+            )
             .clip(RoundedCornerShape(8.dp))
             .clipboardFloatEntryGestures(
                 entryLongPressAction = entryLongPressAction,
@@ -872,8 +1066,15 @@ private fun ClipboardFloatSingleLineRow(
                 }
             ),
         shape = RoundedCornerShape(8.dp),
-        color = clipboardFloatCardColor(LocalClipboardFloatGlass.current.active),
-        border = androidx.compose.foundation.BorderStroke(1.dp, scheme.onSurface.copy(alpha = 0.05f))
+        color = if (selected) {
+            scheme.primary.copy(alpha = 0.14f)
+        } else {
+            clipboardFloatCardColor(LocalClipboardFloatGlass.current.active)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) scheme.primary else scheme.onSurface.copy(alpha = 0.05f),
+        )
     ) {
         Column(
             modifier = Modifier
@@ -910,9 +1111,11 @@ private fun ClipboardFloatSingleLineRow(
                     color = scheme.onSurface,
                     maxLines = if (expanded) Int.MAX_VALUE else 1,
                     overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    onTextLayout = { if (!expanded) textOverflow = it.hasVisualOverflow },
                     modifier = Modifier.weight(1f)
                 )
 
+                ClipboardFloatSourceBadge(entry)
                 if (isLong) {
                     IconButton(
                         onClick = { expanded = !expanded },
@@ -951,6 +1154,7 @@ private fun ClipboardFloatGrid(
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
     entryHoldAction: ClipboardFloatEntryHoldAction,
     actionRow: ClipboardFloatActionRowState,
+    selection: ClipboardFloatSelectionState,
     onEntryClick: (ClipboardEntry) -> Unit,
     onEntryLongClick: (ClipboardEntry) -> Unit,
     onEntryDragStart: () -> Unit,
@@ -958,6 +1162,9 @@ private fun ClipboardFloatGrid(
     onEntryAction: (ClipboardEntry, ClipboardFloatEntryAction) -> Unit,
 ) {
     val gridState = rememberLazyGridState()
+    // 滚动期间**不挂整卡录制**：那个 modifier 每帧都要离屏渲染一遍，是滚动掉帧的主因之一。
+    // 停下后自动恢复，不影响长按拖拽。
+    val isScrolling = gridState.isScrollInProgress
     // 滚动列表也是"其他交互" → 收起操作按钮。
     LaunchedEffect(gridState) {
         snapshotFlow { gridState.isScrollInProgress }
@@ -978,18 +1185,25 @@ private fun ClipboardFloatGrid(
                 windowWidthDp = windowWidthDp,
                 entryLongPressAction = entryLongPressAction,
                 entryHoldAction = entryHoldAction,
+                selectionActive = selection.active,
+                selected = entry.id in selection.ids,
                 actionRowVisible = actionRow.entryId == entry.id,
+                recordCardSnapshot = !isScrolling,
                 onActionRowBounds = { bounds -> actionRow.boundsInWindow = bounds },
                 onClick = {
                     actionRow.collapse()
-                    onEntryClick(entry)
+                    if (selection.active) selection.toggle(entry.id) else onEntryClick(entry)
                 },
                 onWordTapLongClick = {
-                    actionRow.collapse()
-                    onEntryLongClick(entry)
+                    if (!selection.active) {
+                        actionRow.collapse()
+                        onEntryLongClick(entry)
+                    }
                 },
                 onStationaryLongPress = {
-                    if (entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY) {
+                    if (!selection.active &&
+                        entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY
+                    ) {
                         actionRow.entryId = entry.id
                     }
                 },
@@ -1010,8 +1224,18 @@ private fun ClipboardFloatEntryCard(
     windowWidthDp: Int,
     entryLongPressAction: ClipboardFloatEntryLongPressAction,
     entryHoldAction: ClipboardFloatEntryHoldAction,
+    /** 多选模式：禁用手势（单击 = 勾选），选中态由整卡高亮表示。 */
+    selectionActive: Boolean,
+    selected: Boolean,
     /** 「操作条目」那排按钮是否展开（由列表级状态决定）。 */
     actionRowVisible: Boolean,
+    /**
+     * 是否给这张卡挂"整卡离屏录制"（长按拖拽的拖影用）。
+     *
+     * 这个 modifier 会让卡片**每次重绘都先录进一个离屏层再合成**，滚动时是纯损耗；
+     * 所以只在"按住拖动"模式 + 列表没有在滚动时才挂。
+     */
+    recordCardSnapshot: Boolean,
     /** 把这排按钮的窗口坐标回报给列表级状态（"点别处即收起"的命中判断用）。 */
     onActionRowBounds: (Rect) -> Unit,
     onClick: () -> Unit,
@@ -1038,80 +1262,180 @@ private fun ClipboardFloatEntryCard(
         entry.text.trim().ifBlank { entry.uri.orEmpty() }
     }
     val previewLines = if (columnCount <= 1) 3 else 2
-    val typeLabel = clipboardFloatTypeLabel(entry.displayTypeLabelKey())
-    val density = LocalDensity.current
-    val cardWidthPx = with(density) {
-        val contentWidthDp = (windowWidthDp - 20 - (columnCount - 1) * 8) / columnCount
-        contentWidthDp.dp.roundToPx().coerceAtLeast(1)
+    // 展开 / 折叠（与单行极简条目同一套交互）：折叠时只看预览行，展开后可看全文 / 大图。
+    var expanded by remember(entry.id) { mutableStateOf(false) }
+    // 是否**真的被截断**：不再用字数阈值猜（窄窗会漏箭头、宽窗会给无效箭头），
+    // 交给折叠态 Text 的 onTextLayout 判定；展开后保留上次结果，箭头不会自己消失。
+    var textOverflow by remember(entry.id) { mutableStateOf(false) }
+    val textMaxLines = if (expanded) Int.MAX_VALUE else previewLines
+    // 展开时的整图：**不裁剪**、按最长边缩放（与取词面板同一套取图逻辑）。
+    var expandedImage by remember(entry.id) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(entry.id, expanded, hasImage) {
+        expandedImage = if (!expanded || !hasImage) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                ClipboardThumbnailCache.loadEntryThumbnailsForPreview(
+                    context = context,
+                    entry = entry,
+                    maxSidePx = CARD_EXPANDED_IMAGE_MAX_SIDE_PX,
+                ).firstOrNull()
+            }
+        }
     }
+    // 原图尺寸（px）：折叠显示尺寸 / 折叠占位 / 展开尺寸 / "是否需要展开箭头" 都靠它算。
+    var originalImageSize by remember(entry.id) { mutableStateOf<Pair<Int, Int>?>(null) }
+    LaunchedEffect(entry.id, hasImage) {
+        originalImageSize = if (!hasImage) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                ClipboardThumbnailCache.loadEntryOriginalSize(context, entry)
+            }
+        }
+    }
+    // 展开后的最大高度跟随屏幕（面板约占 55%），窄高图可以竖着展开看全。
+    val expandedImageMaxDp = with(LocalConfiguration.current) {
+        (screenHeightDp * 0.55f).coerceIn(220f, 420f).dp
+    }
+    val density = LocalDensity.current
+    // 图片可显示宽 = 窗口宽 − 列表横向内边距 20 − 卡片横向内边距 20 − 右侧箭头 24（单列）。
+    val imageBoxWidthDp = (windowWidthDp - 64).coerceAtLeast(1).toFloat()
+    val imageBoxWidthPx = with(density) { imageBoxWidthDp.dp.roundToPx().coerceAtLeast(1) }
+    // 折叠后的**实际**显示尺寸：整图等比缩进「可用宽 × 64dp」，且**不超过原尺寸**
+    // （小图就按原样显示，绝不放大 —— 否则小图会被"放大到 64dp"，展开反而变小）。
+    val collapsedImageSize: Pair<Float, Float> = remember(originalImageSize, imageBoxWidthDp, density) {
+        val size = originalImageSize ?: return@remember imageBoxWidthDp to 64f
+        val widthDp = (size.first / density.density).coerceAtLeast(1f)
+        val heightDp = (size.second / density.density).coerceAtLeast(1f)
+        val scale = minOf(1f, imageBoxWidthDp / widthDp, 64f / heightDp)
+        (widthDp * scale) to (heightDp * scale)
+    }
+    // 展开后的实际显示尺寸：可用宽 × 展开高度上限，同样不超过原尺寸。
+    val expandedImageSize: Pair<Float, Float> = remember(
+        originalImageSize, imageBoxWidthDp, expandedImageMaxDp, density
+    ) {
+        val size = originalImageSize ?: return@remember imageBoxWidthDp to expandedImageMaxDp.value
+        val widthDp = (size.first / density.density).coerceAtLeast(1f)
+        val heightDp = (size.second / density.density).coerceAtLeast(1f)
+        val scale = minOf(1f, imageBoxWidthDp / widthDp, expandedImageMaxDp.value / heightDp)
+        (widthDp * scale) to (heightDp * scale)
+    }
+    // 小图折叠时已经是原尺寸，展开不会变大 → 不给箭头（避免"点了没反应"的死箭头）。
+    // 原图尺寸读不到时保持旧行为（给箭头），不让可展开的图失去入口。
+    val imageNeedsExpand = hasImage && (
+        originalImageSize == null ||
+            expandedImageSize.second > collapsedImageSize.second + 1f ||
+            expandedImageSize.first > collapsedImageSize.first + 1f
+        )
+    val expandable = imageNeedsExpand || textOverflow
     val thumbHeightPx = with(density) { 64.dp.roundToPx() }
     // 长按拖拽：把**整张卡**当拖影。抓图是 suspend 的，所以要起协程。
     val dragSnapshot = rememberHistoryCardSnapshot()
     val dragScope = rememberCoroutineScope()
+    // 只有"按住拖动"模式才真的会用到拖影快照；其它模式挂上去只是每帧白录一遍。
+    val snapshotEnabled = recordCardSnapshot &&
+        entryLongPressAction == ClipboardFloatEntryLongPressAction.DRAG_DROP
     val thumbnail = rememberClipboardFloatThumbnail(
         entry = entry,
         enabled = hasImage,
-        cardWidthPx = cardWidthPx,
-        thumbHeightPx = thumbHeightPx
+        cardWidthPx = imageBoxWidthPx,
+        thumbHeightPx = thumbHeightPx,
+        fitWhole = true,
     )
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             // 整张卡录一份：长按拖拽时"把整张卡拿起来"（见 HistoryCardSnapshot）。
-            .recordHistoryCardSnapshot(dragSnapshot)
+            .then(
+                if (snapshotEnabled) Modifier.recordHistoryCardSnapshot(dragSnapshot) else Modifier
+            )
             .clipboardFloatCardGestures(
                 dragAction = entryLongPressAction,
                 onClick = onClick,
                 onStationaryLongPress = {
-                    // 「长按条目」= 原地按住不动 → 展开操作按钮（目前只有这一档动作）。
-                    if (entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY) {
+                    // 「长按条目」= 原地按住不动 → 展开操作按钮（多选模式下不响应）。
+                    if (!selectionActive &&
+                        entryHoldAction == ClipboardFloatEntryHoldAction.OPERATE_ENTRY
+                    ) {
                         onStationaryLongPress()
                     }
                 },
                 onDragAction = {
-                    // 「按住拖动」：任何拖动都先收起操作按钮。
-                    onDragStartAction()
-                    when (entryLongPressAction) {
-                        ClipboardFloatEntryLongPressAction.DRAG_DROP -> {
-                            // ⚠️ 先起协程：快照是 suspend 抓的（得先让这一帧画进 GraphicsLayer）。
-                            dragScope.launch {
-                                startClipboardFloatEntryDrag(
-                                    view = view,
-                                    context = context,
-                                    entry = entry,
-                                    thumbnail = thumbnail,
-                                    onDragStart = onEntryDragStart,
-                                    onDragEnd = onEntryDragEnd,
-                                    snapshot = dragSnapshot.capture(),
-                                )
+                    // 多选模式下拖动不响应，避免误触起拖。
+                    if (!selectionActive) {
+                        // 「按住拖动」：任何拖动都先收起操作按钮。
+                        onDragStartAction()
+                        when (entryLongPressAction) {
+                            ClipboardFloatEntryLongPressAction.DRAG_DROP -> {
+                                // ⚠️ 先起协程：快照是 suspend 抓的（得先让这一帧画进 GraphicsLayer）。
+                                dragScope.launch {
+                                    startClipboardFloatEntryDrag(
+                                        view = view,
+                                        context = context,
+                                        entry = entry,
+                                        thumbnail = thumbnail,
+                                        onDragStart = onEntryDragStart,
+                                        onDragEnd = onEntryDragEnd,
+                                        snapshot = dragSnapshot.capture(),
+                                    )
+                                }
                             }
-                        }
 
-                        ClipboardFloatEntryLongPressAction.WORD_TAP -> onWordTapLongClick()
-                        ClipboardFloatEntryLongPressAction.NONE -> Unit
+                            ClipboardFloatEntryLongPressAction.WORD_TAP -> onWordTapLongClick()
+                            ClipboardFloatEntryLongPressAction.NONE -> Unit
+                        }
                     }
                 },
             ),
         shape = RoundedCornerShape(12.dp),
-        color = clipboardFloatCardColor(LocalClipboardFloatGlass.current.active),
-        border = androidx.compose.foundation.BorderStroke(1.dp, scheme.onSurface.copy(alpha = 0.06f))
+        // 多选：整卡高亮（不再用勾选框）—— 底色淡主色 + 描边加粗成主色。
+        color = if (selected) {
+            scheme.primary.copy(alpha = 0.14f)
+        } else {
+            clipboardFloatCardColor(LocalClipboardFloatGlass.current.active)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) scheme.primary else scheme.onSurface.copy(alpha = 0.06f),
+        )
     ) {
+        // 三层：顶部（来源 + 时间）／正文（展开箭头只在这一层）／底部（长按调出的操作按钮排）。
+        // 箭头只挤压正文 —— **既不影响顶部时间，也不影响底部那排按钮**。
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    top = 8.dp,
+                    // 操作按钮排自己带底部留白，这里只留 4dp 间距。
+                    bottom = if (actionRowVisible) 4.dp else 8.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            // 顶部：来源应用 + 剪贴时间（整条宽度，不被右侧箭头挤压）。
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = typeLabel,
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = scheme.primary,
-                    maxLines = 1
+                // 顶部左侧：来源应用（类型标识隐藏后，空位由来源徽标顶上）。
+                ClipboardFloatSourceBadge(
+                    entry = entry,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                if (SHOW_ENTRY_TYPE_LABEL) {
+                    Text(
+                        // 业务字段照常取（displayTypeLabelKey → 文本/图片/富文本/链接），只是默认不渲染。
+                        text = clipboardFloatTypeLabel(entry.displayTypeLabelKey()),
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = scheme.primary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
                 Text(
                     text = formatClipboardFloatRelativeTime(entry.createdAtEpochMs),
                     style = MiuixTheme.textStyles.footnote2,
@@ -1119,79 +1443,153 @@ private fun ClipboardFloatEntryCard(
                     maxLines = 1
                 )
             }
-            if (thumbnail != null) {
-                Image(
-                    bitmap = thumbnail.asImageBitmap(),
-                    contentDescription = stringResource(R.string.clipboard_float_meta_image),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 64.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                val imageMeta = buildClipboardFloatImageMeta(entry)
-                if (imageMeta.isNotEmpty()) {
-                    Text(
-                        text = imageMeta,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = scheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            } else if (linkMeta != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+
+            // 正文：展开/折叠箭头只在这一层占宽，只挤压正文内容。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = linkMeta.host,
-                        style = MiuixTheme.textStyles.body2,
-                        color = scheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
+                    val fullImage = expandedImage
+                    if (hasImage) {
+                        if (expanded && fullImage != null) {
+                            // 展开：按"原图 × min(1, 宽比, 高比)"显示 —— 完整、保持比例、不放大。
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Image(
+                                    bitmap = fullImage.asImageBitmap(),
+                                    contentDescription = stringResource(R.string.clipboard_float_meta_image),
+                                    modifier = Modifier
+                                        .size(expandedImageSize.first.dp, expandedImageSize.second.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            }
+                        } else if (thumbnail != null) {
+                            // 折叠：整图等比缩进「可用宽 × 64dp」，且**不超过原尺寸**（小图不放大）。
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Image(
+                                    bitmap = thumbnail.asImageBitmap(),
+                                    contentDescription = stringResource(R.string.clipboard_float_meta_image),
+                                    modifier = Modifier
+                                        .size(collapsedImageSize.first.dp, collapsedImageSize.second.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            }
+                        } else if (originalImageSize != null) {
+                            // 位图还在解码：先按折叠后的实际尺寸占位，保证卡片高度稳定。
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(collapsedImageSize.first.dp, collapsedImageSize.second.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(scheme.onSurface.copy(alpha = 0.04f))
+                                )
+                            }
+                        }
+                        val imageMeta = buildClipboardFloatImageMeta(entry)
+                        if (SHOW_ENTRY_META_LABEL && imageMeta.isNotEmpty()) {
+                            Text(
+                                text = imageMeta,
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = scheme.onSurfaceVariantSummary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else if (linkMeta != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                tint = scheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = linkMeta.host,
+                                style = MiuixTheme.textStyles.body2,
+                                color = scheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
+                        if (linkMeta.path.isNotEmpty()) {
+                            Text(
+                                text = linkMeta.path,
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = scheme.onSurfaceVariantSummary,
+                                maxLines = if (expanded) Int.MAX_VALUE else 2,
+                                overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                                onTextLayout = { if (!expanded) textOverflow = it.hasVisualOverflow }
+                            )
+                        }
+                    } else {
+                        if (bodyText.isNotEmpty()) {
+                            Text(
+                                text = bodyText,
+                                style = MiuixTheme.textStyles.body2,
+                                color = scheme.onSurface,
+                                maxLines = textMaxLines,
+                                overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                                onTextLayout = { if (!expanded) textOverflow = it.hasVisualOverflow }
+                            )
+                        }
+                        val metaText = buildClipboardFloatTextMeta(entry, bodyText)
+                        if (SHOW_ENTRY_META_LABEL && metaText.isNotEmpty()) {
+                            Text(
+                                text = metaText,
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = scheme.onSurfaceVariantSummary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
-                if (linkMeta.path.isNotEmpty()) {
-                    Text(
-                        text = linkMeta.path,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = scheme.onSurfaceVariantSummary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            } else {
-                if (bodyText.isNotEmpty()) {
-                    Text(
-                        text = bodyText,
-                        style = MiuixTheme.textStyles.body2,
-                        color = scheme.onSurface,
-                        maxLines = previewLines,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                val metaText = buildClipboardFloatTextMeta(entry, bodyText)
-                if (metaText.isNotEmpty()) {
-                    Text(
-                        text = metaText,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = scheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                if (expandable) {
+                    IconButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (expanded) {
+                                Icons.Default.KeyboardArrowUp
+                            } else {
+                                Icons.Default.KeyboardArrowDown
+                            },
+                            contentDescription = stringResource(
+                                if (expanded) {
+                                    R.string.clipboard_float_entry_collapse
+                                } else {
+                                    R.string.clipboard_float_entry_expand
+                                }
+                            ),
+                            tint = scheme.onSurfaceVariantSummary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
-
-            // 「长按条目」→ 操作条目：卡片底部展开的一排操作按钮。
+            // 「长按条目」→ 操作条目：卡片底部展开的一排操作按钮（**整卡宽度**）。
             // 这一排自己会 consume 按下的 down（见 ClipboardFloatEntryActionRow），
             // 所以点按钮不会顺带触发卡片的单击 / 拖动。
             AnimatedVisibility(
@@ -1199,15 +1597,40 @@ private fun ClipboardFloatEntryCard(
                 enter = fadeIn(tween(120)) + expandVertically(tween(160)),
                 exit = fadeOut(tween(100)) + shrinkVertically(tween(140)),
             ) {
-                ClipboardFloatEntryActionRow(
-                    showSaveImage = hasImage,
-                    onActionRowBounds = onActionRowBounds,
-                    onAction = onEntryAction,
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
+                ) {
+                    ClipboardFloatEntryActionRow(
+                        showSaveImage = hasImage,
+                        onActionRowBounds = onActionRowBounds,
+                        onAction = onEntryAction,
+                    )
+                }
             }
         }
     }
 }
+
+/**
+ * 条目卡片里是否显示**类型标识**（文本 / 图片 / 富文本 / 链接 …）。
+ *
+ * 只是**不渲染**：`entry.displayTypeLabelKey()` 与 `clipboardFloatTypeLabel()` 都保留，
+ * 后续做筛选 / 统计可以直接复用。要恢复显示把这里改回 `true` 即可。
+ */
+private const val SHOW_ENTRY_TYPE_LABEL = false
+
+/**
+ * 条目卡片里是否显示**元信息**（`X 字 · X 行`、图片的 `图片 · PNG`）。
+ *
+ * 只是**不渲染**：`buildClipboardFloatTextMeta()` / `buildClipboardFloatImageMeta()`
+ * 继续保留并照常计算。要恢复显示改回 `true` 即可。
+ */
+private const val SHOW_ENTRY_META_LABEL = false
+
+/** 展开后整图的解码上限（最长边 px）：≈2 倍卡片宽，足够清晰又不至于占太多内存。 */
+private const val CARD_EXPANDED_IMAGE_MAX_SIDE_PX = 1024
 
 /** 卡片样式「长按条目（原地不动）」与「按住拖动」之间的抖动死区。 */
 private const val CARD_HOLD_DEAD_ZONE_DP = 12f
@@ -1405,6 +1828,87 @@ private fun ClipboardFloatEntryActionIcon(
     }
 }
 
+/**
+ * 多选操作条：`已选 N 项 · 全选 · 删除 · 取消`。
+ *
+ * 删除走**两步确认**（点「删除」先把整条变成"确认删除 N 条？[取消][删除]"），
+ * 因为批量删除不可撤销。
+ */
+@Composable
+private fun ClipboardFloatSelectionBar(
+    selectedCount: Int,
+    totalCount: Int,
+    confirming: Boolean,
+    onSelectAll: () -> Unit,
+    onRequestDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val scheme = MiuixTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(scheme.surfaceContainerHigh.copy(alpha = 0.92f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = if (confirming) {
+                stringResource(R.string.clipboard_float_delete_confirm, selectedCount)
+            } else {
+                stringResource(R.string.clipboard_float_selected_count, selectedCount)
+            },
+            style = MiuixTheme.textStyles.footnote2,
+            color = if (confirming) scheme.error else scheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (confirming) {
+            ClipboardFloatSelectionAction(stringResource(R.string.clipboard_float_cancel)) { onCancel() }
+            ClipboardFloatSelectionAction(
+                label = stringResource(R.string.clipboard_float_delete),
+                destructive = true,
+            ) { onConfirmDelete() }
+        } else {
+            ClipboardFloatSelectionAction(
+                label = stringResource(R.string.clipboard_float_select_all),
+                enabled = selectedCount < totalCount,
+            ) { onSelectAll() }
+            ClipboardFloatSelectionAction(
+                label = stringResource(R.string.clipboard_float_delete),
+                destructive = true,
+                enabled = selectedCount > 0,
+            ) { onRequestDelete() }
+        }
+    }
+}
+
+@Composable
+private fun ClipboardFloatSelectionAction(
+    label: String,
+    destructive: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val scheme = MiuixTheme.colorScheme
+    Text(
+        text = label,
+        style = MiuixTheme.textStyles.body2,
+        color = when {
+            !enabled -> scheme.onSurfaceVariantSummary.copy(alpha = 0.4f)
+            destructive -> scheme.error
+            else -> scheme.primary
+        },
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
 /** 单行列表样式沿用 `combinedClickable` 的老手势（卡片样式已换成 [clipboardFloatCardGestures]）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1479,11 +1983,13 @@ private fun rememberClipboardFloatThumbnail(
     entry: ClipboardEntry,
     enabled: Boolean,
     cardWidthPx: Int,
-    thumbHeightPx: Int
+    thumbHeightPx: Int,
+    /** true = 整图等比缩进目标框、**不裁切**（卡片样式用；单行样式仍走裁切条）。 */
+    fitWhole: Boolean = false,
 ): Bitmap? {
     val context = LocalContext.current
     var thumbnail by remember(entry.id) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(entry.id, enabled, cardWidthPx, thumbHeightPx) {
+    LaunchedEffect(entry.id, enabled, cardWidthPx, thumbHeightPx, fitWhole) {
         if (!enabled) {
             thumbnail = null
             return@LaunchedEffect
@@ -1493,7 +1999,8 @@ private fun rememberClipboardFloatThumbnail(
                 context = context,
                 entry = entry,
                 targetWidthPx = cardWidthPx,
-                maxVisibleHeightPx = thumbHeightPx
+                maxVisibleHeightPx = thumbHeightPx,
+                fitWhole = fitWhole,
             ).firstOrNull()
         }
     }

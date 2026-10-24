@@ -106,6 +106,9 @@ object FloatBallPickResultPanel {
     private var activeTextState: MutableState<String>? = null
     private var textModeState: MutableState<PickResultTextMode>? = null
     private var a11yTextState: MutableState<String?>? = null
+
+    /** 本次取词来源应用（面板里点"复制"时写进剪贴板历史）。 */
+    private var sourcePackageState: MutableState<String?>? = null
     private var ocrTextState: MutableState<String?>? = null
     private var textSourceState: MutableState<PickResultTextSource>? = null
     private var ocrAvailableState: MutableState<Boolean>? = null
@@ -353,6 +356,7 @@ object FloatBallPickResultPanel {
         OverlayCompositor.bringAboveContentPanels()
         composeView?.requestFocus()
         a11yTextState?.value = result.a11yText
+        sourcePackageState?.value = result.sourcePackage
         ocrTextState?.value = result.ocrText
         textSourceState?.value = result.activeSource
         ocrAvailableState?.value = result.ocrAvailable
@@ -864,6 +868,7 @@ object FloatBallPickResultPanel {
             activeTextState = null
             textModeState = null
             a11yTextState = null
+            sourcePackageState = null
             ocrTextState = null
             textSourceState = null
             ocrAvailableState = null
@@ -956,6 +961,7 @@ object FloatBallPickResultPanel {
         val activeTextHolder = mutableStateOf("")
         val textModeHolder = mutableStateOf(PickResultTextMode.WORD_TAP)
         val a11yTextHolder = mutableStateOf<String?>(null)
+        val sourcePackageHolder = mutableStateOf<String?>(null)
         val ocrTextHolder = mutableStateOf<String?>(null)
         val textSourceHolder = mutableStateOf(PickResultTextSource.A11Y)
         val ocrAvailableHolder = mutableStateOf(false)
@@ -977,6 +983,7 @@ object FloatBallPickResultPanel {
         activeTextState = activeTextHolder
         textModeState = textModeHolder
         a11yTextState = a11yTextHolder
+        sourcePackageState = sourcePackageHolder
         ocrTextState = ocrTextHolder
         textSourceState = textSourceHolder
         ocrAvailableState = ocrAvailableHolder
@@ -1148,7 +1155,14 @@ object FloatBallPickResultPanel {
                     },
                     onTextChange = { textHolder.value = it },
                     onCopy = { value, keepPanelOpen ->
-                        FloatBallTextPick.copyText(context, value)
+                        android.util.Log.i("PickSource", "panel copy source=${sourcePackageHolder.value}")
+                        // 带上"取词时所在的应用"：写进剪贴板历史后能显示成「微信 · 取词」。
+                        FloatBallTextPick.copyText(
+                            context = context,
+                            text = value,
+                            sourcePackage = sourcePackageHolder.value,
+                            sourceKind = com.slideindex.app.clipboard.ClipboardSourceKind.PICKED,
+                        )
                         // 复制后必须有可见反馈：非分词模式下长按选中文本、点自绘工具条的复制按钮时
                         // 面板**保持打开**，此前只有一次震动（触觉反馈关掉或设备无马达就等于零反馈），
                         // 用户报「复制了没有任何提示」。这里用挂在无障碍层的 OverlayToastWindow ——

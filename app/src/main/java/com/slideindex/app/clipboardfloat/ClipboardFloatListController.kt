@@ -31,12 +31,22 @@ class ClipboardFloatListController(
 
     private val _searchResults = MutableStateFlow<List<ClipboardEntry>>(emptyList())
 
+    /** 按来源应用筛选：null = 全部。 */
+    private val _sourceFilter = MutableStateFlow<String?>(null)
+    val sourceFilter: StateFlow<String?> = _sourceFilter.asStateFlow()
+
+    /** 当前历史里出现过的来源包名（App chip 的来源）。 */
+    private val _availableSources = MutableStateFlow<List<String>>(emptyList())
+    val availableSources: StateFlow<List<String>> = _availableSources.asStateFlow()
+
     val filteredEntries: StateFlow<List<ClipboardEntry>> = combine(
         _entries,
         _searchResults,
-        _searchQuery
-    ) { entries, searched, query ->
-        if (query.trim().isEmpty()) entries else searched
+        _searchQuery,
+        _sourceFilter,
+    ) { entries, searched, query, sourceFilter ->
+        val base = if (query.trim().isEmpty()) entries else searched
+        if (sourceFilter == null) base else base.filter { it.sourcePackage == sourceFilter }
     }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _loading = MutableStateFlow(false)
@@ -60,6 +70,7 @@ class ClipboardFloatListController(
                 } else {
                     reload()
                 }
+                refreshAvailableSources()
             }
         }
         reload()
@@ -67,6 +78,15 @@ class ClipboardFloatListController(
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    fun setSourceFilter(packageName: String?) {
+        _sourceFilter.value = packageName
+    }
+
+    private suspend fun refreshAvailableSources() {
+        val repo = repository ?: return
+        _availableSources.value = runCatching { repo.distinctSourcePackages() }.getOrDefault(emptyList())
     }
 
     fun reload() {
@@ -83,6 +103,7 @@ class ClipboardFloatListController(
                     )
                 }
                 _entries.value = page.entries
+                refreshAvailableSources()
             } finally {
                 if (showLoading) _loading.value = false
             }

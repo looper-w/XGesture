@@ -515,6 +515,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
                     onDragWindow = ::onDragWindow,
                     onDragWindowStart = ::onDragWindowStart,
                     onDragWindowEnd = ::onDragWindowEnd,
+                    onResizeStart = ::onResizeStart,
                     onResizeWindow = ::onResizeWindow,
                     onSearchActiveChanged = ::onSearchActiveChanged,
                     onEntryClick = ::onEntryClick,
@@ -522,6 +523,7 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
                     onEntryDragStart = ::onEntryDragStart,
                     onEntryDragEnd = ::onEntryDragEnd,
                     onEntryAction = ::onEntryAction,
+                    onDeleteEntries = ::onDeleteEntries,
                     onUserInteraction = ::onUserInteraction
                 )
             }
@@ -608,14 +610,30 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
             }
         } else {
             params.flags = ClipboardFloatWindowFlags.withOutsideTouch(params.flags, enabled = true)
+            // 兜底：屏幕比"设计上限"还小时（例如 600dp 面板放在 393dp 宽的屏上），
+            // 或持久化里存着旧的大尺寸，这里统一把窗口收进屏幕内。
             params.width = ClipboardFloatWindowMetrics.expandedPanelWindowWidthPx(panelWidthDp, density)
+                .coerceAtMost((screenWidth - marginPx).coerceAtLeast(1))
             params.height = ClipboardFloatWindowMetrics.expandedPanelWindowHeightPx(panelHeightDp, density)
+                .coerceAtMost((screenHeight - marginPx).coerceAtLeast(1))
             if (shouldUseDefaultPanelPosition(forceDefaultPosition)) {
                 applyPanelDefaultPosition(screenWidth, screenHeight, marginPx, density)
             } else {
                 params.x = panelPosX
                 params.y = panelPosY.coerceAtLeast(marginPx)
             }
+            // 右/下边缘不出屏（位置可能来自旧配置，或被尺寸调整挤出去）。
+            params.x = params.x.coerceAtMost(
+                (screenWidth - params.width - marginPx).coerceAtLeast(0)
+            )
+            params.y = params.y.coerceAtMost(
+                (screenHeight - params.height - marginPx).coerceAtLeast(0)
+            )
+            panelPosX = params.x
+            panelPosY = params.y
+            // 把实际生效的尺寸回写到状态里，避免下次又用越界的旧值。
+            panelWidthDp = ClipboardFloatWindowMetrics.contentWidthDpFromWindowWidthPx(params.width, density)
+            panelHeightDp = ClipboardFloatWindowMetrics.contentHeightDpFromWindowHeightPx(params.height, density)
         }
         params.alpha = if (isDimmed) (panelAlpha * 0.35f).coerceAtLeast(0.2f) else panelAlpha
 
@@ -679,22 +697,85 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
         resetAutoCloseTimer()
     }
 
-    private fun onResizeWindow(dw: Float, dh: Float) {
+    /** 右下角把手按下（真正开始拖动时调用一次）：只做计时/落盘相关收尾。 */
+    private fun onResizeStart() {
         if (!viewAdded || displayMode != ClipboardFloatDisplayMode.Expanded) return
         cancelIdleGeometryPersist()
         resetAutoCloseTimer()
+    }
+
+    /**
+     * 右下角把手拖动：**严格跟随手指**。
+     *
+     * @param edgeXpx/edgeYpx 手指在**窗口坐标**里的位置（px），直接当作面板右下角的目标位置；
+     *   面板在窗口里内缩了 [ClipboardFloatWindowMetrics.PANEL_SHADOW_INSET_DP]（阴影留白），
+     *   所以换算成窗口宽度时要把它补回来。
+     *
+     * 语义是"绝对位置"而不是"增量/相对起点"：
+     *   - 拖动中角落与手指 1:1，没有任何死区；
+     *   - 缩到最小/放到最大后角落停在边界，手指必须先回到边界位置，窗口才继续变化。
+     */
+    private fun onResizeWindow(edgeXpx: Float, edgeYpx: Float) {
+        if (!viewAdded || displayMode != ClipboardFloatDisplayMode.Expanded) return
+        resetAutoCloseTimer()
         val density = resources.displayMetrics.density
-        val insetPx = ClipboardFloatWindowMetrics.panelShadowInsetPx(density) * 2
-        val nextWidthDp = ClipboardFloatWindowMetrics.coerceWidth(
-            ((params.width + dw.roundToInt() - insetPx) / density).roundToInt()
+        val marginPx = (ClipboardFloatWindowMetrics.EDGE_MARGIN_DP * density).roundToInt()
+        val insetPx = ClipboardFloatWindowMetrics.panelShadowInsetPx(density)
+        val metrics = resources.displayMetrics
+
+        val minWidthPx = ClipboardFloatWindowMetrics.expandedPanelWindowWidthPx(
+            ClipboardFloatWindowMetrics.MIN_WIDTH_DP, density
         )
-        val nextHeightDp = ClipboardFloatWindowMetrics.coerceHeight(
-            ((params.height + dh.roundToInt() - insetPx) / density).roundToInt()
+        val minHeightPx = ClipboardFloatWindowMetrics.expandedPanelWindowHeightPx(
+            ClipboardFloatWindowMetrics.MIN_HEIGHT_DP, density
         )
-        panelWidthDp = nextWidthDp
-        panelHeightDp = nextHeightDp
-        params.width = ClipboardFloatWindowMetrics.expandedPanelWindowWidthPx(nextWidthDp, density)
-        params.height = ClipboardFloatWindowMetrics.expandedPanelWindowHeightPx(nextHeightDp, density)
+
+        // 位置兜底：当前 x/y 处连"最小尺寸"都放不下时，先把窗口推进屏幕内。
+        // 只在放不下时改 x/y（一次到位），不会在拖动过程中反复移动，避免引入尺寸反馈。
+        var x = params.x
+        var y = params.y
+        if (metrics.widthPixels - x - marginPx < minWidthPx) {
+            x = (metrics.widthPixels - minWidthPx - marginPx).coerceAtLeast(0)
+        }
+        if (metrics.heightPixels - y - marginPx < minHeightPx) {
+            y = (metrics.heightPixels - minHeightPx - marginPx).coerceAtLeast(0)
+        }
+
+        // 上限 = min(设计最大尺寸, 从 x/y 到屏幕边缘的可用空间)。
+        val maxWidthPx = minOf(
+            ClipboardFloatWindowMetrics.expandedPanelWindowWidthPx(
+                ClipboardFloatWindowMetrics.MAX_WIDTH_DP, density
+            ),
+            (metrics.widthPixels - x - marginPx).coerceAtLeast(minWidthPx),
+        )
+        val maxHeightPx = minOf(
+            ClipboardFloatWindowMetrics.expandedPanelWindowHeightPx(
+                ClipboardFloatWindowMetrics.MAX_HEIGHT_DP, density
+            ),
+            (metrics.heightPixels - y - marginPx).coerceAtLeast(minHeightPx),
+        )
+
+        val targetWidthPx = (edgeXpx.roundToInt() + insetPx).coerceIn(minWidthPx, maxWidthPx)
+        val targetHeightPx = (edgeYpx.roundToInt() + insetPx).coerceIn(minHeightPx, maxHeightPx)
+
+        // 右/下边缘最后兜一层：尺寸即使越界（最小宽放不下时），也把窗口整体左/上移回屏幕内。
+        val finalX = x.coerceAtMost((metrics.widthPixels - targetWidthPx - marginPx).coerceAtLeast(0))
+        val finalY = y.coerceAtMost((metrics.heightPixels - targetHeightPx - marginPx).coerceAtLeast(0))
+
+        if (targetWidthPx == params.width && targetHeightPx == params.height &&
+            finalX == params.x && finalY == params.y
+        ) {
+            return
+        }
+
+        params.width = targetWidthPx
+        params.height = targetHeightPx
+        params.x = finalX
+        params.y = finalY
+        panelPosX = finalX
+        panelPosY = finalY
+        panelWidthDp = ClipboardFloatWindowMetrics.contentWidthDpFromWindowWidthPx(targetWidthPx, density)
+        panelHeightDp = ClipboardFloatWindowMetrics.contentHeightDpFromWindowHeightPx(targetHeightPx, density)
         composeView?.let { windowManager.updateViewLayout(it, params) }
         scheduleIdleGeometryPersist()
     }
@@ -1030,6 +1111,28 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
         }
     }
 
+    /**
+     * 多选删除：一条消息里删掉多条记录。
+     *
+     * 缩略图缓存先逐条清掉（否则列表重建时还会命中旧位图），再在 IO 线程批量落库
+     * （[ClipboardHistoryRepository.deleteMany] 一次锁 + 一次 revision，列表不会抖）。
+     */
+    private fun onDeleteEntries(entries: List<ClipboardEntry>) {
+        if (entries.isEmpty()) return
+        resetAutoCloseTimer()
+        entries.forEach { ClipboardThumbnailCache.evictEntry(it) }
+        lifecycleScope.launch(Dispatchers.IO) {
+            deps.clipboardHistoryRepository.deleteMany(entries.map { it.id })
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    this@ClipboardFloatService,
+                    getString(R.string.clipboard_float_deleted_count, entries.size),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
     private fun onEntryClick(entry: com.slideindex.app.clipboard.ClipboardEntry) {
         resetAutoCloseTimer()
         val service = SlideIndexAccessibilityService.accessibilityInstance()
@@ -1127,7 +1230,9 @@ class ClipboardFloatService : Service(), LifecycleOwner, SavedStateRegistryOwner
                         screenshot = null,
                         screenRect = null,
                         activeSource = PickResultTextSource.A11Y,
-                        contentOrigin = PickResultContentOrigin.STASH_CLIPBOARD
+                        contentOrigin = PickResultContentOrigin.STASH_CLIPBOARD,
+                        // 从历史条目进取词面板：来源沿用这条记录自己的来源（面板里再复制时不会丢）。
+                        sourcePackage = entry.sourcePackage,
                     ),
                     initialTextMode = PickResultTextMode.WORD_TAP
                 )

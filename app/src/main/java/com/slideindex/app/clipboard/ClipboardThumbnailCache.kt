@@ -14,6 +14,9 @@ object ClipboardThumbnailCache {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
+    /** 原图尺寸缓存（只存 w×h，一条几十字节）：折叠态占位高度要用，避免反复读 header。 */
+    private val originalSizeCache = LruCache<String, Pair<Int, Int>>(256)
+
     fun evictAll() {
         bitmapCache.evictAll()
     }
@@ -40,18 +43,38 @@ object ClipboardThumbnailCache {
         context: Context,
         entry: ClipboardEntry,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        /** true = 整图等比缩进目标框、**不裁切**（浮窗卡片样式）。 */
+        fitWhole: Boolean = false,
     ): List<Bitmap> {
         val fileNames = entry.resolvedImageFileNames()
         if (fileNames.isNotEmpty()) {
             return fileNames.mapNotNull { fileName ->
-                getOrLoadFileForCard(context, fileName, targetWidthPx, maxVisibleHeightPx)
+                getOrLoadFileForCard(context, fileName, targetWidthPx, maxVisibleHeightPx, fitWhole)
             }
         }
         if (!entry.hasImageContent() || entry.uri.isNullOrBlank()) return emptyList()
-        return getOrLoadUriForCard(context, entry.uri, targetWidthPx, maxVisibleHeightPx)
+        return getOrLoadUriForCard(context, entry.uri, targetWidthPx, maxVisibleHeightPx, fitWhole)
             ?.let { listOf(it) }
             ?: emptyList()
+    }
+
+    /**
+     * 原图尺寸（px），用于"展开时不放大"的尺寸计算。
+     * 文件图读本地文件 bounds，URI 图读流 bounds；都拿不到时返回 null（调用方退回旧行为）。
+     */
+    fun loadEntryOriginalSize(context: Context, entry: ClipboardEntry): Pair<Int, Int>? {
+        val fileName = entry.resolvedImageFileNames().firstOrNull()
+        val uri = entry.uri?.takeIf { it.isNotBlank() }
+        val key = fileName?.let { "file:$it" } ?: uri?.let { "uri:$it" } ?: return null
+        originalSizeCache.get(key)?.let { return it }
+        val size = if (fileName != null) {
+            ClipboardImageStore.imageDimensions(context, fileName)
+        } else {
+            ClipboardImageStore.uriImageDimensions(context, uri.orEmpty())
+        } ?: return null
+        originalSizeCache.put(key, size)
+        return size
     }
 
     fun loadBlockThumbnailForCard(
@@ -69,6 +92,8 @@ object ClipboardThumbnailCache {
                 (uri != null && key.startsWith("uri:$uri:"))
         }
         keysToRemove.forEach { bitmapCache.remove(it) }
+        fileNames.forEach { originalSizeCache.remove("file:$it") }
+        uri?.let { originalSizeCache.remove("uri:$it") }
     }
 
     fun clear() {
@@ -95,15 +120,17 @@ object ClipboardThumbnailCache {
         context: Context,
         fileName: String,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap? {
-        val key = fileCardKey(fileName, targetWidthPx, maxVisibleHeightPx)
+        val key = fileCardKey(fileName, targetWidthPx, maxVisibleHeightPx, fitWhole)
         bitmapCache.get(key)?.let { return it }
         val loaded = ClipboardImageStore.loadThumbnailForCard(
             context,
             fileName,
             targetWidthPx,
-            maxVisibleHeightPx
+            maxVisibleHeightPx,
+            fitWhole
         ) ?: return null
         bitmapCache.put(key, loaded)
         return loaded
@@ -113,15 +140,17 @@ object ClipboardThumbnailCache {
         context: Context,
         uri: String,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap? {
-        val key = uriCardKey(uri, targetWidthPx, maxVisibleHeightPx)
+        val key = uriCardKey(uri, targetWidthPx, maxVisibleHeightPx, fitWhole)
         bitmapCache.get(key)?.let { return it }
         val loaded = ClipboardImageStore.loadUriThumbnailForCard(
             context,
             uri,
             targetWidthPx,
-            maxVisibleHeightPx
+            maxVisibleHeightPx,
+            fitWhole
         ) ?: return null
         bitmapCache.put(key, loaded)
         return loaded
@@ -131,9 +160,17 @@ object ClipboardThumbnailCache {
 
     private fun uriKey(uri: String, maxSidePx: Int = 0): String = "uri:$uri:$maxSidePx"
 
-    private fun fileCardKey(fileName: String, targetWidthPx: Int, maxVisibleHeightPx: Int): String =
-        "file:$fileName:w$targetWidthPx:h$maxVisibleHeightPx"
+    private fun fileCardKey(
+        fileName: String,
+        targetWidthPx: Int,
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
+    ): String = "file:$fileName:w$targetWidthPx:h$maxVisibleHeightPx${if (fitWhole) ":fit" else ""}"
 
-    private fun uriCardKey(uri: String, targetWidthPx: Int, maxVisibleHeightPx: Int): String =
-        "uri:$uri:w$targetWidthPx:h$maxVisibleHeightPx"
+    private fun uriCardKey(
+        uri: String,
+        targetWidthPx: Int,
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
+    ): String = "uri:$uri:w$targetWidthPx:h$maxVisibleHeightPx${if (fitWhole) ":fit" else ""}"
 }
