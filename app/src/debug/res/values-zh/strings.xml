@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 变体专用（中文）：与正式包「X手势」区分。 -->
+<resources>
+    <string name="app_name">X手势 Dev</string>
+</resources>

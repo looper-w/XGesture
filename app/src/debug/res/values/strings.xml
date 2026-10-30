@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  debug 变体专用资源覆盖：桌面名称加 Dev 后缀，方便与正式包区分。
+  只影响 debug 构建（applicationIdSuffix = ".debug"），正式包仍为 XGesture。
+-->
+<resources>
+    <string name="app_name">XGesture Dev</string>
+</resources>

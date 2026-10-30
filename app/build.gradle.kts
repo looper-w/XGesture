@@ -106,10 +106,15 @@ android {
 
     buildTypes {
         debug {
-            // 本地快速装机：debug 也用发布签名，可直接覆盖安装在发布包上，不丢数据。
+            // 本地快速装机：debug 也用发布签名，避免额外证书。
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // debug **独立包名**：与 CI 产出的正式包（com.slideindex.app）并存，
+            // 本地装机不再覆盖手机上正在用的正式版（正式包的数据、版本都不动）。
+            // 代价：debug 的数据是独立的（要带老数据请走应用内「备份 → 恢复」）。
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
         release {
             isMinifyEnabled = true
