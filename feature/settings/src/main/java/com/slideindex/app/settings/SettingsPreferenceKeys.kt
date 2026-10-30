@@ -614,8 +614,11 @@ internal object SettingsPreferenceKeys {
         floatPreferencesKey("float_ball_pick_bottom_transition_fraction_v2")
     val FLOAT_BALL_PICK_TEXT_FIRST_PANEL = booleanPreferencesKey("float_ball_pick_text_first_panel")
     val FLOAT_BALL_PICK_PANEL_STYLE = stringPreferencesKey("float_ball_pick_panel_style")
-    /** 取词面板落位方式：贴底 / 屏幕中间。 */
+    /** 取词面板落位方式：贴底 / 屏幕中间 / 自定义。 */
     val FLOAT_BALL_PICK_PANEL_PLACEMENT = stringPreferencesKey("float_ball_pick_panel_placement")
+    /** 自定义落位时，面板底边距屏幕底部的间距（dp）。 */
+    val FLOAT_BALL_PICK_PANEL_CUSTOM_BOTTOM_INSET_DP =
+        floatPreferencesKey("float_ball_pick_panel_custom_bottom_inset_dp")
     val FLOAT_BALL_PICK_SEARCH_GRID_DEFAULT_STATE = stringPreferencesKey("float_ball_pick_search_grid_default_state")
     val FLOAT_BALL_PICK_SEARCH_GRID_LAST_EXPANDED = booleanPreferencesKey("float_ball_pick_search_grid_last_expanded")
     val FLOAT_BALL_PICK_TEXT_MODE_DEFAULT = stringPreferencesKey("float_ball_pick_text_mode_default")
@@ -699,7 +702,22 @@ internal object SettingsPreferenceKeys {
         stringPreferencesKey("clipboard_float_entry_long_press_action_single_line")
     val CLIPBOARD_FLOAT_ENTRY_LONG_PRESS_ACTION_CARD =
         stringPreferencesKey("clipboard_float_entry_long_press_action_card")
+
+    /** 卡片模式「长按条目」（**原地按住不动**）动作；与「按住拖动」分开，见 [ClipboardFloatEntryHoldAction]。 */
+    val CLIPBOARD_FLOAT_ENTRY_HOLD_ACTION_CARD =
+        stringPreferencesKey("clipboard_float_entry_hold_action_card")
     val CLIPBOARD_FLOAT_LIST_STYLE = intPreferencesKey("clipboard_float_list_style")
+
+    /**
+     * 浮窗列表顺序：true = **最新一条在最底部**（更像聊天，靠近拇指）；false = 最新在最顶部。
+     *
+     * 默认 true：这个浮窗是小面板、把手在右下角，最新记录放底部单手更好点。
+     */
+    val CLIPBOARD_FLOAT_NEWEST_AT_BOTTOM = booleanPreferencesKey("clipboard_float_newest_at_bottom")
+    /**
+     * 浮窗「类型栏」是否放在**面板最底部**（true）还是工具栏下方（false，默认）。
+     */
+    val CLIPBOARD_FLOAT_TYPE_BAR_AT_BOTTOM = booleanPreferencesKey("clipboard_float_type_bar_at_bottom")
     /** @deprecated Legacy shared geometry; migrated to panel keys on read. */
     val CLIPBOARD_FLOAT_WIDTH_DP = intPreferencesKey("clipboard_float_width_dp")
     /** @deprecated Legacy shared geometry; migrated to panel keys on read. */

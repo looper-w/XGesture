@@ -12,6 +12,7 @@ import com.slideindex.app.settings.PickPanelSlideAnimationDefaults
 import com.slideindex.app.ui.miuix.groupedCardItems
 import com.slideindex.app.ui.settings.components.SettingExpandableSwitchRow
 import com.slideindex.app.ui.settings.components.SettingsScreenScaffold
+import com.slideindex.app.ui.settings.components.SettingsSliderRow
 import com.slideindex.app.ui.settings.components.settingsCardScopeItem
 import com.slideindex.app.ui.settings.components.settingsLazySmallTitle
 import kotlin.math.roundToInt
@@ -24,6 +25,8 @@ fun FloatBallPickPanelLayoutBehaviorSettingsScreen(
     onBack: () -> Unit,
     onPickPanelStyleChange: (com.slideindex.app.settings.PickResultPanelStyle) -> Unit,
     onPickPanelPlacementChange: (com.slideindex.app.settings.PickResultPanelPlacement) -> Unit,
+    /** 自定义落位：面板底边距屏幕底部的间距（dp）。 */
+    onPickPanelCustomBottomInsetChange: (Float) -> Unit,
     onPickSearchGridDefaultStateChange: (com.slideindex.app.settings.PickResultSearchGridDefaultState) -> Unit,
     onPickTextModeDefaultChange: (com.slideindex.app.settings.PickResultTextModeDefault) -> Unit,
     onPickTextFirstPanelChange: (Boolean) -> Unit,
@@ -60,12 +63,16 @@ fun FloatBallPickPanelLayoutBehaviorSettingsScreen(
 
     val placementBottomLabel = stringResource(R.string.float_ball_pick_panel_placement_bottom)
     val placementCenterLabel = stringResource(R.string.float_ball_pick_panel_placement_center)
-    val placementOptions = remember(placementBottomLabel, placementCenterLabel) {
+    val placementCustomLabel = stringResource(R.string.float_ball_pick_panel_placement_custom)
+    val placementOptions = remember(placementBottomLabel, placementCenterLabel, placementCustomLabel) {
         listOf(
             com.slideindex.app.settings.PickResultPanelPlacement.BOTTOM_DOCKED to placementBottomLabel,
             com.slideindex.app.settings.PickResultPanelPlacement.CENTER to placementCenterLabel,
+            com.slideindex.app.settings.PickResultPanelPlacement.CUSTOM to placementCustomLabel,
         )
     }
+    val customInsetSelected = settings.floatBallPickPanelPlacement ==
+        com.slideindex.app.settings.PickResultPanelPlacement.CUSTOM
     val selectedPlacementIndex = remember(settings.floatBallPickPanelPlacement, placementOptions) {
         placementOptions.indexOfFirst { it.first == settings.floatBallPickPanelPlacement }.coerceAtLeast(0)
     }
@@ -189,6 +196,26 @@ fun FloatBallPickPanelLayoutBehaviorSettingsScreen(
                         )
                     },
                 )
+                if (customInsetSelected) {
+                    add(
+                        settingsCardScopeItem("panel-placement-custom-inset") {
+                            SettingsSliderRow(
+                                title = stringResource(R.string.float_ball_pick_panel_custom_bottom_inset),
+                                value = settings.floatBallPickPanelCustomBottomInsetDp,
+                                valueRange = 0f..
+                                    AppSettings.FLOAT_BALL_PICK_PANEL_CUSTOM_INSET_MAX_DP,
+                                // 10dp 一档：够细，滑杆也不会抖。
+                                steps = 59,
+                                enabled = true,
+                                label = stringResource(
+                                    R.string.corner_gesture_zone_dp_value,
+                                    settings.floatBallPickPanelCustomBottomInsetDp.roundToInt(),
+                                ),
+                                onValueChange = onPickPanelCustomBottomInsetChange,
+                            )
+                        },
+                    )
+                }
                 add(
                     settingsCardScopeItem("text-size") {
                         SettingsSliderRow(

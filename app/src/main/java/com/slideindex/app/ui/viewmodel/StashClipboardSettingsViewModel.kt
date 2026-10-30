@@ -7,6 +7,7 @@ import com.slideindex.app.service.HistoryFloatLifecycle
 import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.ClipboardFloatEntryClickAction
+import com.slideindex.app.settings.ClipboardFloatEntryHoldAction
 import com.slideindex.app.settings.ClipboardFloatEntryLongPressAction
 import com.slideindex.app.settings.ClipboardMonitoringMode
 import com.slideindex.app.settings.ClipboardMonitoringCapture
@@ -255,10 +256,31 @@ class StashClipboardSettingsViewModel @Inject constructor(
             settingsRepository.setClipboardFloatCardEntryLongPressAction(action)
         }
 
+    fun setClipboardFloatCardEntryHoldAction(action: ClipboardFloatEntryHoldAction) =
+        launchOptimisticSettingsWrite(
+            optimisticUpdate = {
+                it.copy(clipboard = it.clipboard.copy(clipboardFloatCardEntryHoldAction = action))
+            },
+        ) {
+            settingsRepository.setClipboardFloatCardEntryHoldAction(action)
+        }
+
     fun setClipboardFloatListStyle(style: com.slideindex.app.settings.ClipboardFloatListStyle) = launchOptimisticSettingsWrite(
         optimisticUpdate = { it.copy(clipboard = it.clipboard.copy(clipboardFloatListStyleId = style.id)) },
     ) {
         settingsRepository.setClipboardFloatListStyle(style)
+    }
+
+    fun setClipboardFloatNewestAtBottom(enabled: Boolean) = launchOptimisticSettingsWrite(
+        optimisticUpdate = { it.copy(clipboard = it.clipboard.copy(clipboardFloatNewestAtBottom = enabled)) },
+    ) {
+        settingsRepository.setClipboardFloatNewestAtBottom(enabled)
+    }
+
+    fun setClipboardFloatTypeBarAtBottom(enabled: Boolean) = launchOptimisticSettingsWrite(
+        optimisticUpdate = { it.copy(clipboard = it.clipboard.copy(clipboardFloatTypeBarAtBottom = enabled)) },
+    ) {
+        settingsRepository.setClipboardFloatTypeBarAtBottom(enabled)
     }
 
     fun setClipboardFloatPasteHapticEnabled(enabled: Boolean) = launchOptimisticSettingsWrite(

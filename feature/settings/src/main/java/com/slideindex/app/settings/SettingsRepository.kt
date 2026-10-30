@@ -662,6 +662,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setFloatBallPickPanelPlacement(placement: PickResultPanelPlacement) =
         overlay.setFloatBallPickPanelPlacement(placement)
 
+    suspend fun setFloatBallPickPanelCustomBottomInsetDp(value: Float) =
+        overlay.setFloatBallPickPanelCustomBottomInsetDp(value)
+
     suspend fun setFloatBallPickSearchGridDefaultState(state: PickResultSearchGridDefaultState) =
         overlay.setFloatBallPickSearchGridDefaultState(state)
 
@@ -806,8 +809,17 @@ class SettingsRepository @Inject constructor(
     suspend fun setClipboardFloatCardEntryLongPressAction(action: ClipboardFloatEntryLongPressAction) =
         overlay.setClipboardFloatCardEntryLongPressAction(action)
 
+    suspend fun setClipboardFloatCardEntryHoldAction(action: ClipboardFloatEntryHoldAction) =
+        overlay.setClipboardFloatCardEntryHoldAction(action)
+
     suspend fun setClipboardFloatListStyle(style: ClipboardFloatListStyle) =
         overlay.setClipboardFloatListStyle(style)
+
+    suspend fun setClipboardFloatNewestAtBottom(enabled: Boolean) =
+        overlay.setClipboardFloatNewestAtBottom(enabled)
+
+    suspend fun setClipboardFloatTypeBarAtBottom(enabled: Boolean) =
+        overlay.setClipboardFloatTypeBarAtBottom(enabled)
 
     suspend fun setClipboardFloatAlpha(alpha: Float) =
         overlay.setClipboardFloatAlpha(alpha)

@@ -17,8 +17,12 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import com.slideindex.app.clipboard.ClipboardAccess
+import com.slideindex.app.clipboard.ClipboardEntry
+import com.slideindex.app.clipboard.ClipboardEntryType
 import com.slideindex.app.clipboard.ClipboardPayload
 import com.slideindex.app.clipboard.ClipboardReader
+import com.slideindex.app.clipboard.ClipboardSource
+import com.slideindex.app.clipboard.ClipboardSourceKind
 import com.slideindex.app.R
 import com.slideindex.app.imageeditor.ImageEditorPickReturnContext
 import com.slideindex.app.overlay.share.ShareSheetLauncher
@@ -70,9 +74,41 @@ object FloatBallTextPick {
         }
     }
 
-    fun copyText(context: Context, text: String) {
-        val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    /**
+     * 复制文字到系统剪贴板，并写一条**带来源**的剪贴板历史。
+     *
+     * @param sourcePackage 取词时所在的应用（面板传 `FloatBallPickResult.sourcePackage`）；
+     *   null = 无法判定（例如闪念条目复制）。
+     * @param sourceKind 取词 = `PICKED`（精确）；本应用其它复制 = `SELF`。
+     */
+    fun copyText(
+        context: Context,
+        text: String,
+        sourcePackage: String? = null,
+        sourceKind: ClipboardSourceKind = ClipboardSourceKind.SELF,
+    ) {
+        val appContext = context.applicationContext
+        val clipboard = appContext.getSystemService(ClipboardManager::class.java) ?: return
+
+        val repository = ClipboardAccess.repository
+        val source = ClipboardSource(sourcePackage, sourceKind)
+        val payload = ClipboardPayload(
+            type = ClipboardEntryType.TEXT,
+            text = text,
+            sourcePackage = source.packageName,
+            sourceKind = source.kind,
+        )
+        // ⚠️ 这里**不能**用 noteOutgoingWrite()：它会 ignoreOwnClipboardWrite() 把监听静音 3 秒，
+        // 并设 skipIngestRemaining=3（不区分内容）——用户紧跟着在别的应用里复制的条目会整条丢失。
+        // beginSelfWrite 只按"同内容 + 1.5s"压住这次写入的回声，其它事件照常放行。
+        repository?.beginSelfWrite(payload)
         clipboard.setPrimaryClip(ClipData.newPlainText("float_ball_text", text))
+        // 显式来源入库：进历史；内容已存在时提到最前并更新来源（决策 A）。
+        repository?.ingestPayload(
+            payload = payload,
+            bypassOutgoingSkip = true,
+            explicitSource = source,
+        )
     }
 
     fun copyImage(context: Context, bitmap: Bitmap) {

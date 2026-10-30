@@ -503,6 +503,12 @@ internal object SettingsSnapshotReader {
             floatBallPickPanelPlacement = PickResultPanelPlacement.fromStorageKey(
                 prefs[SettingsPreferenceKeys.FLOAT_BALL_PICK_PANEL_PLACEMENT],
             ),
+            floatBallPickPanelCustomBottomInsetDp =
+                (prefs[SettingsPreferenceKeys.FLOAT_BALL_PICK_PANEL_CUSTOM_BOTTOM_INSET_DP] ?: 0f)
+                    .coerceIn(
+                        0f,
+                        AppSettings.FLOAT_BALL_PICK_PANEL_CUSTOM_INSET_MAX_DP,
+                    ),
             floatBallPickSearchGridDefaultState =
                 PickResultSearchGridDefaultState.fromStorageKey(prefs[SettingsPreferenceKeys.FLOAT_BALL_PICK_SEARCH_GRID_DEFAULT_STATE]),
             floatBallPickSearchGridLastExpanded =
@@ -653,8 +659,13 @@ internal object SettingsSnapshotReader {
                 prefs,
                 ClipboardFloatListStyle.CARD,
             ),
+            clipboardFloatCardEntryHoldAction = ClipboardFloatEntryGesturePrefs.readHoldAction(prefs),
             clipboardFloatListStyleId = prefs[SettingsPreferenceKeys.CLIPBOARD_FLOAT_LIST_STYLE]
                 ?: ClipboardFloatListStyle.SINGLE_LINE.id,
+            clipboardFloatNewestAtBottom =
+                prefs[SettingsPreferenceKeys.CLIPBOARD_FLOAT_NEWEST_AT_BOTTOM] ?: true,
+            clipboardFloatTypeBarAtBottom =
+                prefs[SettingsPreferenceKeys.CLIPBOARD_FLOAT_TYPE_BAR_AT_BOTTOM] ?: false,
             clipboardFloatPortraitGeometry = ClipboardFloatGeometryPrefs.readOrientationGeometry(
                 prefs,
                 landscape = false,

@@ -139,6 +139,22 @@ object ClipboardImageStore {
         }
     }
 
+    /** URI 版原图尺寸（只读 bounds，不解码像素）。用于判断"展开时是否会被放大"。 */
+    fun uriImageDimensions(context: Context, uriString: String): Pair<Int, Int>? {
+        if (uriString.isBlank()) return null
+        return runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uriString.toUri())?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                bounds.outWidth to bounds.outHeight
+            } else {
+                null
+            }
+        }.getOrNull()
+    }
+
     fun loadBitmapScaled(context: Context, fileName: String?, maxSidePx: Int): Bitmap? {
         if (fileName.isNullOrBlank()) return null
         val file = imageFile(context, fileName)
@@ -152,19 +168,23 @@ object ClipboardImageStore {
     }
 
     /**
-     * 剪贴板卡片预览：按卡片宽度解码，保证 [ContentScale.Crop] 不放大模糊；
-     * 超长截图只保留顶部可见区域，避免整图解码 OOM。
+     * 剪贴板卡片预览。
+     *
+     * @param fitWhole false（默认，历史面板/单行样式沿用）：按卡片宽度缩放 + **顶部裁切**成横条；
+     *   true（浮窗卡片样式）：把**整图**等比缩进 `targetWidthPx × maxVisibleHeightPx` 内、**不裁切**，
+     *   这样折叠态也能一眼认出是哪张图。
      */
     fun loadThumbnailForCard(
         context: Context,
         fileName: String?,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap? {
         if (fileName.isNullOrBlank() || targetWidthPx <= 0 || maxVisibleHeightPx <= 0) return null
         val file = imageFile(context, fileName)
         if (!file.exists()) return null
-        return decodeThumbnailForCardFromFile(file, targetWidthPx, maxVisibleHeightPx)
+        return decodeThumbnailForCardFromFile(file, targetWidthPx, maxVisibleHeightPx, fitWhole)
     }
 
     /**
@@ -179,7 +199,8 @@ object ClipboardImageStore {
         context: Context,
         uriString: String,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap? {
         if (uriString.isBlank() || targetWidthPx <= 0 || maxVisibleHeightPx <= 0) return null
         val uri = uriString.toUri()
@@ -193,8 +214,18 @@ object ClipboardImageStore {
             // 与 `decodeThumbnailForCardFromFile` 完全同一套采样算式（两处必须一致，
             // 否则"文件图"和"URI 图"在同一个卡片里会一个清晰一个糊）。
             var sampleSize = 1
-            while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
-                sampleSize *= 2
+            if (fitWhole) {
+                // 缩略图要装下整图：宽、高都不超过目标的两倍即可（竖长截图不必按宽度全解）。
+                while (
+                    bounds.outWidth / sampleSize > targetWidthPx * 2 ||
+                    bounds.outHeight / sampleSize > maxVisibleHeightPx * 2
+                ) {
+                    sampleSize *= 2
+                }
+            } else {
+                while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
+                    sampleSize *= 2
+                }
             }
             val budgetSidePx = maxOf(targetWidthPx, maxVisibleHeightPx)
             val maxPixels = minOf(
@@ -212,7 +243,8 @@ object ClipboardImageStore {
                 scaleAndCropThumbnailForCard(
                     BitmapFactory.decodeStream(stream, null, options) ?: return@use null,
                     targetWidthPx,
-                    maxVisibleHeightPx
+                    maxVisibleHeightPx,
+                    fitWhole
                 )
             }
         }.getOrNull()
@@ -367,15 +399,26 @@ object ClipboardImageStore {
     private fun decodeThumbnailForCardFromFile(
         file: File,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sampleSize = 1
-        while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
-            sampleSize *= 2
+        if (fitWhole) {
+            // 与 `loadUriThumbnailForCard` 同一套算式（两处必须一致）。
+            while (
+                bounds.outWidth / sampleSize > targetWidthPx * 2 ||
+                bounds.outHeight / sampleSize > maxVisibleHeightPx * 2
+            ) {
+                sampleSize *= 2
+            }
+        } else {
+            while (bounds.outWidth / sampleSize > targetWidthPx * 2) {
+                sampleSize *= 2
+            }
         }
         // ⚠️ §0.16.20：像素预算改用"**较大边**"，与 `StashRepository.loadThumbnailByFileNameForCard`
         // 保持**同一套算法**（两个 tab 的缩略图必须一起变清晰，不能只修一个）。
@@ -396,14 +439,29 @@ object ClipboardImageStore {
 
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
         val decoded = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
-        return scaleAndCropThumbnailForCard(decoded, targetWidthPx, maxVisibleHeightPx)
+        return scaleAndCropThumbnailForCard(decoded, targetWidthPx, maxVisibleHeightPx, fitWhole)
     }
 
     private fun scaleAndCropThumbnailForCard(
         source: Bitmap,
         targetWidthPx: Int,
-        maxVisibleHeightPx: Int
+        maxVisibleHeightPx: Int,
+        fitWhole: Boolean = false,
     ): Bitmap {
+        if (fitWhole) {
+            // 整图等比缩进目标框：只缩小、不放大、不裁切。
+            val scale = minOf(
+                1f,
+                targetWidthPx.toFloat() / source.width.coerceAtLeast(1),
+                maxVisibleHeightPx.toFloat() / source.height.coerceAtLeast(1),
+            )
+            if (scale >= 1f) return source
+            val targetW = (source.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (source.height * scale).toInt().coerceAtLeast(1)
+            val scaled = source.scale(targetW, targetH)
+            if (scaled !== source) source.recycle()
+            return scaled
+        }
         var bitmap = source
         if (bitmap.width != targetWidthPx) {
             val scaledHeight = (

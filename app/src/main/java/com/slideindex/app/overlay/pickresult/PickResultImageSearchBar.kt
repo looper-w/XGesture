@@ -27,7 +27,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -317,20 +316,29 @@ fun PickResultImageSearchBar(
             }
         }
 
-        Row(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            if (toolbarOnRight) {
-                // 「右侧」= 工具图标组在右、分享芯片在左。
-                ShareEngineSlot()
-                ImageActionIcons()
-            } else {
-                ImageActionIcons()
-                ShareEngineSlot()
+        // 分享目标 chip 与图标组**成组靠边**（与文本面板底栏同一套处理）：原来是两端分布，
+        // chip 去掉 App 名之后中间空档过大。间距 0dp → 总宽不变，不会更挤。
+        // 靠哪一边仍由「图片区工具行位置」决定 —— 该设置管的是**分享目标 chip** 在左/右
+        // （见 PickResultImageToolbarPosition 的注释），图标组挨着它。
+        // 强制 LTR：否则阿语等 RTL 下 Start/End 翻转，这个设置就失效了。
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(
+                    0.dp,
+                    if (toolbarOnRight) Alignment.End else Alignment.Start,
+                ),
+            ) {
+                if (toolbarOnRight) {
+                    ImageActionIcons()
+                    ShareEngineSlot()
+                } else {
+                    ShareEngineSlot()
+                    ImageActionIcons()
+                }
             }
         }
         return
@@ -573,26 +581,21 @@ private fun ImageShareEngineChip(
                         shareWith(displayEngine)
                     }
                 }
+                // 只留图标：原来还显示目标 App 名（约 60~70dp 宽），去掉后这一排更省地方；
+                // 读屏靠下面的 semantics（用一直没被使用的 shareLabel 拼上目标 App 名）。
                 .padding(
-                    start = 14.dp,
-                    end = if (showEnginePicker) 6.dp else 14.dp
-                ),
+                    start = 10.dp,
+                    end = if (showEnginePicker) 6.dp else 10.dp
+                )
+                .semantics {
+                    contentDescription = "$shareLabel：${displayEngine.name}"
+                },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             SearchEngineIcon(
                 engine = displayEngine,
                 modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = displayEngine.name,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = 14.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                ),
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             if (showEnginePicker) {
                 Box(
@@ -604,7 +607,8 @@ private fun ImageShareEngineChip(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.pick_result_image_search_pick_engine),
+                        // 这颗三角是「选择分享目标」（原来错标成「选择搜索引擎」）。
+                        contentDescription = stringResource(R.string.pick_result_image_share_pick_engine),
                         modifier = Modifier.size(if (compact) 14.dp else 16.dp),
                         tint = Color.White.copy(alpha = 0.85f)
                     )
@@ -732,24 +736,12 @@ private fun PickResultImageSearchActions(
     overlayMode: Boolean = false,
     compact: Boolean = false,
 ) {
-    var moreMenuExpanded by remember { mutableStateOf(false) }
-
     Row(
         modifier = Modifier.height(if (compact) 32.dp else 38.dp),
         horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 1. Direct Action: Image Search (以图搜图)
-        PickResultActionIcon(
-            icon = Icons.Outlined.ImageSearch,
-            enabled = true,
-            onClick = onImageSearch,
-            contentDescription = stringResource(R.string.pick_result_action_image_search),
-            overlayMode = overlayMode,
-            compact = compact,
-        )
-
-        // 2. Direct Action: Save (保存图片)
+        // 1. Direct Action: Save (保存图片)
         PickResultActionIcon(
             icon = Icons.Outlined.Save,
             enabled = true,
@@ -760,7 +752,7 @@ private fun PickResultImageSearchActions(
             compact = compact,
         )
 
-        // 3. Direct Action: Share (分享图片，直接外显)
+        // 2. Direct Action: Share (分享图片，直接外显)
         PickResultActionIcon(
             icon = Icons.Outlined.Share,
             enabled = true,
@@ -770,46 +762,39 @@ private fun PickResultImageSearchActions(
             compact = compact,
         )
 
-        // 4. More Action: Dropdown Menu (钉选 / 暂存)
-        val hasMoreActions = onPinToScreen != null || onStash != null
-        if (hasMoreActions) {
-            Box {
-                PickResultActionIcon(
-                    icon = Icons.Filled.MoreVert,
-                    enabled = true,
-                    onClick = { moreMenuExpanded = true },
-                    contentDescription = stringResource(R.string.pick_result_action_more),
-                    overlayMode = overlayMode,
-                    compact = compact,
-                )
-
-                PickResultDropdownMenuInLtr(
-                    expanded = moreMenuExpanded,
-                    onDismissRequest = { moreMenuExpanded = false }
-                ) {
-                    onPinToScreen?.let { pinAction ->
-                        PickResultActionMenuItem(
-                            label = stringResource(R.string.pick_result_pin),
-                            icon = Icons.Outlined.PushPin,
-                            onClick = {
-                                moreMenuExpanded = false
-                                pinAction()
-                            },
-                        )
-                    }
-                    onStash?.let { stashAction ->
-                        PickResultActionMenuItem(
-                            label = stringResource(R.string.pick_result_stash),
-                            icon = Icons.Outlined.Archive,
-                            onClick = {
-                                moreMenuExpanded = false
-                                stashAction()
-                            },
-                        )
-                    }
-                }
-            }
+        // 3. Direct Action: Pin to screen (钉在屏幕，外显纯图标；不可用时整颗不出现)
+        onPinToScreen?.let { pinAction ->
+            PickResultActionIcon(
+                icon = Icons.Outlined.PushPin,
+                enabled = true,
+                onClick = pinAction,
+                contentDescription = stringResource(R.string.pick_result_pin),
+                overlayMode = overlayMode,
+                compact = compact,
+            )
         }
+
+        // 4. Direct Action: Stash (暂存，外显纯图标；不可用时整颗不出现)
+        onStash?.let { stashAction ->
+            PickResultActionIcon(
+                icon = Icons.Outlined.Archive,
+                enabled = true,
+                onClick = stashAction,
+                contentDescription = stringResource(R.string.pick_result_stash),
+                overlayMode = overlayMode,
+                compact = compact,
+            )
+        }
+
+        // 5. Direct Action: Image Search (以图搜图，排在最后)
+        PickResultActionIcon(
+            icon = Icons.Outlined.ImageSearch,
+            enabled = true,
+            onClick = onImageSearch,
+            contentDescription = stringResource(R.string.pick_result_action_image_search),
+            overlayMode = overlayMode,
+            compact = compact,
+        )
     }
 }
 

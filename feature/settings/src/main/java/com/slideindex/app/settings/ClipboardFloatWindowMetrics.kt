@@ -13,9 +13,6 @@ object ClipboardFloatWindowMetrics {
     const val MAX_HEIGHT_DP = 720
     const val DEFAULT_HEIGHT_DP = 280
 
-    const val COLUMN_ONE_MAX_CONTENT_DP = 260
-    const val COLUMN_TWO_MAX_CONTENT_DP = 420
-
     const val PAGE_SIZE = 40
 
     /** 浮窗贴边留白 */
@@ -78,9 +75,14 @@ object ClipboardFloatWindowMetrics {
 
     fun coerceHeight(value: Int): Int = value.coerceIn(MIN_HEIGHT_DP, MAX_HEIGHT_DP)
 
-    fun columnCount(contentWidthDp: Int): Int = when {
-        contentWidthDp < COLUMN_ONE_MAX_CONTENT_DP -> 1
-        contentWidthDp < COLUMN_TWO_MAX_CONTENT_DP -> 2
-        else -> 3
-    }
+    /**
+     * 多行卡片模式的列数：**恒为 1**（单栏铺满）。
+     *
+     * 早先是响应式的 1/2/3 栏（内容宽 ≥260dp 两栏、≥420dp 三栏）。改成单栏的原因：
+     * 多栏时卡片很窄、预览只有 2 行（单栏是 3 行），正文几乎看不全；卡片模式的价值是"看清内容"，
+     * 而不是"一屏塞进更多条"。窗口本身的宽度仍由用户拖拽决定（[MIN_WIDTH_DP] ~ [MAX_WIDTH_DP]）。
+     *
+     * 单行列表样式（SINGLE_LINE）走 LazyColumn，与列数无关。
+     */
+    fun columnCount(@Suppress("UNUSED_PARAMETER") contentWidthDp: Int): Int = 1
 }

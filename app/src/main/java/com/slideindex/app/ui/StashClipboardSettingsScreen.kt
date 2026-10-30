@@ -26,6 +26,7 @@ import com.slideindex.app.clipboard.ClipboardPermissionHelper
 import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.settings.AppSettings
 import com.slideindex.app.settings.ClipboardFloatEntryClickAction
+import com.slideindex.app.settings.ClipboardFloatEntryHoldAction
 import com.slideindex.app.settings.ClipboardFloatEntryLongPressAction
 import com.slideindex.app.settings.ClipboardFloatListStyle
 import com.slideindex.app.settings.ClipboardHistoryCapacity
@@ -537,7 +538,10 @@ fun ClipboardFloatSettingsScreen(
     onClipboardFloatSingleLineEntryLongPressActionChange: (ClipboardFloatEntryLongPressAction) -> Unit,
     onClipboardFloatCardEntryClickActionChange: (ClipboardFloatEntryClickAction) -> Unit,
     onClipboardFloatCardEntryLongPressActionChange: (ClipboardFloatEntryLongPressAction) -> Unit,
+    onClipboardFloatCardEntryHoldActionChange: (ClipboardFloatEntryHoldAction) -> Unit,
     onClipboardFloatListStyleChange: (ClipboardFloatListStyle) -> Unit,
+    onClipboardFloatNewestAtBottomChange: (Boolean) -> Unit,
+    onClipboardFloatTypeBarAtBottomChange: (Boolean) -> Unit,
     onClipboardFloatPasteHapticEnabledChange: (Boolean) -> Unit,
     onClipboardFloatAlphaChange: (Float) -> Unit,
     onClipboardFloatAutoDimWhenUnfocusedChange: (Boolean) -> Unit,
@@ -577,6 +581,11 @@ fun ClipboardFloatSettingsScreen(
         if (it >= 0) it else 0
     }
     val cardLongPressIndex = longPressActionEntries.indexOf(settings.clipboardFloatCardEntryLongPressAction).let {
+        if (it >= 0) it else 0
+    }
+    /** 「长按条目」（原地按住不动）—— 目前只有"操作条目"一项，留着列表结构便于以后扩档。 */
+    val holdActionEntries = ClipboardFloatEntryHoldAction.entries
+    val cardHoldIndex = holdActionEntries.indexOf(settings.clipboardFloatCardEntryHoldAction).let {
         if (it >= 0) it else 0
     }
 
@@ -663,6 +672,28 @@ fun ClipboardFloatSettingsScreen(
                         )
                     },
                 )
+                add(
+                    settingsCardScopeItem("float-order") {
+                        SettingSwitchRow(
+                            title = stringResource(R.string.clipboard_float_newest_at_bottom_title),
+                            subtitle = stringResource(R.string.clipboard_float_newest_at_bottom_desc),
+                            checked = settings.clipboardFloatNewestAtBottom,
+                            enabled = true,
+                            onCheckedChange = onClipboardFloatNewestAtBottomChange,
+                        )
+                    },
+                )
+                add(
+                    settingsCardScopeItem("float-type-bar-position") {
+                        SettingSwitchRow(
+                            title = stringResource(R.string.clipboard_float_type_bar_bottom_title),
+                            subtitle = stringResource(R.string.clipboard_float_type_bar_bottom_desc),
+                            checked = settings.clipboardFloatTypeBarAtBottom,
+                            enabled = true,
+                            onCheckedChange = onClipboardFloatTypeBarAtBottomChange,
+                        )
+                    },
+                )
                 when (settings.clipboardFloatListStyle) {
                     ClipboardFloatListStyle.SINGLE_LINE -> {
                         add(
@@ -704,13 +735,27 @@ fun ClipboardFloatSettingsScreen(
                             },
                         )
                         add(
-                            settingsCardScopeItem("float-card-long-press") {
+                            settingsCardScopeItem("float-card-hold-drag") {
                                 SettingDropdownRow(
-                                    title = stringResource(R.string.clipboard_float_gesture_long_press),
+                                    // 「按住拖动」：按住之后真的拖动超过死区才动作（原来的"长按条目"）。
+                                    title = stringResource(R.string.clipboard_float_gesture_hold_drag),
                                     items = longPressActionEntries.map { clipboardFloatLongPressActionLabel(it) },
                                     selectedIndex = cardLongPressIndex,
                                     onSelectedIndexChange = {
                                         onClipboardFloatCardEntryLongPressActionChange(longPressActionEntries[it])
+                                    },
+                                )
+                            },
+                        )
+                        add(
+                            settingsCardScopeItem("float-card-long-press") {
+                                SettingDropdownRow(
+                                    // 「长按条目」：原地按住不动 → 条目下方弹出操作按钮。
+                                    title = stringResource(R.string.clipboard_float_gesture_long_press),
+                                    items = holdActionEntries.map { clipboardFloatHoldActionLabel(it) },
+                                    selectedIndex = cardHoldIndex,
+                                    onSelectedIndexChange = {
+                                        onClipboardFloatCardEntryHoldActionChange(holdActionEntries[it])
                                     },
                                 )
                             },
@@ -864,6 +909,12 @@ private fun clipboardFloatLongPressActionLabel(action: ClipboardFloatEntryLongPr
     ClipboardFloatEntryLongPressAction.WORD_TAP -> stringResource(R.string.clipboard_float_long_press_action_word_tap)
     ClipboardFloatEntryLongPressAction.DRAG_DROP -> stringResource(R.string.clipboard_float_long_press_action_drag_drop)
     ClipboardFloatEntryLongPressAction.NONE -> stringResource(R.string.clipboard_float_long_press_action_none)
+}
+
+@Composable
+private fun clipboardFloatHoldActionLabel(action: ClipboardFloatEntryHoldAction): String = when (action) {
+    ClipboardFloatEntryHoldAction.OPERATE_ENTRY ->
+        stringResource(R.string.clipboard_float_hold_action_operate_entry)
 }
 
 @Composable

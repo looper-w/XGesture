@@ -310,8 +310,10 @@ data class FloatBallSettings(
     val floatBallPickTextFirstPanel: Boolean = false,
     /** Pick panel presentation style: INTEGRATED_SCROLL vs TAB_PAGED. */
     val floatBallPickPanelStyle: PickResultPanelStyle = PickResultPanelStyle.TAB_PAGED,
-    /** 取词面板在屏幕上的落位方式：贴底（默认）或屏幕中间。 */
+    /** 取词面板在屏幕上的落位方式：贴底（默认）、屏幕中间或自定义。 */
     val floatBallPickPanelPlacement: PickResultPanelPlacement = PickResultPanelPlacement.BOTTOM_DOCKED,
+    /** 自定义落位：面板底边距屏幕底部的间距（dp），0 = 等同贴底。 */
+    val floatBallPickPanelCustomBottomInsetDp: Float = 0f,
     /** Pick panel: default search grid display state (REMEMBER_LAST, ALWAYS_EXPANDED, ALWAYS_COLLAPSED). */
     val floatBallPickSearchGridDefaultState: PickResultSearchGridDefaultState = PickResultSearchGridDefaultState.REMEMBER_LAST,
     /** Pick panel: last search grid expanded state for REMEMBER_LAST mode. */
@@ -485,7 +487,17 @@ data class ClipboardSettings(
     val clipboardFloatCardEntryClickAction: ClipboardFloatEntryClickAction = ClipboardFloatEntryClickAction.PASTE,
     val clipboardFloatCardEntryLongPressAction: ClipboardFloatEntryLongPressAction =
         ClipboardFloatEntryLongPressAction.DRAG_DROP,
+    /** 卡片模式「长按条目」（原地按住不动）动作；只有卡片样式有这一项。 */
+    val clipboardFloatCardEntryHoldAction: ClipboardFloatEntryHoldAction =
+        ClipboardFloatEntryHoldAction.OPERATE_ENTRY,
     val clipboardFloatListStyleId: Int = ClipboardFloatListStyle.SINGLE_LINE.id,
+    /** 浮窗列表顺序：true = 最新记录在最底部，false = 最新在最顶部。 */
+    val clipboardFloatNewestAtBottom: Boolean = true,
+    /**
+     * 浮窗「类型栏」（全部 / 收藏 / 文本 / 图片 / 链接 / 富文本）的位置：
+     * false = 工具栏下方（默认），true = 面板**最底部**（离拇指更近）。
+     */
+    val clipboardFloatTypeBarAtBottom: Boolean = false,
     val clipboardFloatPortraitGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
     val clipboardFloatLandscapeGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
     /** @deprecated Use [clipboardFloatPortraitGeometry]; kept for legacy readers. */

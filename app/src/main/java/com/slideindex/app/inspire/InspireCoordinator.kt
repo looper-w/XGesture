@@ -80,6 +80,13 @@ object InspireCoordinator {
             return
         }
         PickPerf.mark("pick_enqueued", "preview=$previewBoundsPick")
+        // 取词**发起瞬间**的前台应用 = 这条内容的真实来源（面板里复制时会写进剪贴板历史）。
+        // ⚠️ 必须用窗口树解析（排除本应用与输入法）：手势触发时 currentForegroundPackage()
+        // 常常返回我们自己的浮窗包，过滤后就变成 null → 历史里显示"未知来源"。
+        InspireDataHolder.setPickedSourcePackage(
+            com.slideindex.app.util.AccessibilityForegroundResolver.resolveHostPackage(service)
+                ?: com.slideindex.app.service.OverlayService.foregroundPackage
+        )
         scope.launch(pickDispatcher) {
             try {
                 PickPerf.mark("pick_dispatch_start", "preview=$previewBoundsPick")
@@ -142,6 +149,11 @@ object InspireCoordinator {
             return
         }
         PickPerf.mark("pick_enqueued", "regional=$regionalRect")
+        // 同上：用窗口树解析真实宿主应用（已排除本应用 / 输入法），避免取到我们自己的浮窗包。
+        InspireDataHolder.setPickedSourcePackage(
+            com.slideindex.app.util.AccessibilityForegroundResolver.resolveHostPackage(service)
+                ?: com.slideindex.app.service.OverlayService.foregroundPackage
+        )
         scope.launch(pickDispatcher) {
             try {
                 PickPerf.mark("pick_dispatch_start", "regional=$regionalRect")
@@ -212,6 +224,17 @@ object InspireCoordinator {
             "rect=$dragSelectRect preview=$previewBoundsPick regional=$regionalRectPick deferOcr=$deferOcr ocr=$ocrFallbackEnabled"
         )
         InspireDataHolder.clear()
+        // 兜底再解析一次（clear 之后、构建结果之前）：万一某个入口没在发起时记录，
+        // 这里也能拿到宿主应用；已记录的值只在为空时才覆盖。
+        if (InspireDataHolder.pickedSourcePackage.isNullOrBlank()) {
+            InspireDataHolder.setPickedSourcePackage(
+                com.slideindex.app.util.AccessibilityForegroundResolver.resolve(context)
+            )
+        }
+        android.util.Log.i(
+            "PickSource",
+            "pick result source=${InspireDataHolder.pickedSourcePackage}",
+        )
         InspireDataHolder.setDragRect(Rect(dragSelectRect))
 
         val startUptimeMs = SystemClock.uptimeMillis()
@@ -544,7 +567,9 @@ object InspireCoordinator {
             ocrAvailable = resolvedOcrReady,
             ocrPending = deferOcr && resolvedOcrReady,
             ocrPreferSwitchOnComplete = preferOcrOnDeferredComplete,
-            barcodeResults = emptyList()
+            barcodeResults = emptyList(),
+            // 取词发起时所在的应用；null = 无法判定（例如纯 OCR 且当时没有前台应用）。
+            sourcePackage = InspireDataHolder.pickedSourcePackage,
         )
     }
 

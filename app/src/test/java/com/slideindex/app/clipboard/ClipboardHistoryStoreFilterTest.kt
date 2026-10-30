@@ -215,4 +215,70 @@ class ClipboardHistoryStoreFilterTest {
         assertEquals(1, store.count(ClipboardHistoryFilter.Image))
         assertEquals(9, store.count(ClipboardHistoryFilter.All))
     }
+
+    // ---------------- 清理面板：五类互斥且完备 ----------------
+
+    private fun cleanupIds(category: ClipboardCleanupCategory): List<String> =
+        store.queryForCleanup(listOf(category), ClipboardCleanupScope.ALL).map { it.id }.sorted()
+
+    @Test
+    fun `cleanup categories are disjoint and cover every entry`() {
+        val buckets = ClipboardCleanupCategory.entries.map(::cleanupIds)
+        val flat = buckets.flatten()
+        assertEquals("五类之间不能有重叠", flat.size, flat.toSet().size)
+        assertEquals(
+            "五类合起来必须等于全部记录（全勾 = 清空整个历史）",
+            ids(ClipboardHistoryFilter.All).toSet(),
+            flat.toSet(),
+        )
+    }
+
+    @Test
+    fun `cleanup text bucket is the fallback for plain text intent and inline links`() {
+        assertEquals(
+            listOf("intent", "plain-text", "text-mention-link"),
+            cleanupIds(ClipboardCleanupCategory.TEXT),
+        )
+    }
+
+    @Test
+    fun `cleanup scope splits starred and unstarred without overlap`() {
+        store.setStarred("plain-text", true)
+
+        fun idsOf(scope: ClipboardCleanupScope): List<String> =
+            store.queryForCleanup(ClipboardCleanupCategory.entries, scope).map { it.id }
+
+        val starred = idsOf(ClipboardCleanupScope.STARRED)
+        val unstarred = idsOf(ClipboardCleanupScope.UNSTARRED)
+        val all = idsOf(ClipboardCleanupScope.ALL)
+
+        assertEquals(listOf("plain-text"), starred)
+        assertEquals(all.size, starred.size + unstarred.size)
+        assertTrue(starred.none { it in unstarred })
+        // 收藏状态必须同时落到列与 JSON：只改列的话这里会读到 false，面板也会少算。
+        assertTrue(store.queryById("plain-text")?.starred == true)
+    }
+
+    @Test
+    fun `cleanup treats html with images as rich text and only non html images as image`() {
+        // 清理面板的划分与侧栏筛选**刻意不同**：图文混排（HTML + 图）算富文本，
+        // 否则富文本会永远是 0，而"图片"里混着一堆带文字的条目。
+        assertEquals(
+            listOf("html-only", "image-html"),
+            cleanupIds(ClipboardCleanupCategory.RICH_TEXT),
+        )
+        assertEquals(listOf("image"), cleanupIds(ClipboardCleanupCategory.IMAGE))
+    }
+
+    @Test
+    fun `cleanup counts agree with the per category queries`() {
+        val counts = store.countByCleanup(
+            ClipboardCleanupCategory.entries,
+            ClipboardCleanupScope.ALL,
+        )
+        ClipboardCleanupCategory.entries.forEach { category ->
+            assertEquals(category.name, cleanupIds(category).size, counts[category])
+        }
+        assertEquals(store.count(), counts.values.sum())
+    }
 }

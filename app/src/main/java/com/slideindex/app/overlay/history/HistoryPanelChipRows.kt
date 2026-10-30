@@ -225,6 +225,7 @@ internal fun HistoryClipboardFilterChips(
 
 private fun clipboardFilterLabelRes(filter: ClipboardHistoryFilter): Int = when (filter) {
     ClipboardHistoryFilter.All -> R.string.stash_tag_filter_all
+    ClipboardHistoryFilter.Text -> R.string.clipboard_entry_type_text
     ClipboardHistoryFilter.Image -> R.string.clipboard_filter_image
     ClipboardHistoryFilter.Link -> R.string.clipboard_filter_link
     ClipboardHistoryFilter.RichText -> R.string.clipboard_filter_rich

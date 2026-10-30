@@ -324,6 +324,7 @@ data class AppSettings(
     val floatBallPickTextFirstPanel get() = floatBall.floatBallPickTextFirstPanel
     val floatBallPickPanelStyle get() = floatBall.floatBallPickPanelStyle
     val floatBallPickPanelPlacement get() = floatBall.floatBallPickPanelPlacement
+    val floatBallPickPanelCustomBottomInsetDp get() = floatBall.floatBallPickPanelCustomBottomInsetDp
     val floatBallPickSearchGridDefaultState get() = floatBall.floatBallPickSearchGridDefaultState
     val floatBallPickSearchGridLastExpanded get() = floatBall.floatBallPickSearchGridLastExpanded
     val floatBallPickTextModeDefault get() = floatBall.floatBallPickTextModeDefault
@@ -381,8 +382,11 @@ data class AppSettings(
     val clipboardFloatSingleLineEntryLongPressAction get() = clipboard.clipboardFloatSingleLineEntryLongPressAction
     val clipboardFloatCardEntryClickAction get() = clipboard.clipboardFloatCardEntryClickAction
     val clipboardFloatCardEntryLongPressAction get() = clipboard.clipboardFloatCardEntryLongPressAction
+    val clipboardFloatCardEntryHoldAction get() = clipboard.clipboardFloatCardEntryHoldAction
     val clipboardFloatListStyleId get() = clipboard.clipboardFloatListStyleId
     val clipboardFloatListStyle get() = ClipboardFloatListStyle.fromId(clipboardFloatListStyleId)
+    val clipboardFloatNewestAtBottom get() = clipboard.clipboardFloatNewestAtBottom
+    val clipboardFloatTypeBarAtBottom get() = clipboard.clipboardFloatTypeBarAtBottom
     val clipboardFloatPortraitGeometry get() = clipboard.clipboardFloatPortraitGeometry
     val clipboardFloatLandscapeGeometry get() = clipboard.clipboardFloatLandscapeGeometry
     val clipboardFloatPanelWidthDp get() = clipboard.clipboardFloatPanelWidthDp
@@ -448,6 +452,14 @@ data class AppSettings(
     // endregion
 
     companion object {
+        /**
+         * 取词面板「自定义落位」的底部间距范围（dp）：0 = 等同贴底。
+         *
+         * 这里只是**存储/滑杆**的护栏；运行时还会按「屏幕可用高度 − 间距」再夹一次面板高度，
+         * 保证顶边永远不超出屏幕顶部。
+         */
+        const val FLOAT_BALL_PICK_PANEL_CUSTOM_INSET_MIN_DP = 0f
+        const val FLOAT_BALL_PICK_PANEL_CUSTOM_INSET_MAX_DP = 600f
         const val SEARCH_PANEL_BLUR_RADIUS_MIN_DP = HoneycombDisplaySettings.MIN_BLUR_DP
         const val SEARCH_PANEL_BLUR_RADIUS_MAX_DP = HoneycombDisplaySettings.MAX_BLUR_DP
         const val SEARCH_PANEL_BLUR_RADIUS_DEFAULT_DP = HoneycombDisplaySettings.DEFAULT_BLUR_DP

@@ -48,7 +48,15 @@ data class FloatBallPickResult(
     val images: List<Bitmap> = emptyList(),
     val initialImageIndex: Int = 0,
     /** Panel should recycle [images] on dismiss when true. */
-    val ownsImages: Boolean = false
+    val ownsImages: Boolean = false,
+    /**
+     * 取词时所在的**来源应用包名**（精确）。
+     *
+     * 取词 / 截图是本应用自己发起的动作，发起那一刻就知道当前窗口是谁；
+     * 面板里点"复制"时把它一起写进剪贴板历史，见 `ClipboardSourceKind.PICKED`。
+     * null = 无法判定（例如分享图片 OCR、从历史条目打开）。
+     */
+    val sourcePackage: String? = null,
 ) {
     val text: String?
         get() = textFor(activeSource)

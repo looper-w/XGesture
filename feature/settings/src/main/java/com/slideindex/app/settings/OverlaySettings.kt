@@ -131,6 +131,7 @@ data class OverlaySettings(
     val floatBallPickTextFirstPanel: Boolean = false,
     val floatBallPickPanelStyle: PickResultPanelStyle = PickResultPanelStyle.TAB_PAGED,
     val floatBallPickPanelPlacement: PickResultPanelPlacement = PickResultPanelPlacement.BOTTOM_DOCKED,
+    val floatBallPickPanelCustomBottomInsetDp: Float = 0f,
     val floatBallPickSearchGridDefaultState: PickResultSearchGridDefaultState = PickResultSearchGridDefaultState.REMEMBER_LAST,
     val floatBallPickSearchGridLastExpanded: Boolean = false,
     val floatBallPickTextModeDefault: PickResultTextModeDefault = PickResultTextModeDefault.ALWAYS_ON,
@@ -188,7 +189,17 @@ data class OverlaySettings(
     val clipboardFloatCardEntryClickAction: ClipboardFloatEntryClickAction = ClipboardFloatEntryClickAction.PASTE,
     val clipboardFloatCardEntryLongPressAction: ClipboardFloatEntryLongPressAction =
         ClipboardFloatEntryLongPressAction.DRAG_DROP,
+    /** 卡片模式「长按条目」（原地按住不动）动作；只有卡片样式有这一项。 */
+    val clipboardFloatCardEntryHoldAction: ClipboardFloatEntryHoldAction =
+        ClipboardFloatEntryHoldAction.OPERATE_ENTRY,
     val clipboardFloatListStyleId: Int = ClipboardFloatListStyle.SINGLE_LINE.id,
+    /** 浮窗列表顺序：true = 最新记录在最底部，false = 最新在最顶部。 */
+    val clipboardFloatNewestAtBottom: Boolean = true,
+    /**
+     * 浮窗「类型栏」（全部 / 收藏 / 文本 / 图片 / 链接 / 富文本）的位置：
+     * false = 工具栏下方（默认），true = 面板**最底部**（离拇指更近）。
+     */
+    val clipboardFloatTypeBarAtBottom: Boolean = false,
     val clipboardFloatPortraitGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
     val clipboardFloatLandscapeGeometry: ClipboardFloatOrientationGeometry = ClipboardFloatOrientationGeometry(),
     val clipboardFloatPanelWidthDp: Int = ClipboardFloatWindowMetrics.DEFAULT_WIDTH_DP,
@@ -373,6 +384,7 @@ data class OverlaySettings(
             floatBallPickTextFirstPanel = settings.floatBallPickTextFirstPanel,
             floatBallPickPanelStyle = settings.floatBallPickPanelStyle,
             floatBallPickPanelPlacement = settings.floatBallPickPanelPlacement,
+            floatBallPickPanelCustomBottomInsetDp = settings.floatBallPickPanelCustomBottomInsetDp,
             floatBallPickSearchGridDefaultState = settings.floatBallPickSearchGridDefaultState,
             floatBallPickSearchGridLastExpanded = settings.floatBallPickSearchGridLastExpanded,
             floatBallPickTextModeDefault = settings.floatBallPickTextModeDefault,
@@ -428,7 +440,10 @@ data class OverlaySettings(
             clipboardFloatSingleLineEntryLongPressAction = settings.clipboardFloatSingleLineEntryLongPressAction,
             clipboardFloatCardEntryClickAction = settings.clipboardFloatCardEntryClickAction,
             clipboardFloatCardEntryLongPressAction = settings.clipboardFloatCardEntryLongPressAction,
+            clipboardFloatCardEntryHoldAction = settings.clipboardFloatCardEntryHoldAction,
             clipboardFloatListStyleId = settings.clipboardFloatListStyleId,
+            clipboardFloatNewestAtBottom = settings.clipboardFloatNewestAtBottom,
+            clipboardFloatTypeBarAtBottom = settings.clipboardFloatTypeBarAtBottom,
             clipboardFloatPortraitGeometry = settings.clipboardFloatPortraitGeometry,
             clipboardFloatLandscapeGeometry = settings.clipboardFloatLandscapeGeometry,
             clipboardFloatPanelWidthDp = settings.clipboardFloatPanelWidthDp,
