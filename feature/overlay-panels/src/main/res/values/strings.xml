@@ -737,4 +737,41 @@
     <string name="message_overlay_menu_close">Close</string>
     <string name="message_action_quick_reply_to">Reply to %1$s</string>
     <string name="search_engine_accessibility_required">Enable the XGesture accessibility service to use this feature</string>
+
+    <!-- 剪贴板浮窗个性化功能：清理面板 / 收藏 / 类型栏 / 来源筛选（中文译文在 app 的 values-zh，合并时覆盖）。 -->
+    <string name="clipboard_float_cancel">Cancel</string>
+    <string name="clipboard_float_cleanup_action">Clean (%1$d)</string>
+    <string name="clipboard_float_cleanup_category_image">Images</string>
+    <string name="clipboard_float_cleanup_category_link">Links</string>
+    <string name="clipboard_float_cleanup_category_rich">Rich text</string>
+    <string name="clipboard_float_cleanup_category_text">Plain text</string>
+    <string name="clipboard_float_cleanup_count">%1$d</string>
+    <string name="clipboard_float_cleanup_done">Removed %1$d entries, freed %2$s</string>
+    <string name="clipboard_float_cleanup_failed">Clean up failed</string>
+    <string name="clipboard_float_cleanup_hint">Applies to the whole history, regardless of the current filter or selection</string>
+    <string name="clipboard_float_cleanup_preview">About %1$d entries will be removed, freeing %2$s</string>
+    <string name="clipboard_float_cleanup_running">Cleaning…</string>
+    <string name="clipboard_float_cleanup_scope">Choose scope</string>
+    <string name="clipboard_float_cleanup_scope_all">All entries (including favorites)</string>
+    <string name="clipboard_float_cleanup_scope_starred">Favorites only (clean favorites)</string>
+    <string name="clipboard_float_cleanup_scope_unstarred">Unfavorited only (keep favorites, recommended)</string>
+    <string name="clipboard_float_cleanup_title">Clean clipboard history</string>
+    <string name="clipboard_float_cleanup_types">Choose content types</string>
+    <string name="clipboard_float_delete">Delete</string>
+    <string name="clipboard_float_delete_confirm">Delete %1$d entries?</string>
+    <string name="clipboard_float_entry_collapse">Collapse</string>
+    <string name="clipboard_float_entry_expand">Expand</string>
+    <string name="clipboard_float_favorite">Favorite</string>
+    <string name="clipboard_float_filter_all">All</string>
+    <string name="clipboard_float_filter_source">Filter by source app</string>
+    <string name="clipboard_float_jump_to_newest">Jump to newest</string>
+    <string name="clipboard_float_select">Select entries</string>
+    <string name="clipboard_float_select_all">Select all</string>
+    <string name="clipboard_float_selected_count">%1$d selected</string>
+    <string name="clipboard_float_source_picked">Picked</string>
+    <string name="clipboard_float_source_screenshot">Screenshot</string>
+    <string name="clipboard_float_source_self">This app</string>
+    <string name="clipboard_float_source_unknown">Unknown source</string>
+    <string name="clipboard_float_unfavorite">Remove from favorites</string>
+    <string name="pick_result_image_share_pick_engine">Choose share target</string>
 </resources>

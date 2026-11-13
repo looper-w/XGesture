@@ -56,7 +56,15 @@ data class FloatBallPickResult(
      * （用户看到「取词面板里截到了取词面板」）。**不要**用"没有图"来推断这件事：
      * 截图彻底失败时同样没有图，但那时候没有人在等，必须立刻显示面板。
      */
-    val awaitingDeferredScreenshot: Boolean = false
+    val awaitingDeferredScreenshot: Boolean = false,
+    /**
+     * 取词时所在的**来源应用包名**（精确）。
+     *
+     * 取词 / 截图是本应用自己发起的动作，发起那一刻就知道当前窗口是谁；
+     * 面板里点"复制"时把它一起写进剪贴板历史，见 `ClipboardSourceKind.PICKED`。
+     * null = 无法判定（例如分享图片 OCR、从历史条目打开）。
+     */
+    val sourcePackage: String? = null,
 ) {
     val text: String?
         get() = textFor(activeSource)

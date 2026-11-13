@@ -712,13 +712,39 @@ class SlideIndexApp : Application(), androidx.work.Configuration.Provider {
                     override val revision = repo.revision
                     override suspend fun loadPage(
                         limit: Int,
+                        filter: com.slideindex.app.clipboard.ClipboardHistoryFilter,
+                        onlyStarred: Boolean,
                     ): List<com.slideindex.app.clipboard.ClipboardEntry> =
-                        repo.loadHistoryPage(limit = limit).entries
+                        repo.loadHistoryPage(
+                            limit = limit,
+                            filter = filter,
+                            onlyStarred = onlyStarred,
+                            // 浮窗类型栏跟「卡片左上角类型标签」一致：图文混排算富文本
+                            // （原项目历史面板继续用它的「有图即图片」口径，互不影响）。
+                            labelAligned = true,
+                        ).entries
 
                     override suspend fun search(
                         query: String,
+                        filter: com.slideindex.app.clipboard.ClipboardHistoryFilter,
                     ): List<com.slideindex.app.clipboard.ClipboardEntry> =
-                        repo.searchHistory(query)
+                        // 跟列表同一个口径：搜索也走数据库筛选，不在内存里二次过滤。
+                        repo.searchHistory(query, filter = filter, labelAligned = true)
+
+                    override suspend fun distinctSourcePackages(): List<String> =
+                        repo.distinctSourcePackages()
+
+                    override suspend fun previewCleanup(
+                        categories: Collection<com.slideindex.app.clipboard.ClipboardCleanupCategory>,
+                        scope: com.slideindex.app.clipboard.ClipboardCleanupScope,
+                    ): com.slideindex.app.clipboard.ClipboardCleanupPreview =
+                        repo.previewCleanup(categories, scope)
+
+                    override suspend fun performCleanup(
+                        categories: Collection<com.slideindex.app.clipboard.ClipboardCleanupCategory>,
+                        scope: com.slideindex.app.clipboard.ClipboardCleanupScope,
+                    ): com.slideindex.app.clipboard.ClipboardCleanupResult =
+                        repo.performCleanup(categories, scope)
                 }
             }
         }

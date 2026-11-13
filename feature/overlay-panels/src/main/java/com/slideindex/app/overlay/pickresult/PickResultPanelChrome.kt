@@ -1138,14 +1138,15 @@ fun PickResultTextActionBar(
                 )
                 val copyTint = if (enabled) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f)
 
-                Row(
+                // 复制主按钮：纯图标（与右侧工具条同尺寸 42dp），保留「已复制→✓」的变色/放大反馈。
+                Box(
                     modifier = Modifier
-                        .height(40.dp)
+                        .size(42.dp)
                         .graphicsLayer {
                             scaleX = copyScale
                             scaleY = copyScale
                         }
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(21.dp))
                         .background(animatedCopyBg)
                         .then(
                             if (copyDismissEnabled) {
@@ -1153,32 +1154,24 @@ fun PickResultTextActionBar(
                                     enabled = enabled,
                                     onClick = handleCopyAction,
                                     onLongClick = handleCopyKeepOpenAction,
-                                    )
+                                )
                             } else {
                                 Modifier.clickable(
                                     enabled = enabled,
                                     onClick = handleCopyKeepOpenAction,
                                 )
                             }
-                        )
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                        ),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = if (justCopied) Icons.Filled.Check else Icons.Outlined.ContentCopy,
-                        contentDescription = null,
-                        tint = copyTint,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = stringResource(if (justCopied) R.string.pick_result_copied else R.string.pick_result_copy_selection),
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 14.sp,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        contentDescription = stringResource(
+                            if (justCopied) R.string.pick_result_copied
+                            else R.string.pick_result_copy_selection,
                         ),
-                        color = copyTint
+                        tint = copyTint,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -1329,7 +1322,45 @@ fun PickResultTextActionBar(
                     }
                 }
 
-                // 2.4 更多菜单（正对图片底栏的更多）
+                // 2.4 钉在屏幕（外显纯图标；不可用时整颗不出现）
+                onPinToScreen?.let { pinAction ->
+                    IconButton(
+                        onClick = pinAction,
+                        enabled = enabled,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(21.dp))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.PushPin,
+                            contentDescription = stringResource(R.string.pick_result_pin),
+                            tint = if (enabled) (if (isDark) androidx.compose.ui.graphics.Color(0xFFE0E0E6) else androidx.compose.ui.graphics.Color(0xFF333333)) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // 2.5 暂存（外显纯图标；不可用时整颗不出现）
+                onStash?.let { stashAction ->
+                    IconButton(
+                        onClick = stashAction,
+                        enabled = enabled,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(21.dp))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Archive,
+                            contentDescription = stringResource(R.string.pick_result_stash),
+                            tint = if (enabled) (if (isDark) androidx.compose.ui.graphics.Color(0xFFE0E0E6) else androidx.compose.ui.graphics.Color(0xFF333333)) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // 2.6 更多（二维码 / 处理文本）
+                // 上游 v1.60 把这几个低频动作收进了 ⋮ 菜单；我们的设计里钉屏与暂存保持外显，
+                // 所以菜单只留这两项，避免同一功能出现两个入口。
                 Box {
                     IconButton(
                         onClick = { moreMenuExpanded = true },
@@ -1365,6 +1396,8 @@ fun PickResultTextActionBar(
                                 },
                             )
                         } else {
+                            // 朗读是上游新加的动作，保留；钉屏 / 暂存在本分支是外显图标（2.4 / 2.5），
+                            // 菜单里不再重复，避免同一功能两个入口。
                             onSpeakToggle?.let { speakAction ->
                                 PickResultActionMenuItem(
                                     label = stringResource(
@@ -1374,26 +1407,6 @@ fun PickResultTextActionBar(
                                     onClick = {
                                         moreMenuExpanded = false
                                         speakAction()
-                                    },
-                                )
-                            }
-                            onPinToScreen?.let { pinAction ->
-                                PickResultActionMenuItem(
-                                    label = stringResource(R.string.pick_result_pin),
-                                    icon = Icons.Outlined.PushPin,
-                                    onClick = {
-                                        moreMenuExpanded = false
-                                        pinAction()
-                                    },
-                                )
-                            }
-                            onStash?.let { stashAction ->
-                                PickResultActionMenuItem(
-                                    label = stringResource(R.string.pick_result_stash),
-                                    icon = Icons.Outlined.Archive,
-                                    onClick = {
-                                        moreMenuExpanded = false
-                                        stashAction()
                                     },
                                 )
                             }
@@ -1421,24 +1434,32 @@ fun PickResultTextActionBar(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    top = 4.dp,
-                    bottom = bottomPadding,
-                    start = 2.dp,
-                    end = 2.dp
+        // 复制圆与图标组**成组靠边**（原来是两端分布：复制去掉文字后中间空出太大）。
+        // 间距 0dp：总宽仍只由内容决定，和两端分布一样宽 —— 纯图片形态（「以图搜图」宽药丸）也不会更挤。
+        // 强制 LTR：否则 RTL 语言（阿语）下 Start/End 会翻转，「复制按钮位置」这个设置就失效了。
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        top = 4.dp,
+                        bottom = bottomPadding,
+                        start = 2.dp,
+                        end = 2.dp
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(
+                    0.dp,
+                    if (copyOnRight) Alignment.End else Alignment.Start,
                 ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            if (copyOnRight) {
-                CompactIconToolbar()
-                CompactPrimaryChip()
-            } else {
-                CompactPrimaryChip()
-                CompactIconToolbar()
+            ) {
+                if (copyOnRight) {
+                    CompactIconToolbar()
+                    CompactPrimaryChip()
+                } else {
+                    CompactPrimaryChip()
+                    CompactIconToolbar()
+                }
             }
         }
         return

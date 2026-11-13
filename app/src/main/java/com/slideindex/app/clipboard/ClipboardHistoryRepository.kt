@@ -10,6 +10,8 @@ import com.slideindex.app.clipboard.monitor.ClipboardMonitorProcess
 import com.slideindex.app.settings.ClipboardMonitoringMode
 import com.slideindex.app.settings.effectiveClipboardMonitoringMode
 import com.slideindex.app.settings.SettingsRepository
+import com.slideindex.app.service.OverlayService
+import com.slideindex.app.service.SlideIndexAccessibilityService
 import com.slideindex.app.xposed.bridge.ModuleBridgeStatusStore
 import com.slideindex.app.xposed.bridge.ModuleBridgeStatusProbe
 import com.slideindex.app.xposed.bridge.ModuleHookBridgeContract
@@ -28,10 +30,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-
 
 @Singleton
 class ClipboardHistoryRepository @Inject constructor(
@@ -81,8 +81,15 @@ class ClipboardHistoryRepository @Inject constructor(
     suspend fun addPayload(
         payload: ClipboardPayload,
         promoteExistingOnMatch: Boolean = true,
-        fromPassiveRefresh: Boolean = false
+        fromPassiveRefresh: Boolean = false,
+        /** 显式来源（取词/截图）；null = 按"复制那一刻的前台应用"推断。 */
+        source: ClipboardSource? = null,
     ) {
+        val resolvedSource = source ?: resolveSourceFor(payload)
+        android.util.Log.i(
+            "PickSource",
+            "ingest kind=${resolvedSource.kind} pkg=${resolvedSource.packageName}",
+        )
         if (payload.text.trim().isEmpty() &&
             payload.uri.isNullOrBlank() &&
             payload.intentUri.isNullOrBlank() &&
@@ -101,7 +108,7 @@ class ClipboardHistoryRepository @Inject constructor(
                 lastCapturedKey = contentKey
                 lastCapturedFingerprint = fingerprint
                 lastCapturedAtMs = System.currentTimeMillis()
-                promoteExistingEntry(existing)
+                promoteExistingEntry(existing, resolvedSource)
                 return
             }
             val entryId = UUID.randomUUID().toString()
@@ -109,7 +116,9 @@ class ClipboardHistoryRepository @Inject constructor(
             val imageSources = ClipboardImageStore.collectImageSources(payload)
             val baseEntry = payload.toEntry(
                 id = entryId,
-                createdAtEpochMs = System.currentTimeMillis()
+                createdAtEpochMs = System.currentTimeMillis(),
+                sourcePackageOverride = resolvedSource.packageName,
+                sourceKindOverride = resolvedSource.kind,
             ).copy(
                 imageFileName = imageFileNames.firstOrNull() ?: payload.imageFileName,
                 imageFileNames = imageFileNames.ifEmpty { payload.resolvedImageFileNames() }
@@ -144,11 +153,35 @@ class ClipboardHistoryRepository @Inject constructor(
         )
     }
 
+    /** 收藏 / 取消收藏。只改这一条的状态，不动创建时间与排序。 */
+    suspend fun setStarred(id: String, starred: Boolean): ClipboardEntry? =
+        writeMutex.withLock {
+            val updated = store.setStarred(id, starred)
+            if (updated != null) bumpRevisionLocked()
+            updated
+        }
+
     override suspend fun delete(id: String) {
         writeMutex.withLock {
             val removed = store.queryById(id)
             removed?.let { ClipboardImageStore.deleteEntryImages(context, it) }
             store.delete(id)
+            bumpRevisionLocked()
+        }
+    }
+
+    /**
+     * 批量删除（多选删除用）。
+     *
+     * 一次锁内完成：图片文件 → 记录 → 一次 revision 通知（避免 N 次刷新把浮窗列表抖成幻灯片）。
+     */
+    suspend fun deleteMany(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        writeMutex.withLock {
+            ids.distinct().forEach { id ->
+                store.queryById(id)?.let { ClipboardImageStore.deleteEntryImages(context, it) }
+                store.delete(id)
+            }
             bumpRevisionLocked()
         }
     }
@@ -173,6 +206,58 @@ class ClipboardHistoryRepository @Inject constructor(
             applyTrimToConfiguredMaxLocked()
             bumpRevisionLocked()
         }
+    }
+
+    /**
+     * 清理面板的**预览**：五类各多少条 + 预计释放字节数。
+     *
+     * 只在后台线程跑（要解几百条 JSON 才能算体积）。
+     */
+    suspend fun previewCleanup(
+        categories: Collection<ClipboardCleanupCategory>,
+        scope: ClipboardCleanupScope,
+    ): ClipboardCleanupPreview = withContext(Dispatchers.IO) {
+        val counts = mutableMapOf<ClipboardCleanupCategory, Int>()
+        val bytes = mutableMapOf<ClipboardCleanupCategory, Long>()
+        categories.forEach { category ->
+            val entries = store.queryForCleanup(listOf(category), scope)
+            counts[category] = entries.size
+            bytes[category] = entries.sumOf(::entryBytes)
+        }
+        ClipboardCleanupPreview(counts = counts, bytesByCategory = bytes)
+    }
+
+    /**
+     * 按规则清理。
+     *
+     * 顺序：查命中的条目 → 删图片文件（避免孤儿）→ 一条事务删行 + FTS。
+     * 返回**实际**删除条数与释放字节：预览之后可能又有新记录写入，以这里为准。
+     */
+    suspend fun performCleanup(
+        categories: Collection<ClipboardCleanupCategory>,
+        scope: ClipboardCleanupScope,
+    ): ClipboardCleanupResult = writeMutex.withLock {
+        val targets = store.queryForCleanup(categories, scope)
+        if (targets.isEmpty()) return@withLock ClipboardCleanupResult(0, 0L)
+        val bytes = targets.sumOf(::entryBytes)
+        targets.forEach { entry ->
+            ClipboardImageStore.deleteEntryImages(context, entry)
+            ClipboardThumbnailCache.evictEntry(entry)
+        }
+        val deleted = store.deleteMany(targets.map { it.id })
+        bumpRevisionLocked()
+        ClipboardCleanupResult(deletedCount = deleted, freedBytes = bytes)
+    }
+
+    /** 单条记录的占用估算：正文按 UTF-8 字节，图片按本地文件真实大小。 */
+    private fun entryBytes(entry: ClipboardEntry): Long {
+        var bytes = entry.text.toByteArray().size.toLong()
+        entry.resolvedImageFileNames().forEach { name ->
+            bytes += runCatching {
+                ClipboardImageStore.imageFile(context, name).length()
+            }.getOrDefault(0L)
+        }
+        return bytes
     }
 
     /**
@@ -233,8 +318,11 @@ class ClipboardHistoryRepository @Inject constructor(
         outgoingWriteFingerprint = fingerprint
         suppressedOutgoingEntryId = entry.id
         outgoingWriteSuppressUntilMs = System.currentTimeMillis() + 4_000L
-        skipIngestRemaining = 3
-        clipboardMonitorController.config.ignoreOwnClipboardWrite()
+        // ⚠️ 只吞**一次**回声、只静音 0.9 秒：
+        // 原来的 3 次 + 3 秒会让用户"复制完立刻去别的应用里复制"整条丢失（真实踩过）。
+        // 真正防重复靠的是内容去重（findMatchingEntry），这里只负责压住紧随其后的一次回调。
+        skipIngestRemaining = 1
+        clipboardMonitorController.config.ignoreOwnClipboardWrite(windowMs = 900L)
     }
 
     fun promoteById(id: String) {
@@ -252,7 +340,17 @@ class ClipboardHistoryRepository @Inject constructor(
         fromPassiveRefresh: Boolean = false,
         showOverlay: Boolean = false,
         bypassOutgoingSkip: Boolean = false,
+        /**
+         * 显式来源：由本应用主动发起的动作（取词 / 截图）。
+         *
+         * 非 null 时这条不是"自我写入的回声"，所以要跳过下面两层抑制，
+         * 并且用这个来源而不是"当前前台应用"。
+         */
+        explicitSource: ClipboardSource? = null,
     ) {
+        val explicit = explicitSource != null ||
+            payload.sourcePackage != null ||
+            payload.sourceKind != ClipboardSourceKind.UNKNOWN
         if (!bypassOutgoingSkip && consumeOutgoingWriteSkip()) return
         if (payload.text.trim().isEmpty() &&
             payload.uri.isNullOrBlank() &&
@@ -264,7 +362,8 @@ class ClipboardHistoryRepository @Inject constructor(
         val contentKey = payload.contentKey()
         val fingerprint = ClipboardContentEquivalence.fingerprint(payload)
         val now = System.currentTimeMillis()
-        if ((contentKey == lastCapturedKey || fingerprint == lastCapturedFingerprint) &&
+        if (!explicit &&
+            (contentKey == lastCapturedKey || fingerprint == lastCapturedFingerprint) &&
             now - lastCapturedAtMs < SAME_CLIP_DEDUP_MS
         ) {
             maybeShowClipboardOverlay(payload, fromPassiveRefresh, showOverlay)
@@ -273,7 +372,7 @@ class ClipboardHistoryRepository @Inject constructor(
             }
             return
         }
-        if (now < outgoingWriteSuppressUntilMs) {
+        if (!explicit && now < outgoingWriteSuppressUntilMs) {
             if (contentKey == outgoingWriteKey || fingerprint == outgoingWriteFingerprint) {
                 lastCapturedKey = contentKey
                 lastCapturedFingerprint = fingerprint
@@ -302,7 +401,7 @@ class ClipboardHistoryRepository @Inject constructor(
         maybeShowClipboardOverlay(payload, fromPassiveRefresh, showOverlay)
         scope.launch {
             try {
-                addPayload(payload, promoteExistingOnMatch, fromPassiveRefresh)
+                addPayload(payload, promoteExistingOnMatch, fromPassiveRefresh, explicitSource)
             } finally {
                 inFlightFingerprints.remove(fingerprint)
             }
@@ -331,10 +430,15 @@ class ClipboardHistoryRepository @Inject constructor(
     }
 
     fun ingestScreenshot(uri: Uri, displayName: String?, mimeType: String? = "image/png") {
-        lastScreenshotIngestAtMs = System.currentTimeMillis()
         val label = displayName?.takeIf { it.isNotBlank() }
             ?: uri.lastPathSegment?.takeIf { it.isNotBlank() }
             ?: "screenshot"
+        // 同一次截图会被两个入口各送一次：
+        // ① 本应用「保存图片」写完相册后显式入库，uri 是 `/external/` 别名；
+        // ② 截图监听随后从主卷收到同一条媒体行，uri 是 `/external_primary/` 别名。
+        // 两个字符串不同 → 内容指纹对不上 → 被存成两条。这里按「同名 + 时间窗」兜住。
+        if (isDuplicateScreenshot(label)) return
+        lastScreenshotIngestAtMs = System.currentTimeMillis()
         ingestPayload(
             ClipboardPayload(
                 type = ClipboardEntryType.URI,
@@ -342,8 +446,50 @@ class ClipboardHistoryRepository @Inject constructor(
                 uri = uri.toString(),
                 mimeType = mimeType?.takeIf { it.isNotBlank() } ?: "image/*",
                 imageUris = listOf(uri.toString())
-            )
+            ),
+            // 截图是"本应用发起的动作"：来源 = 截图那一刻的前台应用（精确），并标记为 SCREENSHOT。
+            explicitSource = ClipboardSource(
+                packageName = currentForegroundPackageOrNull(),
+                kind = ClipboardSourceKind.SCREENSHOT,
+            ),
         )
+    }
+
+    /**
+     * 刚刚是否已经入过同名的截图。
+     *
+     * 只比对**最新一条**且限时窗：截图文件名自带时间戳，两条不同截图不可能同名；
+     * 而同一个截图行从聚合卷 / 主卷两个 URI 别名进来时，显示名完全一致。
+     */
+    private fun isDuplicateScreenshot(label: String): Boolean {
+        val latest = runCatching { store.queryLatest() }.getOrNull() ?: return false
+        if (latest.type != ClipboardEntryType.URI) return false
+        if (latest.text.trim() != label.trim()) return false
+        return System.currentTimeMillis() - latest.createdAtEpochMs <= SCREENSHOT_DEDUP_MS
+    }
+
+    /** 当前前台应用包名（无障碍优先，其次浮窗服务记录的值）；拿不到返回 null。 */
+    private fun currentForegroundPackageOrNull(): String? = runCatching {
+        SlideIndexAccessibilityService.currentForegroundPackage()
+            ?: OverlayService.foregroundPackage
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /**
+     * 解析一条记录的真实来源。
+     *
+     * - payload 自带来源（取词 / 截图）→ 直接用，精确；
+     * - 否则取"复制那一刻"的前台应用（推断）；是本应用自己 → [ClipboardSourceKind.SELF] 且不记包名。
+     */
+    private fun resolveSourceFor(payload: ClipboardPayload): ClipboardSource {
+        if (payload.sourcePackage != null || payload.sourceKind != ClipboardSourceKind.UNKNOWN) {
+            return ClipboardSource(payload.sourcePackage, payload.sourceKind)
+        }
+        val pkg = currentForegroundPackageOrNull()
+        return when {
+            pkg == null -> ClipboardSource.Unknown
+            pkg == context.packageName -> ClipboardSource(null, ClipboardSourceKind.SELF)
+            else -> ClipboardSource(pkg, ClipboardSourceKind.APP)
+        }
     }
 
     fun syncClipboardMonitoringFromSettings() {
@@ -535,19 +681,30 @@ class ClipboardHistoryRepository @Inject constructor(
      * 面板搜索框右侧那个数字用它：剪贴板是分页加载的，用「已加载条数」当总数会随着下滑变大
      * （`docs/capsule-refactor-plan.md` §0.16.4 待办 1）。这里直接问 SQLite。
      */
-    suspend fun countEntries(filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All): Int =
+    suspend fun countEntries(
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        /** 分类口径，语义见 [ClipboardHistoryStore.count]。 */
+        labelAligned: Boolean = false,
+    ): Int =
         withContext(Dispatchers.IO) {
-            store.count(filter)
+            store.count(filter, labelAligned = labelAligned)
         }
 
     suspend fun loadHistoryPage(
         createdBeforeMs: Long? = null,
         limit: Int,
         filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        /** true = 只看已收藏。 */
+        onlyStarred: Boolean = false,
+        /**
+         * 分类口径：false（默认）= 原项目口径（历史 / 暂存面板）；
+         * true = 跟卡片左上角类型标签一致（剪贴板浮窗）。
+         */
+        labelAligned: Boolean = false,
     ): ClipboardHistoryPage = withContext(Dispatchers.IO) {
         val pageSize = limit.coerceAtLeast(1)
-        val total = store.count(filter)
-        val slice = store.queryPageBefore(createdBeforeMs, pageSize, filter)
+        val total = store.count(filter, onlyStarred, labelAligned)
+        val slice = store.queryPageBefore(createdBeforeMs, pageSize, filter, onlyStarred, labelAligned)
         ClipboardHistoryPage(
             entries = slice,
             totalCount = total,
@@ -574,9 +731,28 @@ class ClipboardHistoryRepository @Inject constructor(
         return loadHistoryPage(cursor, pageSize)
     }
 
-    suspend fun searchHistory(query: String, limit: Int = ClipboardHistoryStore.SEARCH_RESULT_LIMIT): List<ClipboardEntry> =
+    /**
+     * 历史里出现过的**来源应用包名**（去重，按最近出现顺序）。
+     *
+     * 浮窗的"按来源筛选"用它生成 App chip；空列表 = 还没有带来源的记录（老数据）。
+     */
+    suspend fun distinctSourcePackages(): List<String> = withContext(Dispatchers.IO) {
+        val total = store.count()
+        if (total <= 0) return@withContext emptyList()
+        store.queryPage(0, total)
+            .mapNotNull { it.sourcePackage?.takeIf { pkg -> pkg.isNotBlank() } }
+            .distinct()
+    }
+
+    suspend fun searchHistory(
+        query: String,
+        limit: Int = ClipboardHistoryStore.SEARCH_RESULT_LIMIT,
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        /** 分类口径，语义见 [ClipboardHistoryStore.count]。 */
+        labelAligned: Boolean = false,
+    ): List<ClipboardEntry> =
         withContext(Dispatchers.IO) {
-            store.search(query, limit)
+            store.search(query, limit, filter, labelAligned)
         }
 
     // ---- ClipboardHistoryQuery（P1 只读接口）----
@@ -637,12 +813,44 @@ class ClipboardHistoryRepository @Inject constructor(
             writeMutex.withLock {
                 val match = store.queryById(existing.id) ?: return@withLock
                 if (store.queryLatest()?.id == match.id) return@withLock
-                promoteExistingEntry(match)
+                promoteExistingEntry(match, resolveSourceFor(payload))
             }
         }
     }
 
-    private fun promoteExistingEntry(existing: ClipboardEntry) {
+    /**
+     * 本应用**主动复制**前的登记：只挡"这次写入的回声"，**绝不静音剪贴板监听**。
+     *
+     * 与 [noteOutgoingWrite] 的关键区别（这里踩过坑）：
+     * - 不调用 `ignoreOwnClipboardWrite()`：那会让监听 **3 秒全哑**，
+     *   用户紧接着在别的应用里复制的内容会**整条丢失**；
+     * - 不设置 `skipIngestRemaining`：那个计数不区分内容，
+     *   会把随后几次**真实复制**一起吞掉；
+     * - 只按「内容 + 1.5 秒」窗口压制回声，其它事件一律放行。
+     */
+    fun beginSelfWrite(payload: ClipboardPayload) {
+        val key = payload.contentKey()
+        val fingerprint = ClipboardContentEquivalence.fingerprint(payload)
+        val now = System.currentTimeMillis()
+        lastCapturedKey = key
+        lastCapturedFingerprint = fingerprint
+        lastCapturedAtMs = now
+        outgoingWriteKey = key
+        outgoingWriteFingerprint = fingerprint
+        outgoingWriteSuppressUntilMs = now + SELF_WRITE_ECHO_WINDOW_MS
+        suppressedOutgoingEntryId = null
+    }
+
+    /**
+     * 把已存在的条目提到最前。
+     *
+     * @param source 非 null 时顺带**更新来源**（决策：同内容再次复制时，以最近一次的信息为准；
+     *   取词会带上"某应用 · 取词"，比旧的普通复制更明确）。
+     *
+     * ⚠️ 但**低精度来源不能覆盖高精度**：剪贴板回声会以"本应用/前台应用"的身份再来一次，
+     * 如果直接覆盖，刚写好的「微信 · 取词」会被冲成「本应用」。见 [ClipboardSourceKind.precisionRank]。
+     */
+    private fun promoteExistingEntry(existing: ClipboardEntry, source: ClipboardSource? = null) {
         val fingerprint = ClipboardContentEquivalence.fingerprint(existing)
         val contentKey = existing.contentKey()
         val preservedImageNames = existing.resolvedImageFileNames().toSet()
@@ -651,7 +859,19 @@ class ClipboardHistoryRepository @Inject constructor(
             .filter { it.id != existing.id }
             .forEach { deleteEntryImagesExceptPreserved(it, preservedImageNames) }
         deleteMatchingRows(fingerprint, contentKey)
-        val promoted = existing.copy(createdAtEpochMs = System.currentTimeMillis())
+        // 低精度来源不得覆盖高精度来源（回声 → 不把「取词」冲成「本应用」）。
+        // 例外：**原来根本没记到包名**时，任何能给出包名的来源都算补全
+        // （典型场景：早先取词记成了"未知来源 · 取词"，之后手动复制同一段文字 → 补上微信）。
+        val nextSource = source?.takeIf { candidate ->
+            (candidate.kind.precisionRank() >= existing.sourceKind.precisionRank() ||
+                existing.sourcePackage.isNullOrBlank()) &&
+                !(candidate.packageName == null && candidate.kind == ClipboardSourceKind.UNKNOWN)
+        }
+        val promoted = existing.copy(
+            createdAtEpochMs = System.currentTimeMillis(),
+            sourcePackage = nextSource?.packageName ?: existing.sourcePackage,
+            sourceKind = nextSource?.kind ?: existing.sourceKind,
+        )
         store.insert(promoted)
         applyTrimToConfiguredMaxLocked()
         bumpRevisionLocked()
@@ -755,7 +975,18 @@ class ClipboardHistoryRepository @Inject constructor(
         private const val DIR_NAME = "clipboard"
         private const val INDEX_FILE_NAME = "history.json"
         private const val SAME_CLIP_DEDUP_MS = 400L
+
+        /** 本应用主动复制后，压住"同内容回声"的时间窗（不影响其它内容）。 */
+        private const val SELF_WRITE_ECHO_WINDOW_MS = 1_500L
         private const val SCREENSHOT_TOP_GUARD_MS = 10_000L
+
+        /**
+         * 同一次截图的重复入库时间窗。
+         *
+         * 两个入口（显式保存 / 截图监听）实测相差 40~60ms，留 2 秒足够宽；
+         * 截图文件名带时间戳，窗口内不可能出现两张不同的截图同名。
+         */
+        private const val SCREENSHOT_DEDUP_MS = 2_000L
         /** 主动探测模块状态的节流间隔。 */
         private const val MODULE_PROBE_THROTTLE_MS = 30_000L
         /** 「跟随特权」时等 Shizuku 就绪的上限与轮询间隔（避免刚启动就被判定不可用而降级）。 */

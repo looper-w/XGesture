@@ -86,7 +86,8 @@ class ClipboardHistoryStoreFilterTest {
             )
         )
         insert(
-            // 图文混排（HTML + 图）：仍是「图片」，不能同时出现在「富文本」里。
+            // 图文混排（HTML + 图）。现实样本：钉钉的「一段通知 + 内嵌图」，type = HTML、has_image = 1。
+            // 两套口径对它结论不同：原项目口径算「图片」，浮窗口径（跟卡片标签一致）算「富文本」。
             ClipboardEntry(
                 id = "image-html", type = ClipboardEntryType.HTML, text = "配图说明",
                 htmlText = "<p>配图<img src=\"x.png\"></p>", uri = "content://media/external/images/2",
@@ -116,8 +117,11 @@ class ClipboardHistoryStoreFilterTest {
         )
     }
 
-    private fun ids(filter: ClipboardHistoryFilter): List<String> =
-        store.queryPageBefore(createdBeforeMs = null, limit = 100, filter = filter)
+    private fun ids(
+        filter: ClipboardHistoryFilter,
+        labelAligned: Boolean = false,
+    ): List<String> =
+        store.queryPageBefore(createdBeforeMs = null, limit = 100, filter = filter, labelAligned = labelAligned)
             .map { it.id }
             .sorted()
 
@@ -127,9 +131,27 @@ class ClipboardHistoryStoreFilterTest {
     }
 
     @Test
-    fun `image matches by has_image so mixed rich entries stay in one bucket`() {
+    fun `default semantics keep the upstream rule for the history panel`() {
+        // 原项目口径（历史 / 暂存面板）：「有图即图片」，图文混排也进图片、富文本里只有无图 HTML。
+        // 这条一旦变了，就说明浮窗的口径改串到原项目面板上了。
         assertEquals(2, store.count(ClipboardHistoryFilter.Image))
         assertEquals(listOf("image", "image-html"), ids(ClipboardHistoryFilter.Image))
+        assertEquals(1, store.count(ClipboardHistoryFilter.RichText))
+        assertEquals(listOf("html-only"), ids(ClipboardHistoryFilter.RichText))
+    }
+
+    @Test
+    fun `label aligned semantics follow the card type label`() {
+        // 浮窗口径：HTML 一律归富文本（含图文混排），图片只收「带图且不是 HTML」的。
+        assertEquals(1, store.count(ClipboardHistoryFilter.Image, labelAligned = true))
+        assertEquals(listOf("image"), ids(ClipboardHistoryFilter.Image, labelAligned = true))
+        assertEquals(2, store.count(ClipboardHistoryFilter.RichText, labelAligned = true))
+        assertEquals(
+            listOf("html-only", "image-html"),
+            ids(ClipboardHistoryFilter.RichText, labelAligned = true),
+        )
+        // 整条就是链接的 HTML 不在这里（归「链接」）。
+        assertTrue("link-html" !in ids(ClipboardHistoryFilter.RichText, labelAligned = true))
     }
 
     @Test
@@ -139,9 +161,45 @@ class ClipboardHistoryStoreFilterTest {
     }
 
     @Test
-    fun `rich text excludes link only html and image entries`() {
-        assertEquals(1, store.count(ClipboardHistoryFilter.RichText))
-        assertEquals(listOf("html-only"), ids(ClipboardHistoryFilter.RichText))
+    fun `float type bar and cleanup panel agree on every entry`() {
+        // 浮窗的两个入口（类型栏 / 按规则清理）必须同口径，否则用户会在两处看到不同归类。
+        // File 跳过：类型栏**不显示**「文件」这一类（非图片的文件由清理面板的文本兜底收走）。
+        val shared = listOf(
+            ClipboardHistoryFilter.Text,
+            ClipboardHistoryFilter.Image,
+            ClipboardHistoryFilter.Link,
+            ClipboardHistoryFilter.RichText,
+        )
+        shared.forEach { filter ->
+            assertEquals(
+                "类型栏与清理面板对 $filter 的归类不一致",
+                ids(filter, labelAligned = true).toSet(),
+                cleanupIds(filter.toCleanupCategory()).toSet(),
+            )
+        }
+    }
+
+    private fun ClipboardHistoryFilter.toCleanupCategory(): ClipboardCleanupCategory = when (this) {
+        ClipboardHistoryFilter.All,
+        ClipboardHistoryFilter.Text,
+        ClipboardHistoryFilter.File -> ClipboardCleanupCategory.TEXT
+        ClipboardHistoryFilter.Image -> ClipboardCleanupCategory.IMAGE
+        ClipboardHistoryFilter.Link -> ClipboardCleanupCategory.LINK
+        ClipboardHistoryFilter.RichText -> ClipboardCleanupCategory.RICH_TEXT
+    }
+
+    @Test
+    fun `search applies the same type filter as the list`() {
+        // 搜索不再回内存里二次过滤：它和列表共用同一段 SQL 谓词，所以两边归类必须一致。
+        val richHits = store.search("配图", filter = ClipboardHistoryFilter.RichText, labelAligned = true)
+        assertEquals(listOf("image-html"), richHits.map { it.id })
+
+        val imageHits = store.search("配图", filter = ClipboardHistoryFilter.Image, labelAligned = true)
+        assertTrue(imageHits.isEmpty())
+
+        // 默认口径（原项目历史面板）下它还是图片，搜索也跟着一样。
+        val upstreamHits = store.search("配图", filter = ClipboardHistoryFilter.Image)
+        assertEquals(listOf("image-html"), upstreamHits.map { it.id })
     }
 
     @Test
@@ -212,7 +270,76 @@ class ClipboardHistoryStoreFilterTest {
     @Test
     fun `deleting an entry drops it from the filtered count`() {
         store.delete("image")
+        // 默认口径下图片还剩「image-html」（图文混排）；浮窗口径下图片归零。
         assertEquals(1, store.count(ClipboardHistoryFilter.Image))
+        assertEquals(0, store.count(ClipboardHistoryFilter.Image, labelAligned = true))
         assertEquals(9, store.count(ClipboardHistoryFilter.All))
+    }
+
+    // ---------------- 清理面板：五类互斥且完备 ----------------
+
+    private fun cleanupIds(category: ClipboardCleanupCategory): List<String> =
+        store.queryForCleanup(listOf(category), ClipboardCleanupScope.ALL).map { it.id }.sorted()
+
+    @Test
+    fun `cleanup categories are disjoint and cover every entry`() {
+        val buckets = ClipboardCleanupCategory.entries.map(::cleanupIds)
+        val flat = buckets.flatten()
+        assertEquals("五类之间不能有重叠", flat.size, flat.toSet().size)
+        assertEquals(
+            "五类合起来必须等于全部记录（全勾 = 清空整个历史）",
+            ids(ClipboardHistoryFilter.All).toSet(),
+            flat.toSet(),
+        )
+    }
+
+    @Test
+    fun `cleanup text bucket is the fallback for plain text intent and inline links`() {
+        assertEquals(
+            // 没有「文件」类之后，非图片的文件 URI（file）也落在文本兜底里，不会漏删。
+            listOf("file", "intent", "plain-text", "text-mention-link"),
+            cleanupIds(ClipboardCleanupCategory.TEXT),
+        )
+    }
+
+    @Test
+    fun `cleanup scope splits starred and unstarred without overlap`() {
+        store.setStarred("plain-text", true)
+
+        fun idsOf(scope: ClipboardCleanupScope): List<String> =
+            store.queryForCleanup(ClipboardCleanupCategory.entries, scope).map { it.id }
+
+        val starred = idsOf(ClipboardCleanupScope.STARRED)
+        val unstarred = idsOf(ClipboardCleanupScope.UNSTARRED)
+        val all = idsOf(ClipboardCleanupScope.ALL)
+
+        assertEquals(listOf("plain-text"), starred)
+        assertEquals(all.size, starred.size + unstarred.size)
+        assertTrue(starred.none { it in unstarred })
+        // 收藏状态必须同时落到列与 JSON：只改列的话这里会读到 false，面板也会少算。
+        assertTrue(store.queryById("plain-text")?.starred == true)
+    }
+
+    @Test
+    fun `cleanup treats html with images as rich text and only non html images as image`() {
+        // 清理面板的划分与侧栏筛选**刻意不同**：图文混排（HTML + 图）算富文本，
+        // 否则富文本会永远是 0，而"图片"里混着一堆带文字的条目。
+        assertEquals(
+            listOf("html-only", "image-html"),
+            cleanupIds(ClipboardCleanupCategory.RICH_TEXT),
+        )
+        assertEquals(listOf("image"), cleanupIds(ClipboardCleanupCategory.IMAGE))
+    }
+
+    @Test
+    fun `cleanup counts agree with the per category queries`() {
+        val counts = store.countByCleanup(
+            ClipboardCleanupCategory.entries,
+            ClipboardCleanupScope.ALL,
+        )
+        ClipboardCleanupCategory.entries.forEach { category ->
+            assertEquals(category.name, cleanupIds(category).size, counts[category])
+        }
+        assertEquals(store.count(), counts.values.sum())
     }
 }

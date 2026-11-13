@@ -24,8 +24,23 @@ class ClipboardHistoryStore(
      * 条数。传 [filter] 就是「该筛选下的**完整**条数」—— 面板头部的条数靠它，
      * 与「已经加载了几页」无关（§0.16.4 待办 1）。
      */
-    fun count(filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All): Int {
-        val where = listOfNotNull(filter.sqlWhere(), JSON_SIZE_GUARD).joinToString(" AND ")
+    fun count(
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        onlyStarred: Boolean = false,
+        /**
+         * 分类口径：
+         * - `false`（默认）= **原项目口径**（有图即图片）—— 历史 / 暂存面板用；
+         * - `true` = **跟卡片左上角类型标签一致**（图文混排算富文本）—— 剪贴板浮窗用。
+         */
+        labelAligned: Boolean = false,
+    ): Int {
+        // 两边各自加了一个条件：上游的 JSON_SIZE_GUARD（超大 JSON 不参与计数）+ 本地的收藏筛选。
+        // JSON_SIZE_GUARD 恒非空，所以 where 一定不为空（与上游去掉 takeIf 的理由一致）。
+        val where = listOfNotNull(
+            filter.whereFor(labelAligned),
+            if (onlyStarred) "$COL_STARRED = 1" else null,
+            JSON_SIZE_GUARD,
+        ).joinToString(" AND ")
         val db = readableDatabase
         val sql = if (where.isEmpty()) {
             "SELECT COUNT(*) FROM $TABLE"
@@ -43,13 +58,19 @@ class ClipboardHistoryStore(
         createdBeforeMs: Long?,
         limit: Int,
         filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        /** true = 只看已收藏（浮窗的「收藏」筛选）。 */
+        onlyStarred: Boolean = false,
+        /** 分类口径，语义见 [count] 的同名参数。 */
+        labelAligned: Boolean = false,
     ): List<ClipboardEntry> {
         val pageSize = limit.coerceAtLeast(1)
         val cursorSelection = if (createdBeforeMs == null) null else "$COL_CREATED < ?"
-        val filterSelection = filter.sqlWhere()
+        val filterSelection = filter.whereFor(labelAligned)
+        val starredSelection = if (onlyStarred) "$COL_STARRED = 1" else null
         // 游标条件与筛选条件是 AND：两者都不带用户输入（筛选条件是常量字面量，没有占位符），
         // 所以拼字符串不会有注入面，参数表也只需管游标那一个。
-        val selection = listOfNotNull(cursorSelection, filterSelection, JSON_SIZE_GUARD)
+        // 同样：游标 + 类型筛选 + 收藏筛选 + 上游的超大 JSON 保护，四个条件并存。
+        val selection = listOfNotNull(cursorSelection, filterSelection, starredSelection, JSON_SIZE_GUARD)
             .joinToString(" AND ")
             .takeIf { it.isNotEmpty() }
         val selectionArgs = if (createdBeforeMs == null) null else arrayOf(createdBeforeMs.toString())
@@ -92,14 +113,17 @@ class ClipboardHistoryStore(
         }
     }
 
-    fun queryByIds(ids: List<String>): List<ClipboardEntry> {
+    fun queryByIds(ids: List<String>, extraWhere: String? = null): List<ClipboardEntry> {
         if (ids.isEmpty()) return emptyList()
         val placeholders = ids.joinToString(",") { "?" }
         val db = readableDatabase
+        // [extraWhere] 只用于搜索的类型筛选：常量字面量、无占位符，所以参数表仍然只有 id。
+        val selection = "$COL_ID IN ($placeholders) AND $JSON_SIZE_GUARD" +
+            (extraWhere?.let { " AND ($it)" } ?: "")
         val byId = db.query(
             TABLE,
             arrayOf(COL_ID, COL_JSON),
-            "$COL_ID IN ($placeholders) AND $JSON_SIZE_GUARD",
+            selection,
             ids.toTypedArray(),
             null,
             null,
@@ -136,15 +160,29 @@ class ClipboardHistoryStore(
         return queryWhere("$COL_CONTENT_KEY = ?", arrayOf(contentKey))
     }
 
-    fun search(query: String, limit: Int = SEARCH_RESULT_LIMIT): List<ClipboardEntry> {
+    /**
+     * 全文搜索。
+     *
+     * [filter] / [labelAligned] 与分页列表用**同一套 SQL 谓词**：搜索结果不再回内存里逐条筛，
+     * 所以"富文本怎么判"在整个模块里只有一份实现，不会出现搜索和列表归类不一致。
+     */
+    fun search(
+        query: String,
+        limit: Int = SEARCH_RESULT_LIMIT,
+        filter: ClipboardHistoryFilter = ClipboardHistoryFilter.All,
+        /** 分类口径，语义见 [count]。 */
+        labelAligned: Boolean = false,
+    ): List<ClipboardEntry> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return emptyList()
         val safeLimit = limit.coerceAtLeast(1)
+        val filterWhere = filter.whereFor(labelAligned)
         if (ftsEnabled) {
-            val ftsResults = runCatching { searchFts(trimmed, safeLimit) }.getOrDefault(emptyList())
+            val ftsResults = runCatching { searchFts(trimmed, safeLimit, filterWhere) }
+                .getOrDefault(emptyList())
             if (ftsResults.isNotEmpty()) return ftsResults
         }
-        return searchLike(trimmed, safeLimit)
+        return searchLike(trimmed, safeLimit, filterWhere)
     }
 
     fun insert(entry: ClipboardEntry) {
@@ -162,6 +200,118 @@ class ClipboardHistoryStore(
             if (ftsEnabled) deleteFtsByEntryId(this, id)
             delete(TABLE, "$COL_ID = ?", arrayOf(id))
         }
+    }
+
+    /** 批量删除：一条事务里清 FTS 与行（清理面板一次删几百条时不要逐条开事务）。 */
+    fun deleteMany(ids: Collection<String>): Int {
+        if (ids.isEmpty()) return 0
+        val db = writableDatabase
+        return db.transaction {
+            ids.forEach { id -> if (ftsEnabled) deleteFtsByEntryId(this, id) }
+            ids.chunked(400).sumOf { chunk ->
+                val placeholders = chunk.joinToString(",") { "?" }
+                delete(TABLE, "$COL_ID IN ($placeholders)", chunk.toTypedArray())
+            }
+        }
+    }
+
+    /** 清理面板：按类型 + 范围计数（每种类型一条 `COUNT(*)`，五类互斥）。 */
+    fun countByCleanup(
+        categories: Collection<ClipboardCleanupCategory>,
+        scope: ClipboardCleanupScope,
+    ): Map<ClipboardCleanupCategory, Int> {
+        if (categories.isEmpty()) return emptyMap()
+        val db = readableDatabase
+        return categories.associateWith { category ->
+            val where = listOfNotNull(category.sqlWhere(), scope.sqlWhere())
+                .joinToString(" AND ")
+            db.rawQuery("SELECT COUNT(*) FROM $TABLE WHERE $where", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            }
+        }
+    }
+
+    /**
+     * 清理面板：把命中的条目整条查出来。
+     *
+     * 用途有两个：① 估算体积（图片要读文件大小）；② 删除前拿到图片文件名（先删文件，避免孤儿）。
+     */
+    fun queryForCleanup(
+        categories: Collection<ClipboardCleanupCategory>,
+        scope: ClipboardCleanupScope,
+    ): List<ClipboardEntry> {
+        if (categories.isEmpty()) return emptyList()
+        val where = listOfNotNull(categoriesSql(categories), scope.sqlWhere())
+            .joinToString(" AND ")
+        return readableDatabase.query(
+            TABLE,
+            arrayOf(COL_JSON),
+            where,
+            null,
+            null,
+            null,
+            "$COL_CREATED DESC",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    decodeEntry(cursor.getString(0))?.let(::add)
+                }
+            }
+        }
+    }
+
+    private fun categoriesSql(categories: Collection<ClipboardCleanupCategory>): String =
+        categories.joinToString(" OR ", prefix = "(", postfix = ")") { it.sqlWhere() }
+
+    /**
+     * 四类判定（互斥且完备），与浮窗口径（[labelAlignedSqlWhere]）同一套规则：
+     * - **富文本** = 所有 HTML（含图文混排）；
+     * - **图片记录** = 带图但**不是 HTML** 的（截图 / 相册图这类纯图片）。
+     *
+     * 纯文本是**兜底**：排除其余三类后剩下的（`TEXT` 非链接、`INTENT`、非图片的文件 URI）。
+     * 没有「文件」类——本应用不把文件当独立类型展示，这类记录由文本兜底收走，不会漏。
+     */
+    private fun ClipboardCleanupCategory.sqlWhere(): String = when (this) {
+        ClipboardCleanupCategory.IMAGE ->
+            "$COL_HAS_IMAGE = 1 AND $COL_TYPE <> '${ClipboardEntryType.HTML.name}'"
+
+        // 不看 has_image：带图但整条就是链接的 HTML 也要收进来，否则它四类都不落（不完备）。
+        ClipboardCleanupCategory.LINK ->
+            "$COL_TYPE IN ('${ClipboardEntryType.TEXT.name}', '${ClipboardEntryType.HTML.name}')" +
+                " AND $LINK_PREDICATE"
+
+        // HTML 全归富文本（不管有没有图）：这样"文字 + 图片"的混排条目不再被算成纯图片。
+        ClipboardCleanupCategory.RICH_TEXT ->
+            "$COL_TYPE = '${ClipboardEntryType.HTML.name}' AND NOT $LINK_PREDICATE"
+
+        // 兜底：不是 HTML（HTML 已被链接/富文本分完）、不是图片、也不是整条链接。
+        ClipboardCleanupCategory.TEXT ->
+            "$COL_HAS_IMAGE = 0" +
+                " AND $COL_TYPE <> '${ClipboardEntryType.HTML.name}'" +
+                " AND NOT $LINK_PREDICATE"
+    }
+
+    private fun ClipboardCleanupScope.sqlWhere(): String? = when (this) {
+        ClipboardCleanupScope.UNSTARRED -> "$COL_STARRED = 0"
+        ClipboardCleanupScope.STARRED -> "$COL_STARRED = 1"
+        ClipboardCleanupScope.ALL -> null
+    }
+
+    /**
+     * 设置收藏状态。
+     *
+     * 列（SQL 计数/筛选用）与行内 JSON（UI 直接读）**必须同时更新**：只改列的话列表 decode 出来
+     * 还是旧值，会出现"筛选里能看到、卡片上没星标"的错位。
+     */
+    fun setStarred(id: String, starred: Boolean): ClipboardEntry? {
+        val entry = queryById(id) ?: return null
+        val updated = entry.copy(starred = starred)
+        val values = ContentValues().apply {
+            put(COL_STARRED, if (starred) 1 else 0)
+            put(COL_JSON, json.encodeToString(updated))
+        }
+        writableDatabase.update(TABLE, values, "$COL_ID = ?", arrayOf(id))
+        return updated
     }
 
     fun deleteByFingerprint(fingerprint: String) {
@@ -267,12 +417,14 @@ class ClipboardHistoryStore(
         }
     }
 
-    private fun searchFts(query: String, limit: Int): List<ClipboardEntry> {
+    private fun searchFts(query: String, limit: Int, filterWhere: String?): List<ClipboardEntry> {
         val match = buildFtsMatchQuery(query) ?: return emptyList()
         val db = readableDatabase
+        // 带类型筛选时多取一些 id：FTS 先按相关度截断，过滤掉不匹配的之后还要够 limit 条。
+        val idLimit = if (filterWhere == null) limit else limit * 4
         val ids = db.rawQuery(
             "SELECT $FTS_COL_ENTRY_ID FROM $FTS_TABLE WHERE $FTS_COL_SEARCH_TEXT MATCH ? LIMIT ?",
-            arrayOf(match, limit.toString())
+            arrayOf(match, idLimit.toString())
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) {
@@ -280,16 +432,18 @@ class ClipboardHistoryStore(
                 }
             }
         }
-        return queryByIds(ids)
+        return queryByIds(ids, filterWhere).take(limit)
     }
 
-    private fun searchLike(query: String, limit: Int): List<ClipboardEntry> {
+    private fun searchLike(query: String, limit: Int, filterWhere: String?): List<ClipboardEntry> {
         val pattern = "%${query.lowercase()}%"
         val db = readableDatabase
+        val selection = "$COL_SEARCH LIKE ? AND $JSON_SIZE_GUARD" +
+            (filterWhere?.let { " AND ($it)" } ?: "")
         return db.query(
             TABLE,
             arrayOf(COL_JSON),
-            "$COL_SEARCH LIKE ? AND $JSON_SIZE_GUARD",
+            selection,
             arrayOf(pattern),
             null,
             null,
@@ -346,12 +500,22 @@ class ClipboardHistoryStore(
      * 筛选 → SQL 谓词。**这是全部筛选语义的唯一实现**：面板头部的条数（[count]）与列表分页
      * （[queryPageBefore]）共用它，不会出现"数字和列表对不上"。
      *
-     * 四类**互斥**地落在 `has_image` / `entry_type` 两个列上（口语化说明见 `ClipboardHistoryFilter`
-     * 的文档表）：[ClipboardHistoryFilter.RichText] 特意排除了"整条就是链接"的 HTML（浏览器复制
-     * 链接就是 HTML + 文本），否则同一条会同时出现在「链接」和「富文本」两处。
+     * 五类**互斥且完备**地落在 `has_image` / `entry_type` 两个列上（口语化说明见
+     * `ClipboardHistoryFilter` 的文档表）：[ClipboardHistoryFilter.RichText] 特意排除了
+     * "整条就是链接"的 HTML（浏览器复制链接就是 HTML + 文本），否则同一条会同时出现在
+     * 「链接」和「富文本」两处；[ClipboardHistoryFilter.Text] 是兜底，把剩下的都收进来。
+     *
+     * ⚠️ 这是**原项目口径**（「有图即图片」），原项目的历史 / 暂存面板在用，**不要改**。
+     * 剪贴板浮窗的类型栏要用「跟卡片左上角标签一致」的口径，见 [labelAlignedSqlWhere]
+     * —— 两者只差「图文混排」这一条：这里算图片，那边算富文本。
      */
     private fun ClipboardHistoryFilter.sqlWhere(): String? = when (this) {
         ClipboardHistoryFilter.All -> null
+        // 文本兜底：排除文件 URI / HTML，以及「整条就是一条链接」的文本（那些归 Link）。
+        ClipboardHistoryFilter.Text ->
+            "$COL_HAS_IMAGE = 0" +
+                " AND $COL_TYPE NOT IN ('${ClipboardEntryType.URI.name}', '${ClipboardEntryType.HTML.name}')" +
+                " AND NOT $LINK_PREDICATE"
         ClipboardHistoryFilter.Image -> "$COL_HAS_IMAGE = 1"
         ClipboardHistoryFilter.File ->
             "$COL_HAS_IMAGE = 0 AND $COL_TYPE = '${ClipboardEntryType.URI.name}'"
@@ -363,6 +527,13 @@ class ClipboardHistoryStore(
                 " AND $COL_TYPE IN ('${ClipboardEntryType.TEXT.name}', '${ClipboardEntryType.HTML.name}')" +
                 " AND $LINK_PREDICATE"
     }
+
+    /**
+     * 按口径选谓词：[labelAligned] = false 走原项目口径（历史 / 暂存面板），
+     * true 走「跟卡片左上角类型标签一致」的口径（剪贴板浮窗）。
+     */
+    private fun ClipboardHistoryFilter.whereFor(labelAligned: Boolean): String? =
+        if (labelAligned) labelAlignedSqlWhere() else sqlWhere()
 
     private fun queryWhere(where: String, args: Array<String>, limit: Int? = null): List<ClipboardEntry> {
         val db = readableDatabase
@@ -393,6 +564,7 @@ class ClipboardHistoryStore(
         put(COL_TYPE, entry.type.name)
         put(COL_PREVIEW, previewText(entry))
         put(COL_HAS_IMAGE, if (entry.hasImageContent()) 1 else 0)
+        put(COL_STARRED, if (entry.starred) 1 else 0)
         put(COL_JSON, json.encodeToString(entry))
     }
 
@@ -463,6 +635,9 @@ class ClipboardHistoryStore(
             if (oldVersion < 4) {
                 migrateToV4(db)
             }
+            if (oldVersion < 6) {
+                migrateToV6(db)
+            }
         }
 
         private fun createTable(db: SQLiteDatabase) {
@@ -477,6 +652,7 @@ class ClipboardHistoryStore(
                     $COL_TYPE TEXT NOT NULL DEFAULT 'TEXT',
                     $COL_PREVIEW TEXT NOT NULL DEFAULT '',
                     $COL_HAS_IMAGE INTEGER NOT NULL DEFAULT 0,
+                    $COL_STARRED INTEGER NOT NULL DEFAULT 0,
                     $COL_JSON TEXT NOT NULL
                 )
                 """.trimIndent()
@@ -546,6 +722,31 @@ class ClipboardHistoryStore(
             writeMetaFtsEnabled(db, enabled)
             ftsEnabled = enabled
         }
+
+        /**
+         * v6：收藏（星标）。
+         *
+         * 只加一列，老数据默认 `starred = 0`；行内 JSON 不需要回填（缺字段时反序列化成 false）。
+         * 加列是幂等的：SQLite 没有 `ADD COLUMN IF NOT EXISTS`，所以先查一次列是否存在，
+         * 避免异常升级路径重复执行时把库搞坏。
+         *
+         * ⚠️ 必须是**新版本号**：上游早于本改动发布的库 `user_version` 已经是 5，
+         * 而那一版的表里没有 `starred`。如果沿用 5，`onUpgrade` 不会触发，
+         * 之后每次 INSERT 都会因为缺列报 `SQLiteException`（启动即崩）。
+         */
+        private fun migrateToV6(db: SQLiteDatabase) {
+            if (columnExists(db, TABLE, COL_STARRED)) return
+            db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_STARRED INTEGER NOT NULL DEFAULT 0")
+        }
+
+        private fun columnExists(db: SQLiteDatabase, table: String, column: String): Boolean =
+            db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (nameIndex >= 0 && cursor.getString(nameIndex) == column) return true
+                }
+                false
+            }
 
         private fun tryEnableFtsAndRebuild(db: SQLiteDatabase): Boolean {
             if (!probeFts5(db)) return false
@@ -705,7 +906,7 @@ class ClipboardHistoryStore(
 
     companion object {
         private const val DB_NAME = "clipboard_history.db"
-        private const val DB_VERSION = 5
+        private const val DB_VERSION = 6
         private const val TABLE = "clipboard_entries"
         private const val META_TABLE = "clipboard_meta"
         private const val FTS_TABLE = "clipboard_fts"
@@ -718,6 +919,7 @@ class ClipboardHistoryStore(
         private const val COL_TYPE = "entry_type"
         private const val COL_PREVIEW = "preview_text"
         private const val COL_HAS_IMAGE = "has_image"
+        private const val COL_STARRED = "starred"
         private const val COL_JSON = "entry_json"
         private const val JSON_SIZE_GUARD =
             "length(CAST($COL_JSON AS BLOB)) <= ${ClipboardEntrySizeLimit.MAX_ENTRY_JSON_BYTES}"

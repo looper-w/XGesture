@@ -20,7 +20,15 @@ data class ClipboardPayload(
 
     val imageFileNames: List<String> = emptyList(),
 
-    val imageUris: List<String> = emptyList()
+    val imageUris: List<String> = emptyList(),
+
+    /**
+     * **显式来源**：由本应用主动发起的动作（取词 / 截图）填这里。
+     * 非 null 时不会再按"当前前台应用"推断，也不会被"自我写入"回声抑制吞掉。
+     */
+    val sourcePackage: String? = null,
+
+    val sourceKind: ClipboardSourceKind = ClipboardSourceKind.UNKNOWN,
 
 ) {
 
@@ -64,7 +72,12 @@ data class ClipboardPayload(
 
 
 
-    fun toEntry(id: String, createdAtEpochMs: Long): ClipboardEntry {
+    fun toEntry(
+        id: String,
+        createdAtEpochMs: Long,
+        sourcePackageOverride: String? = this.sourcePackage,
+        sourceKindOverride: ClipboardSourceKind = this.sourceKind,
+    ): ClipboardEntry {
 
         val fileNames = resolvedImageFileNames()
 
@@ -88,7 +101,11 @@ data class ClipboardPayload(
 
             imageFileNames = fileNames,
 
-            createdAtEpochMs = createdAtEpochMs
+            createdAtEpochMs = createdAtEpochMs,
+
+            sourcePackage = sourcePackageOverride,
+
+            sourceKind = sourceKindOverride,
 
         )
 
